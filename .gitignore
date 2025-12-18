@@ -400,5 +400,4 @@ fabric.properties
 .idea/caches/build_file_checksums.ser
 
 /datasets/
-/qa_generation/
 /qa_output/
