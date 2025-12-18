@@ -1,0 +1,8 @@
+{
+  "dataset_type": "wikipedia_ja",
+  "dataset_name": "Wikipedia日本語版",
+  "processed_at": "2025-11-30T04:13:05.208685",
+  "row_count": 986,
+  "csv_file": "preprocessed_wikipedia_ja_20251130_041304.csv",
+  "txt_file": "wikipedia_ja_20251130_041304.txt"
+}

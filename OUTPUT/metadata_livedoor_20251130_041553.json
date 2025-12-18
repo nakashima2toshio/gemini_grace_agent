@@ -1,0 +1,8 @@
+{
+  "dataset_type": "livedoor",
+  "dataset_name": "Livedoorニュースコーパス",
+  "processed_at": "2025-11-30T04:15:54.069705",
+  "row_count": 7352,
+  "csv_file": "preprocessed_livedoor_20251130_041553.csv",
+  "txt_file": "livedoor_20251130_041553.txt"
+}

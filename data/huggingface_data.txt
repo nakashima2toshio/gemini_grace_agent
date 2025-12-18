@@ -1,0 +1,78 @@
+ーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーー
+Hugging Face small medium dataset RAG testing evaluation
+ーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーー
+日本語データセット
+
+allganize/RAG-Evaluation-Dataset-JA
+
+https://huggingface.co/datasets/allganize/RAG-Evaluation-Dataset-JA
+- サイズ: 300行（CSV形式）
+- 用途: 日本語RAG評価専用
+- 分野: 金融、情報通信、製造、公共、流通・小売の5業界
+- ライセンス: MIT
+
+データセット概要:
+  - 行数: 300行
+  - フィールド: question, target_answer, domain, type, 各種モデルの回答と評価結果
+  - ドメイン: finance（金融）、情報通信、製造、公共、流通・小売
+  - タイプ: paragraph（段落）、table（表）などの質問形式
+
+  サンプル例（1行目）:
+  - 質問: 火災保険の収益悪化に対する損害保険各社の収益改善策について
+  - ドメイン: finance
+  - タイプ: paragraph
+
+
+ーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーー
+neoai-inc/Japanese-RAG-Generator-Benchmark
+
+https://huggingface.co/datasets/neoai-inc/Japanese-RAG-Generator-Benchmark
+- サイズ: 114行（JSON形式）
+- 用途: 質問応答タスク
+- 構造: 質問、正答、正解コンテキスト、不正解コンテキスト
+
+英語データセット
+
+rag-datasets/rag-mini-wikipedia
+
+https://huggingface.co/datasets/rag-datasets/rag-mini-wikipedia
+- サイズ: 918 Q&Aペア + 3.2kテキストコーパス
+- 用途: RAG専用の小規模テストデータセット
+
+not-lain/wikipedia-small-3000-embedded
+
+https://huggingface.co/datasets/not-lain/wikipedia-small-3000-embedded
+- サイズ: 3,000サンプル
+- 特徴: 埋め込み済み（すぐに使える）
+
+rajpurkar/squad
+
+https://huggingface.co/datasets/rajpurkar/squad
+- サイズ: 100,000+ Q&Aペア（500+記事）
+- 用途: 質問応答タスクの標準ベンチマーク
+- 特徴: Wikipedia記事ベース、抽出型QA
+
+推奨: このプロジェクトには
+allganize/RAG-Evaluation-Dataset-JA（300行）が最適です。日本語RAG評価専用で、業界別データも含まれています。
+
+
+ーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーーー
+arXiv論文
+
+  https://huggingface.co/datasets/arxiv-community/arxiv_dataset
+  - 170万件のarXiv論文メタデータ（タイトル、概要、カテゴリ等）
+  - トレンド分析、セマンティック検索、知識グラフ構築に最適
+
+  https://huggingface.co/datasets/nick007x/arxiv-papers
+  - 4.68TBの完全なarXivアーカイブ（PDF + メタデータ）
+  - 最大規模のコレクション
+
+  CodeSearchNet
+
+  https://huggingface.co/datasets/code-search-net/code_search_net
+  - 200万件の（コメント、コード）ペア
+  - 複数のプログラミング言語に対応
+  - 自然言語によるコード検索、コード生成タスクに使用可能
+
+----------------------------------------------------
+

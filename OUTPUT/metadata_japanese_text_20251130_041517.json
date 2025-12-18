@@ -1,0 +1,8 @@
+{
+  "dataset_type": "japanese_text",
+  "dataset_name": "日本語Webテキスト（CC100）",
+  "processed_at": "2025-11-30T04:15:17.842410",
+  "row_count": 961,
+  "csv_file": "preprocessed_japanese_text_20251130_041517.csv",
+  "txt_file": "japanese_text_20251130_041517.txt"
+}

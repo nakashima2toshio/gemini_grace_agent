@@ -1,0 +1,10 @@
+
+a03_rag_qa_coverage_improved.py
+a10_qa_optimized_hybrid_batch.py
+a20_output_qa_csv.py
+a31_make_gemini_corpus.py
+a40_show_qdrant_data.py
+a41_qdrant_truncate.py
+a42_qdrant_gemini_registration.py
+a42_qdrant_registration.py
+a50_rag_search_local_qdrant.py

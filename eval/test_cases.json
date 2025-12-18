@@ -1,0 +1,87 @@
+{
+  "version": "1.0",
+  "description": "Gemini3 RAG Agent Evaluation Test Cases",
+  "test_cases": [
+    {
+      "id": "TC001",
+      "category": "tool_routing",
+      "subcategory": "no_tool",
+      "input": "こんにちは",
+      "expected_tool_use": false,
+      "expected_collection": null,
+      "description": "General greeting should not trigger tool use."
+    },
+    {
+      "id": "TC002",
+      "category": "tool_routing",
+      "subcategory": "no_tool",
+      "input": "Pythonでリストをソートする方法は？",
+      "expected_tool_use": false,
+      "expected_collection": null,
+      "description": "General programming question should not trigger RAG tool."
+    },
+    {
+      "id": "TC003",
+      "category": "tool_routing",
+      "subcategory": "no_tool",
+      "input": "3 + 5 * 2 はいくつ？",
+      "expected_tool_use": false,
+      "expected_collection": null,
+      "description": "Math calculation should not trigger RAG tool."
+    },
+    {
+      "id": "TC004",
+      "category": "tool_routing",
+      "subcategory": "tool_required",
+      "input": "Wikipediaによると、東京タワーの高さは？",
+      "expected_tool_use": true,
+      "expected_collection": "qa_a02_qa_pairs_wikipedia_ja",
+      "description": "Explicit reference to Wikipedia needs RAG search."
+    },
+    {
+      "id": "TC005",
+      "category": "collection_selection",
+      "subcategory": "default_collection",
+      "input": "日本の首都はどこですか？(Wikipediaで検索して)",
+      "expected_tool_use": true,
+      "expected_collection": "qa_a02_qa_pairs_wikipedia_ja",
+      "description": "General knowledge query with source hint should use default/wikipedia collection."
+    },
+    {
+      "id": "TC006",
+      "category": "collection_selection",
+      "subcategory": "livedoor",
+      "input": "ライブドアニュースのスポーツ記事にはどんなものがありますか？",
+      "expected_tool_use": true,
+      "expected_collection": "qa_a02_qa_pairs_livedoor",
+      "description": "Query specifically asking about Livedoor news should select livedoor collection."
+    },
+    {
+      "id": "TC007",
+      "category": "hallucination",
+      "subcategory": "unknown_info",
+      "input": "存在しない架空のポケモン「ゼノゴン」の強さは？",
+      "expected_tool_use": true,
+      "expected_behavior": "not_found_response",
+      "description": "Searching for non-existent info should result in a 'not found' response, not hallucination."
+    },
+    {
+      "id": "TC008",
+      "category": "tool_routing",
+      "subcategory": "tool_listing",
+      "input": "どんなコレクションが利用できますか？",
+      "expected_tool_use": true,
+      "expected_tool_name": "list_rag_collections",
+      "description": "Asking for available collections should trigger list_rag_collections tool."
+    },
+    {
+      "id": "TC009",
+      "category": "hallucination",
+      "subcategory": "low_score",
+      "input": "全く関係のないランダムな文字列 x8f9s8df98sfd について教えて",
+      "expected_tool_use": true,
+      "expected_behavior": "not_found_response",
+      "description": "Nonsense query should trigger search but result in filtered/not found response."
+    }
+  ]
+}

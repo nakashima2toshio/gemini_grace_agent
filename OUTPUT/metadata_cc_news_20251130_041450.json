@@ -1,0 +1,8 @@
+{
+  "dataset_type": "cc_news",
+  "dataset_name": "CC-News（英語ニュース）",
+  "processed_at": "2025-11-30T04:14:50.056788",
+  "row_count": 497,
+  "csv_file": "preprocessed_cc_news_20251130_041450.csv",
+  "txt_file": "cc_news_20251130_041450.txt"
+}

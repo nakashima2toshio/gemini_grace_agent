@@ -1,0 +1,35 @@
+{
+  "summary": {
+    "total_cases": 9,
+    "passed": 9,
+    "failed": 0,
+    "accuracy": 1.0,
+    "timestamp": "2025-12-05 21:56:18"
+  },
+  "by_category": {
+    "tool_routing": {
+      "total": 5,
+      "passed": 5,
+      "failed_ids": [],
+      "accuracy": 1.0
+    },
+    "collection_selection": {
+      "total": 2,
+      "passed": 2,
+      "failed_ids": [],
+      "accuracy": 1.0
+    },
+    "hallucination": {
+      "total": 2,
+      "passed": 2,
+      "failed_ids": [],
+      "accuracy": 1.0
+    }
+  },
+  "performance": {
+    "avg_latency_ms": 2758.14,
+    "max_latency_ms": 3888.46,
+    "min_latency_ms": 1070.4
+  },
+  "failed_cases": []
+}
