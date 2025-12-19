@@ -1,104 +1,104 @@
-# Gemini3 Hybrid RAG Agent - Project Context
+# GRACE Agent (Guided Reasoning with Adaptive Confidence Execution) - Project Context
 
 ## 1. Project Overview
-This project implements a **Hybrid RAG (Retrieval-Augmented Generation) Agent** capable of intelligently switching between general conversation and specialized knowledge retrieval. It is designed to process Japanese and English documents, generate Q/A pairs, store them in a **Qdrant** vector database, and use **Google Gemini 2.0 Flash** as the reasoning engine.
+This project, formerly "Gemini3 Hybrid RAG", is evolving into **GRACE (Guided Reasoning with Adaptive Confidence Execution)**. It is a next-generation AI agent that combines **Plan-and-Execute**, **ReAct**, and **Reflection** patterns with a unique **Confidence-aware** mechanism.
 
-**Key Capabilities:**
-*   **ReAct Agent:** Uses Gemini 2.0 to reason (`[🧠 Thought]`) and decide when to call tools (`[🛠️ Tool Call]`).
-*   **RAG Pipeline:** Automated chunking (SemanticCoverage), Q/A pair generation (LLM-based), and vector embedding.
-*   **Hybrid Architecture:** Supports both OpenAI (legacy/alternative) and Gemini (current focus) models for embeddings and generation.
-*   **Scalability:** Uses **Celery + Redis** for parallel processing of large datasets.
+**Core Vision:**
+*   **G**uided: Guided by initial planning and Human-In-The-Loop (HITL) intervention.
+*   **R**easoning: Inherits ReAct for step-by-step reasoning.
+*   **A**daptive: Dynamically replans when confidence is low or errors occur.
+*   **C**onfidence: Calculates a confidence score (0.0-1.0) for every action and answer.
+*   **E**xecution: Robust execution with specialized agents (Planner, Executor).
+
+**Current Status:**
+*   **Legacy Base:** Functional ReAct Agent with RAG pipeline (Qdrant + Gemini/OpenAI).
+*   **Active Development:** Implementing the `grace/` core module (Planner, Executor, Confidence Calculator).
 
 ## 2. Architecture & Tech Stack
 
-### Core Components
-*   **LLM:** Google Gemini 2.0 Flash (Reasoning/Chat), GPT-4o (Optional/Legacy).
-*   **Vector Database:** Qdrant (Local via Docker).
-*   **Embedding:** `text-embedding-004` (Gemini) or `text-embedding-3-small` (OpenAI).
-*   **Task Queue:** Celery with Redis broker (for async Q/A generation).
-*   **UI/Interface:**
-    *   **CLI:** `agent_main.py` (Interactive Agent Terminal).
-    *   **Web UI:** `rag_qa_pair_qdrant.py` (Streamlit Dashboard).
-        *Note: Mermaid diagrams in the Streamlit UI's explanation page (`ui/pages/explanation_page.py`) are styled with a black background, white text, and white border for nodes.*
+### Hybrid Agent Architecture
+GRACE uses a hybrid approach integrating multiple agentic patterns:
+1.  **Plan-and-Execute:** Generates a multi-step plan before execution.
+2.  **ReAct (Reason + Act):** Executes each step with reasoning (inherited from existing `agent_main.py`).
+3.  **Reflection:** Self-evaluates results (inherited).
+4.  **HITL (Human-In-The-Loop):** Requests user confirmation or clarification based on Confidence Score.
 
-### Data Flow
-1.  **Ingestion:** Documents (cc_news, livedoor, wikipedia) are loaded and preprocessed.
-2.  **Chunking:** Text is split using `SemanticCoverage` (paragraph-aware + MeCab for Japanese).
-3.  **Q/A Generation:** LLMs generate Q/A pairs from chunks (handled asynchronously via Celery).
-4.  **Embedding & Storage:** Q/A pairs are embedded and stored in Qdrant collections.
-5.  **Retrieval (Agent):** The Agent receives a user query, decides if RAG is needed, searches Qdrant, and synthesizes an answer.
+### Tech Stack
+*   **LLM:** **Gemini 2.0 Flash** (Primary for all reasoning/planning).
+*   **Embedding:** `gemini-embedding-001` (Unified for new GRACE features).
+*   **Vector Database:** Qdrant (Local via Docker).
+*   **Task Queue:** Celery with Redis (for async heavy lifting).
+*   **UI:** Streamlit (Management Dashboard & Planned Chat Interface).
 
 ## 3. Key Files & Directories
 
+### Current Implementation (Legacy/Foundation)
 | File/Directory | Description |
 | :--- | :--- |
-| **`agent_main.py`** | **Entry Point (CLI):** The main interactive loop for the ReAct agent. |
-| `agent_rag.py` | **Entry Point (GUI):** Streamlit app for managing data, generation, and search. |
-| `agent_tools.py` | Defines the tools (functions) available to the agent (e.g., `search_rag_knowledge_base`). |
-| `celery_tasks.py` | Definitions for asynchronous Celery tasks (Q/A generation). |
-| `helper_rag.py` | Core RAG logic, including chunking and text processing. |
-| `helper_llm.py` | Unified wrapper for LLM API calls (Gemini/OpenAI). |
-| `qdrant_client_wrapper.py` | Abstraction layer for Qdrant database interactions. |
-| `config.py` / `config.yml` | Configuration settings (paths, model names, API keys). |
-| `doc/` | Extensive documentation (Installation, Spec, Architecture). |
-| `docker-compose/` | Setup for Qdrant and Redis services. |
+| **`agent_main.py`** | **Legacy CLI:** The original interactive ReAct agent loop. |
+| `agent_rag.py` | **Management UI:** Streamlit app for RAG data ingestion/QA generation. |
+| `helper_llm.py` | **Core:** Unified wrapper for LLM API calls. |
+| `helper_rag.py` | **Core:** RAG logic, chunking, and text processing. |
+| `qdrant_client_wrapper.py` | **Core:** Qdrant database interactions. |
 
-## 4. Setup & Usage
+### GRACE Architecture (Planned/In-Progress)
+| File/Directory | Description |
+| :--- | :--- |
+| **`grace/`** | **[NEW]** Core package for the GRACE engine. |
+| `grace/planner.py` | Generates execution plans (Pydantic schemas). |
+| `grace/executor.py` | Executes plans step-by-step using ReAct. |
+| `grace/confidence.py` | Calculates confidence scores based on RAG results & LLM self-eval. |
+| `grace/intervention.py` | Determines when to ask the user (HITL) based on thresholds. |
+| `ui/pages/grace_chat_page.py` | **[NEW]** Specialized UI for the GRACE agent interaction. |
+
+## 4. Confidence & Intervention Logic
+
+The unique feature of GRACE is **Confidence-aware Execution**.
+*   **Confidence Score:** Calculated from RAG search quality, Source Agreement, and LLM Self-Evaluation.
+*   **Intervention Levels:**
+    *   **Silent (>0.9):** Auto-proceed.
+    *   **Notify (0.7-0.9):** Show progress.
+    *   **Confirm (0.4-0.7):** Ask "Is this plan okay?".
+    *   **Escalate (<0.4):** Ask "I need more info about...".
+
+## 5. Setup & Usage
 
 ### Prerequisites
 *   Python 3.10+
 *   Docker & Docker Compose (for Qdrant/Redis)
-*   API Keys (Gemini, OpenAI) in `.env`
+*   Gemini API Key in `.env`
 
 ### Starting Services
 ```bash
 # Start Qdrant and Redis
 docker-compose -f docker-compose/docker-compose.yml up -d
-
-# (Optional) Start Celery Workers for background processing
-./start_celery.sh start -w 8
 ```
 
 ### Running the Application
-**Option 1: CLI Agent (Interactive)**
+**Option 1: Legacy CLI (Current)**
 ```bash
 python agent_main.py
 ```
-*Use this for testing the agent's reasoning and tool usage.*
 
-**Option 2: Streamlit Dashboard (Management)**
+**Option 2: Management UI (Streamlit)**
 ```bash
 streamlit run rag_qa_pair_qdrant.py
 ```
-*Use this for data ingestion, Q/A generation, and inspecting the vector DB.*
 
-## 5. Development Guidelines
+## 6. Development Guidelines
 
-*   **Code Style:** Follow PEP 8. Use `ruff` for linting if available.
-*   **Type Hinting:** Strongly encouraged for all new functions, especially in `services/` and `helper_*.py`.
-*   **Logging:** Use the standard `logging` module. The agent logs detailed traces to `logs/`.
-*   **Testing:** Run tests using `pytest`.
-    ```bash
-    pytest tests/
-    ```
-*   **Convention:** When modifying the RAG pipeline, ensure changes are compatible with both the synchronous (local) and asynchronous (Celery) execution modes.
-*   **Mermaid Diagrams:** When creating Mermaid diagrams for documentation, use **simple, version 9-compatible syntax**.
-    *   **Problem:** The Markdown viewer in PyCharm Professional uses an older version of Mermaid (v9) and frequently throws syntax errors with newer features, even if they render correctly in other tools (e.g., Typora).
-    *   **Requirement:** Always use simple graph structures and basic syntax to ensure correct rendering within the IDE.
-    *   **DO:**
-        - Use basic `graph TD`, `graph LR`, `sequenceDiagram`, `flowchart` structures
-        - Keep node labels simple (avoid special characters)
-        - Use standard arrow syntax: `-->`, `---`, `-.->`, `==>`
-    *   **DON'T:**
-        - Use `:::` class assignments or inline styles
-        - Use `subgraph` with complex nesting
-        - Use `%%` comments inside diagram blocks
-        - Use newer features like `&` for parallel paths or `@{...}` annotations
-    *   **Example (GOOD):**
+*   **Code Style:** PEP 8. Use `ruff`.
+*   **Testing:** `pytest tests/` (Targeting 80% coverage for new `grace/` modules).
+*   **Convention:**
+    *   New logic goes into `grace/`.
+    *   Reuse `services/qdrant_service.py` and `helper_llm.py` where possible.
+    *   **Avoid** `old_code/` and legacy OpenAI-specific paths.
+*   **Mermaid Diagrams:**
+    *   Use **Simple Syntax** (v9 compatible) for compatibility with PyCharm Markdown viewer.
+    *   Avoid complex styling (`:::`) or new features (`@{}`).
+    *   Example:
         ```mermaid
         graph TD
-            A[Start] --> B[Process]
-            B --> C{Decision}
-            C -->|Yes| D[End]
-            C -->|No| B
+            A[Start] --> B{Decision}
+            B -->|Yes| C[End]
         ```

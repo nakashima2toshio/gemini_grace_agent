@@ -1,0 +1,689 @@
+"""
+GRACE Confidence - 信頼度計算システム
+
+ハイブリッド方式（重み付き平均 + LLM自己評価）による
+多軸信頼度計算を実装
+"""
+
+import logging
+from dataclasses import dataclass, field
+from typing import Optional, List, Literal, Dict, Any
+from enum import Enum
+
+from google import genai
+from google.genai import types
+
+from .config import get_config, GraceConfig
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# 信頼度要素
+# =============================================================================
+
+@dataclass
+class ConfidenceFactors:
+    """信頼度を構成する各要素"""
+
+    # RAG検索関連
+    search_result_count: int = 0        # 検索結果数
+    search_avg_score: float = 0.0       # 平均類似度スコア
+    search_score_variance: float = 1.0  # スコアの分散（低いほど一貫性あり）
+
+    # 複数ソース関連
+    source_agreement: float = 0.0       # 情報源間の一致度 (0-1)
+    source_count: int = 0               # 引用ソース数
+
+    # LLM自己評価
+    llm_self_confidence: float = 0.5    # LLMの自己評価 (0-1)
+
+    # ツール実行関連
+    tool_success_rate: float = 1.0      # ツール成功率
+    tool_execution_count: int = 0       # 実行ツール数
+    tool_success_count: int = 0         # 成功ツール数
+
+    # クエリ関連
+    query_coverage: float = 0.0         # クエリへの回答網羅度
+
+
+@dataclass
+class ConfidenceScore:
+    """信頼度スコアと内訳"""
+
+    score: float                         # 最終スコア (0.0-1.0)
+    factors: ConfidenceFactors           # 計算に使用した要素
+    breakdown: Dict[str, float] = field(default_factory=dict)  # 各要素のスコア内訳
+    penalties_applied: List[str] = field(default_factory=list)  # 適用されたペナルティ
+
+    @property
+    def level(self) -> str:
+        """信頼度レベルを取得"""
+        if self.score >= 0.9:
+            return "high"
+        elif self.score >= 0.7:
+            return "medium"
+        elif self.score >= 0.4:
+            return "low"
+        else:
+            return "very_low"
+
+
+# =============================================================================
+# 介入レベル
+# =============================================================================
+
+class InterventionLevel(str, Enum):
+    """介入レベル"""
+    SILENT = "silent"       # バックグラウンドで進行
+    NOTIFY = "notify"       # ステータス表示
+    CONFIRM = "confirm"     # 確認を求める
+    ESCALATE = "escalate"   # ユーザー入力を要求
+
+
+@dataclass
+class ActionDecision:
+    """信頼度に基づくアクション決定"""
+
+    level: InterventionLevel
+    confidence_score: float
+    reason: str
+    suggested_action: Optional[str] = None
+
+    @property
+    def should_proceed(self) -> bool:
+        """自動進行可能か"""
+        return self.level in [InterventionLevel.SILENT, InterventionLevel.NOTIFY]
+
+    @property
+    def needs_confirmation(self) -> bool:
+        """確認が必要か"""
+        return self.level == InterventionLevel.CONFIRM
+
+    @property
+    def needs_user_input(self) -> bool:
+        """ユーザー入力が必要か"""
+        return self.level == InterventionLevel.ESCALATE
+
+
+# =============================================================================
+# Confidence Calculator
+# =============================================================================
+
+class ConfidenceCalculator:
+    """ハイブリッド方式によるConfidence計算"""
+
+    def __init__(self, config: Optional[GraceConfig] = None):
+        """
+        Args:
+            config: GRACE設定（Noneの場合はデフォルト）
+        """
+        self.config = config or get_config()
+        self.weights = self.config.confidence.weights
+        self._validate_weights()
+
+        logger.info("ConfidenceCalculator initialized")
+
+    def _validate_weights(self):
+        """重みの合計が1.0であることを確認"""
+        total = (
+            self.weights.search_quality +
+            self.weights.source_agreement +
+            self.weights.llm_self_eval +
+            self.weights.tool_success +
+            self.weights.query_coverage
+        )
+        if abs(total - 1.0) > 0.01:
+            raise ValueError(f"Weights must sum to 1.0, got {total}")
+
+    def calculate(self, factors: ConfidenceFactors) -> ConfidenceScore:
+        """
+        ハイブリッドConfidence計算
+
+        1. 各要素を0-1にスケーリング
+        2. 重み付き平均を計算
+        3. ペナルティ適用（検索結果0件など）
+
+        Args:
+            factors: 信頼度要素
+
+        Returns:
+            ConfidenceScore: 信頼度スコアと内訳
+        """
+        breakdown = {}
+        penalties = []
+
+        # 検索品質スコア
+        search_quality = self._calc_search_quality(factors)
+        breakdown["search_quality"] = search_quality
+
+        # ソース一致度（そのまま使用）
+        source_agreement = factors.source_agreement
+        breakdown["source_agreement"] = source_agreement
+
+        # LLM自己評価（そのまま使用）
+        llm_self_eval = factors.llm_self_confidence
+        breakdown["llm_self_eval"] = llm_self_eval
+
+        # ツール成功率
+        tool_success = self._calc_tool_success(factors)
+        breakdown["tool_success"] = tool_success
+
+        # クエリ網羅度（そのまま使用）
+        query_coverage = factors.query_coverage
+        breakdown["query_coverage"] = query_coverage
+
+        # 重み付き平均
+        base_score = (
+            search_quality * self.weights.search_quality +
+            source_agreement * self.weights.source_agreement +
+            llm_self_eval * self.weights.llm_self_eval +
+            tool_success * self.weights.tool_success +
+            query_coverage * self.weights.query_coverage
+        )
+
+        # ペナルティ適用
+        final_score, penalties = self._apply_penalties(base_score, factors)
+
+        # 0.0-1.0の範囲に収める
+        final_score = round(min(1.0, max(0.0, final_score)), 3)
+
+        return ConfidenceScore(
+            score=final_score,
+            factors=factors,
+            breakdown=breakdown,
+            penalties_applied=penalties
+        )
+
+    def _calc_search_quality(self, factors: ConfidenceFactors) -> float:
+        """RAG検索品質のスコア化"""
+        if factors.search_result_count == 0:
+            return 0.0
+
+        # 平均スコアを主体に、分散でペナルティ
+        avg_score = factors.search_avg_score
+        variance_penalty = min(0.2, factors.search_score_variance * 0.5)
+
+        return max(0.0, avg_score - variance_penalty)
+
+    def _calc_tool_success(self, factors: ConfidenceFactors) -> float:
+        """ツール成功率の計算"""
+        if factors.tool_execution_count == 0:
+            return factors.tool_success_rate
+
+        return factors.tool_success_count / factors.tool_execution_count
+
+    def _apply_penalties(
+        self,
+        base_score: float,
+        factors: ConfidenceFactors
+    ) -> tuple[float, List[str]]:
+        """特定条件でのペナルティ適用"""
+        score = base_score
+        penalties = []
+
+        # 検索結果が0件の場合、大幅減点
+        if factors.search_result_count == 0:
+            score *= 0.5
+            penalties.append("no_search_results")
+
+        # ツール失敗がある場合
+        if factors.tool_success_rate < 1.0:
+            multiplier = 0.8 + 0.2 * factors.tool_success_rate
+            score *= multiplier
+            penalties.append(f"tool_failures(rate={factors.tool_success_rate:.2f})")
+
+        # ソースが1つしかない場合
+        if factors.source_count == 1:
+            score *= 0.9
+            penalties.append("single_source")
+
+        # ソースが0の場合
+        if factors.source_count == 0:
+            score *= 0.7
+            penalties.append("no_sources")
+
+        return score, penalties
+
+    def decide_action(self, score: ConfidenceScore) -> ActionDecision:
+        """
+        信頼度スコアに基づいてアクションを決定
+
+        Args:
+            score: 信頼度スコア
+
+        Returns:
+            ActionDecision: アクション決定
+        """
+        thresholds = self.config.confidence.thresholds
+
+        if score.score >= thresholds.silent:
+            return ActionDecision(
+                level=InterventionLevel.SILENT,
+                confidence_score=score.score,
+                reason="高い信頼度: 自動進行",
+                suggested_action="proceed"
+            )
+        elif score.score >= thresholds.notify:
+            return ActionDecision(
+                level=InterventionLevel.NOTIFY,
+                confidence_score=score.score,
+                reason="中程度の信頼度: ステータス表示しながら進行",
+                suggested_action="proceed_with_status"
+            )
+        elif score.score >= thresholds.confirm:
+            return ActionDecision(
+                level=InterventionLevel.CONFIRM,
+                confidence_score=score.score,
+                reason="低い信頼度: ユーザー確認を推奨",
+                suggested_action="ask_confirmation"
+            )
+        else:
+            return ActionDecision(
+                level=InterventionLevel.ESCALATE,
+                confidence_score=score.score,
+                reason="非常に低い信頼度: 追加情報が必要",
+                suggested_action="request_clarification"
+            )
+
+
+# =============================================================================
+# LLM Self Evaluator
+# =============================================================================
+
+class LLMSelfEvaluator:
+    """LLMによる自己評価"""
+
+    EVAL_PROMPT = """あなたの回答の確信度を0.0から1.0の数値で評価してください。
+
+評価基準:
+- 1.0: 確実に正しい（複数の信頼できる情報源で確認済み）
+- 0.8: ほぼ確実（信頼できる情報源あり）
+- 0.6: やや確信あり（関連情報あり、完全ではない）
+- 0.4: 不確実（情報が限定的または曖昧）
+- 0.2: 推測に近い（根拠が弱い）
+- 0.0: 全く分からない
+
+質問: {query}
+回答: {answer}
+使用した情報源: {sources}
+
+確信度（0.0-1.0の数値のみ回答）:"""
+
+    def __init__(
+        self,
+        config: Optional[GraceConfig] = None,
+        model_name: Optional[str] = None
+    ):
+        """
+        Args:
+            config: GRACE設定
+            model_name: 使用するモデル名（Noneの場合は設定から取得）
+        """
+        self.config = config or get_config()
+        self.model_name = model_name or self.config.llm.model
+
+        # Gemini Client初期化
+        self.client = genai.Client()
+
+        logger.info(f"LLMSelfEvaluator initialized with model: {self.model_name}")
+
+    def evaluate(
+        self,
+        query: str,
+        answer: str,
+        sources: Optional[List[str]] = None
+    ) -> float:
+        """
+        LLMに自己評価させる
+
+        Args:
+            query: 元の質問
+            answer: 生成された回答
+            sources: 使用した情報源のリスト
+
+        Returns:
+            float: 信頼度 (0.0-1.0)
+        """
+        sources_str = ", ".join(sources) if sources else "なし"
+
+        prompt = self.EVAL_PROMPT.format(
+            query=query,
+            answer=answer,
+            sources=sources_str
+        )
+
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.0,  # 一貫性のため低温度
+                    max_output_tokens=10
+                )
+            )
+
+            # 数値を抽出
+            text = response.text.strip()
+            confidence = float(text)
+            result = min(1.0, max(0.0, confidence))
+
+            logger.debug(f"LLM self-evaluation: {result}")
+            return result
+
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"Failed to parse LLM self-evaluation: {e}")
+            return 0.5  # デフォルト値
+        except Exception as e:
+            logger.error(f"LLM self-evaluation error: {e}")
+            return 0.5
+
+
+# =============================================================================
+# Source Agreement Calculator
+# =============================================================================
+
+class SourceAgreementCalculator:
+    """複数ソース間の一致度計算"""
+
+    def __init__(self, config: Optional[GraceConfig] = None):
+        """
+        Args:
+            config: GRACE設定
+        """
+        self.config = config or get_config()
+        self.client = genai.Client()
+        self.embed_model = self.config.embedding.model
+
+        logger.info("SourceAgreementCalculator initialized")
+
+    def calculate(self, answers: List[str]) -> float:
+        """
+        複数の回答間の一致度を計算
+
+        Embeddingの類似度を使用して一致度を算出
+
+        Args:
+            answers: 回答のリスト
+
+        Returns:
+            float: 一致度 (0.0-1.0)
+        """
+        if len(answers) < 2:
+            return 1.0  # 単一ソースは完全一致とみなす
+
+        try:
+            # 各回答のEmbeddingを取得
+            embeddings = []
+            for answer in answers:
+                response = self.client.models.embed_content(
+                    model=self.embed_model,
+                    contents=answer
+                )
+                embeddings.append(response.embeddings[0].values)
+
+            # ペアワイズ類似度を計算
+            similarities = []
+            for i in range(len(embeddings)):
+                for j in range(i + 1, len(embeddings)):
+                    sim = self._cosine_similarity(embeddings[i], embeddings[j])
+                    similarities.append(sim)
+
+            # 平均一致度を返す
+            agreement = sum(similarities) / len(similarities)
+
+            logger.debug(f"Source agreement: {agreement:.3f} from {len(answers)} sources")
+            return agreement
+
+        except Exception as e:
+            logger.error(f"Source agreement calculation error: {e}")
+            return 0.5  # デフォルト値
+
+    @staticmethod
+    def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+        """コサイン類似度を計算"""
+        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        norm1 = sum(a * a for a in vec1) ** 0.5
+        norm2 = sum(b * b for b in vec2) ** 0.5
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        return dot_product / (norm1 * norm2)
+
+
+# =============================================================================
+# Query Coverage Calculator
+# =============================================================================
+
+class QueryCoverageCalculator:
+    """クエリ網羅度計算"""
+
+    COVERAGE_PROMPT = """以下の質問に対する回答が、質問のすべての要素をカバーしているか評価してください。
+
+質問: {query}
+回答: {answer}
+
+網羅度（0.0-1.0の数値のみ回答）:
+- 1.0: すべての質問要素に完全に回答
+- 0.8: ほぼすべての要素に回答
+- 0.6: 主要な要素に回答
+- 0.4: 一部の要素のみに回答
+- 0.2: ほとんど回答できていない
+- 0.0: 全く回答できていない
+
+数値のみ回答:"""
+
+    def __init__(
+        self,
+        config: Optional[GraceConfig] = None,
+        model_name: Optional[str] = None
+    ):
+        """
+        Args:
+            config: GRACE設定
+            model_name: 使用するモデル名
+        """
+        self.config = config or get_config()
+        self.model_name = model_name or self.config.llm.model
+        self.client = genai.Client()
+
+        logger.info("QueryCoverageCalculator initialized")
+
+    def calculate(self, query: str, answer: str) -> float:
+        """
+        クエリに対する回答の網羅度を計算
+
+        Args:
+            query: 元の質問
+            answer: 生成された回答
+
+        Returns:
+            float: 網羅度 (0.0-1.0)
+        """
+        prompt = self.COVERAGE_PROMPT.format(query=query, answer=answer)
+
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    max_output_tokens=10
+                )
+            )
+
+            text = response.text.strip()
+            coverage = float(text)
+            result = min(1.0, max(0.0, coverage))
+
+            logger.debug(f"Query coverage: {result}")
+            return result
+
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"Failed to parse query coverage: {e}")
+            return 0.5
+        except Exception as e:
+            logger.error(f"Query coverage calculation error: {e}")
+            return 0.5
+
+
+# =============================================================================
+# Confidence Aggregator
+# =============================================================================
+
+class ConfidenceAggregator:
+    """
+    複数ステップの信頼度を集計
+
+    計画全体の信頼度を算出するためのアグリゲータ
+    """
+
+    def __init__(self, config: Optional[GraceConfig] = None):
+        """
+        Args:
+            config: GRACE設定
+        """
+        self.config = config or get_config()
+        logger.info("ConfidenceAggregator initialized")
+
+    def aggregate(
+        self,
+        scores: List[ConfidenceScore],
+        method: Literal["mean", "min", "weighted"] = "mean"
+    ) -> float:
+        """
+        複数の信頼度スコアを集計
+
+        Args:
+            scores: 信頼度スコアのリスト
+            method: 集計方法
+                - "mean": 平均
+                - "min": 最小値（最も弱い部分を重視）
+                - "weighted": 重み付き平均（後半のステップを重視）
+
+        Returns:
+            float: 集計された信頼度
+        """
+        if not scores:
+            return 0.0
+
+        values = [s.score for s in scores]
+
+        if method == "mean":
+            return sum(values) / len(values)
+
+        elif method == "min":
+            return min(values)
+
+        elif method == "weighted":
+            # 後半のステップほど重みを増やす
+            weights = [i + 1 for i in range(len(values))]
+            total_weight = sum(weights)
+            weighted_sum = sum(v * w for v, w in zip(values, weights))
+            return weighted_sum / total_weight
+
+        else:
+            raise ValueError(f"Unknown aggregation method: {method}")
+
+    def aggregate_with_critical_check(
+        self,
+        scores: List[ConfidenceScore],
+        critical_threshold: float = 0.3
+    ) -> tuple[float, bool]:
+        """
+        重要度チェック付きの集計
+
+        いずれかのステップが閾値を下回る場合、
+        全体の信頼度を低下させる
+
+        Args:
+            scores: 信頼度スコアのリスト
+            critical_threshold: 重要閾値
+
+        Returns:
+            tuple: (集計スコア, 重要ステップ失敗フラグ)
+        """
+        if not scores:
+            return 0.0, False
+
+        values = [s.score for s in scores]
+        has_critical_failure = any(v < critical_threshold for v in values)
+
+        base_score = sum(values) / len(values)
+
+        if has_critical_failure:
+            # 重要ステップ失敗時はペナルティ
+            return base_score * 0.7, True
+
+        return base_score, False
+
+
+# =============================================================================
+# ファクトリ関数
+# =============================================================================
+
+def create_confidence_calculator(
+    config: Optional[GraceConfig] = None
+) -> ConfidenceCalculator:
+    """ConfidenceCalculatorインスタンスを作成"""
+    return ConfidenceCalculator(config=config)
+
+
+def create_llm_evaluator(
+    config: Optional[GraceConfig] = None,
+    model_name: Optional[str] = None
+) -> LLMSelfEvaluator:
+    """LLMSelfEvaluatorインスタンスを作成"""
+    return LLMSelfEvaluator(config=config, model_name=model_name)
+
+
+def create_source_agreement_calculator(
+    config: Optional[GraceConfig] = None
+) -> SourceAgreementCalculator:
+    """SourceAgreementCalculatorインスタンスを作成"""
+    return SourceAgreementCalculator(config=config)
+
+
+def create_query_coverage_calculator(
+    config: Optional[GraceConfig] = None,
+    model_name: Optional[str] = None
+) -> QueryCoverageCalculator:
+    """QueryCoverageCalculatorインスタンスを作成"""
+    return QueryCoverageCalculator(config=config, model_name=model_name)
+
+
+def create_confidence_aggregator(
+    config: Optional[GraceConfig] = None
+) -> ConfidenceAggregator:
+    """ConfidenceAggregatorインスタンスを作成"""
+    return ConfidenceAggregator(config=config)
+
+
+# =============================================================================
+# エクスポート
+# =============================================================================
+
+__all__ = [
+    # Data classes
+    "ConfidenceFactors",
+    "ConfidenceScore",
+    "ActionDecision",
+
+    # Enums
+    "InterventionLevel",
+
+    # Calculators
+    "ConfidenceCalculator",
+    "LLMSelfEvaluator",
+    "SourceAgreementCalculator",
+    "QueryCoverageCalculator",
+    "ConfidenceAggregator",
+
+    # Factory functions
+    "create_confidence_calculator",
+    "create_llm_evaluator",
+    "create_source_agreement_calculator",
+    "create_query_coverage_calculator",
+    "create_confidence_aggregator",
+]
