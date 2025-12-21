@@ -33,28 +33,30 @@ logger = logging.getLogger(__name__)
 
 # --- LLM モデル設定 --- #
 LLM_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-3-pro-preview",
+    "gemini-2.5-flash-preview",
     "gemini-2.0-flash",
-    "gemini-2.0-pro",
-    "gemini-1.5-pro-latest",
-    "gemini-1.5-flash-latest",
-    "gpt-4o-mini",
-    "gpt-4o",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
 ]
 
 LLM_PRICING = {
-    "gemini-2.0-flash": {"input": 0.0001, "output": 0.0002},
-    "gemini-2.0-pro": {"input": 0.002, "output": 0.004},
-    "gemini-1.5-pro-latest": {"input": 0.0035, "output": 0.0105},
-    "gemini-1.5-flash-latest": {"input": 0.00035, "output": 0.00105},
-    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-    "gpt-4o": {"input": 0.005, "output": 0.015},
+    "gemini-2.5-flash": {"input": 0.0001, "output": 0.0004}, # Estimated
+    "gemini-3-pro-preview": {"input": 0.00125, "output": 0.010},
+    "gemini-2.5-flash-preview": {"input": 0.00015, "output": 0.0035},
+    "gemini-2.0-flash": {"input": 0.0001, "output": 0.0004},
+    "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
+    "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
 }
 
 LLM_LIMITS = {
-    "gemini-2.0-flash": {"max_tokens": 1048576, "max_output": 8192},
-    "gemini-2.0-pro": {"max_tokens": 1048576, "max_output": 8192},
-    "gpt-4o-mini": {"max_tokens": 128000, "max_output": 4096},
-    "gpt-4o": {"max_tokens": 128000, "max_output": 4096},
+    "gemini-2.5-flash": {"max_tokens": 1000000, "max_output": 8192},
+    "gemini-3-pro-preview": {"max_tokens": 1000000, "max_output": 64000},
+    "gemini-2.5-flash-preview": {"max_tokens": 1000000, "max_output": 64000},
+    "gemini-2.0-flash": {"max_tokens": 1000000, "max_output": 8192},
+    "gemini-1.5-pro": {"max_tokens": 1000000, "max_output": 8192},
+    "gemini-1.5-flash": {"max_tokens": 1000000, "max_output": 8192},
 }
 
 # --- Embedding モデル設定 --- #

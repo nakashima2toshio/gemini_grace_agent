@@ -1008,41 +1008,29 @@ def search_collection(
 ) -> List[Dict[str, Any]]:
     """
     コレクションを検索（Dense または Hybrid）
-
-    Args:
-        client: Qdrantクライアント
-        collection_name: コレクション名
-        query_vector: クエリベクトル (Dense)
-        sparse_vector: クエリSparseベクトル (Optional) - 指定された場合Hybrid検索
-        limit: 結果数上限
-        hybrid_alpha: Hybrid検索時の重み (現状は単純なFusionロジックがないため未使用、将来用)
-
-    Returns:
-        検索結果のリスト
     """
     logger.info(f"search_collection: collection='{collection_name}', query_vec_dim={len(query_vector)}, limit={limit}, sparse={sparse_vector is not None}")
     
     try:
+        # コレクションの情報を取得して、名前付きベクトルが必要か確認
+        collection_info = client.get_collection(collection_name)
+        vectors_config = collection_info.config.params.vectors
+        
+        # 名前付きベクトル（辞書形式）かどうかの判定
+        is_named_vector = isinstance(vectors_config, dict)
+        dense_vector_name = "default" if is_named_vector else None
+
         if sparse_vector:
             # Hybrid Search (Dense + Sparse)
-            # Qdrant 1.10+ の Query API を使用して RRF (Reciprocal Rank Fusion) を行うのが理想的だが
-            # 互換性のため、ここでは単純な Prefetch と Rescore、あるいはそれぞれの結果を取得する方式を検討
-            # 現時点では、Qdrant Client v1.10 の prefetch 機能を想定した実装にする
-            
-            # 注: Qdrantのバージョン依存が強いため、ここでは安全に
-            # search_batch で Dense と Sparse を別々に投げてPython側で統合するか、
-            # 新しい query_points API を使う。
-            
-            # query_points API (v1.10+) が使えると仮定
             prefetch = [
                 models.Prefetch(
                     query=query_vector,
-                    using="default", # Dense vector name (default)
+                    using=dense_vector_name or "", # 名前なしの場合は空文字
                     limit=limit * 2,
                 ),
                 models.Prefetch(
                     query=sparse_vector,
-                    using="text-sparse", # Sparse vector name
+                    using="text-sparse",
                     limit=limit * 2,
                 ),
             ]
@@ -1051,7 +1039,7 @@ def search_collection(
                 collection_name=collection_name,
                 prefetch=prefetch,
                 query=models.FusionQuery(
-                    fusion=models.Fusion.RRF, # Corrected parameter name from 'method' to 'fusion'
+                    fusion=models.Fusion.RRF,
                 ),
                 limit=limit,
             )
@@ -1059,58 +1047,46 @@ def search_collection(
             
         else:
             # Standard Dense Search
-            try:
-                # 新API (v2.x/1.10+)
+            # 名前付きベクトルの場合は models.NamedVector または query(..., using=...) を使用
+            if is_named_vector:
+                response = client.query_points(
+                    collection_name=collection_name,
+                    query=query_vector,
+                    using=dense_vector_name,
+                    limit=limit
+                )
+            else:
                 response = client.query_points(
                     collection_name=collection_name,
                     query=query_vector,
                     limit=limit
                 )
-                hits = response.points
-            except AttributeError:
-                # 旧API (v1.x) へのフォールバック
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", DeprecationWarning)
-                    hits = client.search(
-                        collection_name=collection_name,
-                        query_vector=query_vector,
-                        limit=limit
-                    )
+            hits = response.points
 
     except Exception as e:
         logger.error(f"Search failed: {e}")
-        # フォールバック: Denseのみで再試行
-        if sparse_vector:
-            logger.info("Falling back to dense-only search due to error.")
-            # 再帰呼び出しではなく、直接Dense検索を実行して無限ループや再帰エラーを防ぐ
-            # また、"Vector with name default is not configured" エラーへの対策として
-            # 名前付きベクトル ("default") を指定しないシンプルな検索を行う
-            try:
-                # v1.10+ / v1.16+ client: search() is removed/deprecated in favor of query_points
-                # For single vector (unnamed), pass the list[float] directly to query
-                response = client.query_points(
-                    collection_name=collection_name,
-                    query=query_vector,
-                    limit=limit
-                )
-                hits = response.points
-                
-                # PointStruct -> Dict 変換 (下流の処理と合わせる)
-                results = []
-                for h in hits:
-                    results.append({
-                        "score": h.score,
-                        "id": h.id,
-                        "payload": h.payload
-                    })
-                logger.info(f"search_collection (fallback): found {len(results)} hits")
-                return results
-                
-            except Exception as fallback_e:
-                 logger.error(f"Fallback search also failed: {fallback_e}")
-                 return []
-        return []
+        # フォールバック: 最もシンプルな検索
+        try:
+            hits = client.search(
+                collection_name=collection_name,
+                query_vector=query_vector,
+                limit=limit
+            )
+        except Exception as fallback_e:
+             logger.error(f"Fallback search also failed: {fallback_e}")
+             return []
+
+    logger.info(f"search_collection: found {len(hits)} hits")
+    
+    results = []
+    for h in hits:
+        results.append({
+            "score": h.score,
+            "id": h.id,
+            "payload": h.payload
+        })
+
+    return results
 
     logger.info(f"search_collection: found {len(hits)} hits")
     

@@ -10,6 +10,7 @@ from config import AgentConfig, GeminiConfig
 from agent_tools import search_rag_knowledge_base, list_rag_collections, RAGToolError
 from services.qdrant_service import get_all_collections
 from services.log_service import log_unanswered_question
+from regex_mecab import KeywordExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +30,17 @@ SYSTEM_INSTRUCTION_TEMPLATE = """
 必ず以下の形式で思考を出力してから、ツールを呼び出してください。
 **Thought: [なぜ検索が必要か、どのコレクションを、どんなクエリで検索するか]**
 (この後にツール呼び出しが行われます)
+**重要: 検索クエリを作成する際は、提供された「重要キーワード」を必ず含めてください。**
 
 ### 2. 最終回答を行う場合（検索が完了した、または検索不要な場合）
 必ず以下の形式で出力してください。
 **Thought: [得られた情報に基づいてどう回答するか、または検索結果がなかった場合の判断]**
 **Answer: [ユーザーへの最終的な回答]**
+
+**重要:**
+- 検索クエリは、質問文から「いつ」「誰」「何」などの具体的な要素を抽出して作成してください。抽象的な質問（例：「教えて」）をそのまま検索クエリにせず、具体的なキーワードに変換してください。
+- 検索結果のスコアが低くても（例: 0.5程度）、内容が質問に関連していれば、その情報を積極的に使用して回答を作成してください。「情報が見つかりませんでした」と即断せず、得られた断片的な情報からでも回答を試みてください。
+- 回答は必ず `Answer:` (または `**Answer:**`) で始めてください。
 
 ---
 
@@ -109,6 +116,13 @@ class ReActAgent:
         self.model_name = model_name
         self.chat_session = self._setup_session()
         self.thought_log: List[str] = [] # Initialize thought_log here
+        # キーワード抽出器の初期化
+        try:
+            self.keyword_extractor = KeywordExtractor(prefer_mecab=True)
+            logger.info("KeywordExtractor initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize KeywordExtractor: {e}")
+            self.keyword_extractor = None
 
     def _setup_session(self) -> ChatSession:
         """Geminiエージェントのセットアップ"""
@@ -160,7 +174,20 @@ class ReActAgent:
         ReActループを実行し、各ステップのイベントをyieldする。
         最終的なドラフト回答を 'final_text' イベントとしてyieldする。
         """
-        current_response_obj = self.chat_session.send_message(user_input)
+        # 重要単語抽出とプロンプト拡張
+        augmented_input = user_input
+        if self.keyword_extractor:
+            try:
+                keywords = self.keyword_extractor.extract(user_input, top_n=5)
+                if keywords:
+                    keywords_str = ", ".join(keywords)
+                    augmented_input = f"""{user_input}\n\n【重要: 検索クエリ作成の指示】\n以下の抽出された重要キーワードを、必ず検索クエリに含めてください。\n重要キーワード: {keywords_str}"""
+                    logger.info(f"Augmented input with keywords: {keywords_str}")
+                    yield {"type": "log", "content": f"🔑 **Extracted Keywords:** {keywords_str}"}
+            except Exception as e:
+                logger.warning(f"Keyword extraction failed during turn: {e}")
+
+        current_response_obj = self.chat_session.send_message(augmented_input)
         max_turns = 10
         turn_count = 0
         final_text_from_react = ""
@@ -231,6 +258,8 @@ class ReActAgent:
                     break 
             
             if not function_call_found:
+                # ツール呼び出しがない場合、現在のテキストを回答案とする
+                # 明示的な "Answer:" タグがなくても、最後のテキスト出力を採用する (Fallback)
                 final_text_from_react = current_turn_text_from_model
                 break
         
@@ -244,9 +273,28 @@ class ReActAgent:
         final_response_text = draft_answer
         try:
             reflection_msg = f"{REFLECTION_INSTRUCTION}\n\n**あなたの回答案:**\n{draft_answer}"
+            
+            # Reflectionフェーズではツールを使用させないため、tools設定を空にするか
+            # テキスト生成のみを強制する設定が必要だが、ChatSessionの途中での設定変更は複雑。
+            # そのため、応答からFunctionCallが含まれていないかチェックし、
+            # 含まれていた場合はそのFunctionCallを無視してテキスト部分を探すか、ドラフトを返す。
+            
             reflection_response = self.chat_session.send_message(reflection_msg)
             
-            reflection_text = reflection_response.text.strip()
+            reflection_text = ""
+            
+            # partsを確認してテキストを抽出
+            if reflection_response.parts:
+                for part in reflection_response.parts:
+                    if part.text:
+                        reflection_text += part.text
+                    elif part.function_call:
+                        logger.warning("Reflection phase generated a function call, ignoring.")
+            
+            if not reflection_text:
+                # テキストが生成されなかった場合（FunctionCallのみなど）
+                logger.warning("Reflection phase did not generate text.")
+                return draft_answer
             
             reflection_thought = ""
             reflection_answer = ""

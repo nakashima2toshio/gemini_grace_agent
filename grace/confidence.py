@@ -29,6 +29,7 @@ class ConfidenceFactors:
     # RAG検索関連
     search_result_count: int = 0        # 検索結果数
     search_avg_score: float = 0.0       # 平均類似度スコア
+    search_max_score: float = 0.0       # 最高類似度スコア
     search_score_variance: float = 1.0  # スコアの分散（低いほど一貫性あり）
 
     # 複数ソース関連
@@ -45,6 +46,9 @@ class ConfidenceFactors:
 
     # クエリ関連
     query_coverage: float = 0.0         # クエリへの回答網羅度
+    
+    # ステップタイプ
+    is_search_step: bool = False        # 検索ステップかどうか
 
 
 @dataclass
@@ -174,19 +178,69 @@ class ConfidenceCalculator:
         breakdown["query_coverage"] = query_coverage
 
         # 重み付き平均
-        base_score = (
-            search_quality * self.weights.search_quality +
-            source_agreement * self.weights.source_agreement +
-            llm_self_eval * self.weights.llm_self_eval +
-            tool_success * self.weights.tool_success +
-            query_coverage * self.weights.query_coverage
-        )
+        if factors.is_search_step:
+            # 検索ステップの場合、検索品質とツール成功率を重視
+            base_score = (
+                search_quality * 0.50 +
+                source_agreement * 0.20 +
+                tool_success * 0.30
+            )
+            # 内訳も調整（表示用）
+            breakdown["llm_self_eval"] = 0.0  # N/A
+            breakdown["query_coverage"] = 0.0 # N/A
+        else:
+            # 検索ステップ以外（Reasoningなど）の場合
+            # 「有効な（信頼できる）要素」だけで加重平均を計算し、正規化する
+            valid_weights = 0.0
+            weighted_sum = 0.0
+
+            # 1. 検索品質 (Search Quality) - 継承されたスコアがあれば最優先 (重み 0.6)
+            if search_quality > 0:
+                w = 0.6
+                weighted_sum += search_quality * w
+                valid_weights += w
+
+            # 2. ツール成功 (Tool Success) - 必須要素 (重み 0.4)
+            w = 0.4
+            weighted_sum += tool_success * w
+            valid_weights += w
+
+            # 3. ソース一致度 (Source Agreement) - 複数ソースがある場合のみ (重み 0.2)
+            if factors.source_count > 1:
+                w = 0.2
+                weighted_sum += source_agreement * w
+                valid_weights += w
+
+            # 4. LLM自己評価 (LLM Self Eval) - 評価済みの場合のみ反映 (重み 0.3)
+            if llm_self_eval > 0.6:
+                w = 0.3
+                weighted_sum += llm_self_eval * w
+                valid_weights += w
+
+            # 5. クエリ網羅度 (Query Coverage) - 評価済みの場合のみ反映 (重み 0.1)
+            if query_coverage > 0.1:
+                w = 0.1
+                weighted_sum += query_coverage * w
+                valid_weights += w
+
+            # 正規化 (加重平均)
+            if valid_weights > 0:
+                base_score = weighted_sum / valid_weights
+            else:
+                base_score = 0.0
 
         # ペナルティ適用
         final_score, penalties = self._apply_penalties(base_score, factors)
 
         # 0.0-1.0の範囲に収める
         final_score = round(min(1.0, max(0.0, final_score)), 3)
+
+        # === 検索ステップの最終底上げ調整 ===
+        # 検索結果が存在し、かつ検索ステップである場合、
+        # ペナルティ後の最終スコアが低くても 0.70 (自動進行ライン) を保証する。
+        # これにより、Legacy Agentと同様に「ヒットすれば進む」挙動を担保する。
+        if factors.is_search_step and factors.search_result_count > 0:
+            final_score = max(final_score, 0.70)
 
         return ConfidenceScore(
             score=final_score,
@@ -196,15 +250,19 @@ class ConfidenceCalculator:
         )
 
     def _calc_search_quality(self, factors: ConfidenceFactors) -> float:
-        """RAG検索品質のスコア化"""
-        if factors.search_result_count == 0:
+        """RAG検索品質のスコア化（最高スコア重視版）"""
+        # 修正: 検索結果数が0でも、最大スコアが継承されていれば計算を続行する
+        if factors.search_result_count == 0 and factors.search_max_score == 0:
             return 0.0
 
-        # 平均スコアを主体に、分散でペナルティ
-        avg_score = factors.search_avg_score
-        variance_penalty = min(0.2, factors.search_score_variance * 0.5)
+        # 平均スコアだけでなく、最高スコアを重視する (70% Max + 30% Avg)
+        # これにより、1つでも良いヒットがあれば信頼度を高く保つ
+        combined_score = (factors.search_max_score * 0.7) + (factors.search_avg_score * 0.3)
+        
+        # 分散によるペナルティ（スコアがバラバラすぎる場合）
+        variance_penalty = min(0.15, factors.search_score_variance * 0.3)
 
-        return max(0.0, avg_score - variance_penalty)
+        return max(0.0, combined_score - variance_penalty)
 
     def _calc_tool_success(self, factors: ConfidenceFactors) -> float:
         """ツール成功率の計算"""
@@ -222,8 +280,8 @@ class ConfidenceCalculator:
         score = base_score
         penalties = []
 
-        # 検索結果が0件の場合、大幅減点
-        if factors.search_result_count == 0:
+        # 検索結果が0件の場合、大幅減点（検索ステップの場合のみ適用）
+        if factors.is_search_step and factors.search_result_count == 0:
             score *= 0.5
             penalties.append("no_search_results")
 
@@ -233,15 +291,19 @@ class ConfidenceCalculator:
             score *= multiplier
             penalties.append(f"tool_failures(rate={factors.tool_success_rate:.2f})")
 
-        # ソースが1つしかない場合
-        if factors.source_count == 1:
-            score *= 0.9
-            penalties.append("single_source")
+        # ソースが1つしかない場合のペナルティは削除（事実確認では1つで十分な場合が多い）
+        # if factors.source_count == 1:
+        #    score *= 0.95
+        #    penalties.append("single_source")
 
-        # ソースが0の場合
+        # ソースが0の場合（検索ステップ以外で自己評価が高い場合は免除）
         if factors.source_count == 0:
-            score *= 0.7
-            penalties.append("no_sources")
+            # 検索ステップ以外かつ自己評価が高い場合はペナルティなし
+            if not factors.is_search_step and factors.llm_self_confidence >= 0.8:
+                pass
+            else:
+                score *= 0.7
+                penalties.append("no_sources")
 
         return score, penalties
 
@@ -294,15 +356,26 @@ class ConfidenceCalculator:
 class LLMSelfEvaluator:
     """LLMによる自己評価"""
 
-    EVAL_PROMPT = """あなたの回答の確信度を0.0から1.0の数値で評価してください。
+    EVAL_PROMPT = """以下の基準に基づいて、回答の確信度を0.0から1.0の数値で評価してください。
 
-評価基準:
-- 1.0: 確実に正しい（複数の信頼できる情報源で確認済み）
-- 0.8: ほぼ確実（信頼できる情報源あり）
-- 0.6: やや確信あり（関連情報あり、完全ではない）
-- 0.4: 不確実（情報が限定的または曖昧）
+【評価基準】
+1. 正確性 (Accuracy):
+   - 回答は提供された情報源（検索結果）に基づいているか？
+   - 情報源にない情報を捏造していないか？
+2. 適切性 (Relevance):
+   - ユーザーの質問に直接的かつ明確に答えているか？
+   - 質問の意図を正しく理解しているか？
+3. スタイル (Style):
+   - 親しみやすく、丁寧な日本語（です・ます調）か？
+   - 読みやすい構成か？
+
+【スコアの目安】
+- 1.0: 完全に正確で、適切かつスタイルも完璧（複数の信頼できる情報源で確認済み）
+- 0.8: ほぼ確実（信頼できる情報源あり、回答も適切）
+- 0.6: やや確信あり（関連情報はあるが、完全ではない、またはスタイルに改善の余地あり）
+- 0.4: 不確実（情報が限定的、または質問への回答として不十分）
 - 0.2: 推測に近い（根拠が弱い）
-- 0.0: 全く分からない
+- 0.0: 全く分からない、または不適切な回答
 
 質問: {query}
 回答: {answer}
@@ -354,6 +427,9 @@ class LLMSelfEvaluator:
         )
 
         try:
+            # --- [IPO LOG] PROCESS INPUT (GRACE SELF-EVAL) ---
+            logger.info(f"\n{'='*20} [GRACE SELF-EVAL IPO: INPUT] {'='*20}\n{prompt}\n{'='*60}")
+
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
@@ -363,8 +439,17 @@ class LLMSelfEvaluator:
                 )
             )
 
+            # レスポンスがNoneの場合の処理
+            if response is None or response.text is None:
+                logger.warning("LLM self-evaluation returned empty response")
+                return 0.5  # デフォルト値
+
             # 数値を抽出
             text = response.text.strip()
+            
+            # --- [IPO LOG] PROCESS OUTPUT (GRACE SELF-EVAL) ---
+            logger.info(f"\n{'='*20} [GRACE SELF-EVAL IPO: OUTPUT] {'='*20}\n{text}\n{'='*60}")
+
             confidence = float(text)
             result = min(1.0, max(0.0, confidence))
 

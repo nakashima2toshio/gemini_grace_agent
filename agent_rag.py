@@ -43,6 +43,7 @@ from ui.pages import (
     show_qdrant_registration_page,
     show_qdrant_page,
     show_qdrant_search_page,
+    show_grace_chat_page,
 )
 from ui.pages.agent_chat_page import show_agent_chat_page
 from ui.pages.log_viewer_page import show_log_viewer_page
@@ -68,6 +69,7 @@ def main():
             options=[
                 "explanation", # <-- Moved to top
                 "agent_chat",
+                "grace_chat",
                 "log_viewer",
                 "rag_download",
                 "qa_generation",
@@ -77,7 +79,8 @@ def main():
             ],
             format_func=lambda x: {
                 "explanation": "📖 説明", # <-- Label for explanation
-                "agent_chat": "🤖 エージェント対話",
+                "agent_chat": "🤖 エージェント対話 (Legacy)",
+                "grace_chat": "🧠 GRACE エージェント (New)",
                 "log_viewer": "📊 未回答ログ",
                 "rag_download": "📥 RAGデータダウンロード",
                 "qa_generation": "🤖 Q/A生成",
@@ -94,6 +97,7 @@ def main():
     # 選択された画面を表示
     page_mapping = {
         "agent_chat": show_agent_chat_page,
+        "grace_chat": show_grace_chat_page,
         "log_viewer": show_log_viewer_page,
         "explanation": show_system_explanation_page,
         "rag_download": show_rag_download_page,

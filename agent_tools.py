@@ -116,27 +116,99 @@ def list_rag_collections() -> str:
         raise QdrantConnectionError(f"Qdrant接続エラー、またはコレクション一覧の取得に失敗しました: {str(e)}")
 
 
+def filter_results_by_keywords(results: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+    """
+    検索結果をクエリのキーワードでフィルタリングする（共通ロジック）
+    Legacy Agentと同じく、スペース区切りのトークンを必須キーワードとして扱う。
+    """
+    import re
+    
+    # 必須キーワードの抽出（Legacyと同一ロジック: スペース区切り）
+    tokens = query.split()
+    required_keywords = []
+    
+    for t in tokens:
+        # 2文字以上で、かつ記号のみでないものを採用
+        if len(t) >= 2:
+             required_keywords.append(t)
+
+    required_keywords = list(set(required_keywords))
+    logger.info(f"Filtering Logic - Required keywords: {required_keywords}")
+
+    filtered_results = []
+    for res in results:
+        payload = res.get("payload", {})
+        content = (str(payload.get("question", "")) + " " + 
+                   str(payload.get("answer", "")) + " " + 
+                   str(payload.get("content", "")))
+
+        is_relevant = True
+        if required_keywords:
+            # キーワードが1つでも含まれていればOKとする（緩やかなAND条件）
+            # Legacy Agentでは「キーワードを含めてください」と指示しているため、
+            # 検索結果にそれらが含まれることを期待するが、
+            # 全てが含まれるとは限らないため、ヒット数で判定。
+            hit_count = sum(1 for k in required_keywords if k in content)
+            
+            # 1つもヒットしない場合は除外
+            if hit_count == 0:
+                is_relevant = False
+                logger.debug(f"Keyword miss (score={res.get('score', 0):.3f}): Filtering out.")
+
+        if is_relevant:
+            filtered_results.append(res)
+            
+    return filtered_results
+
+
 def search_rag_knowledge_base(
     query: str,
     collection_name: Optional[str] = None
 ) -> str:
     """
-    Qdrantデータベースから専門的な知識を検索します。
-    ユーザーが「仕様」「設定」「Wikipediaの知識」「事実確認」など、
-    外部知識が必要な詳細について質問した場合にこのツールを使用してください。
+    Qdrantデータベースから専門的な知識を検索します（Legacy String Output版）。
+    """
+    # デフォルトコレクションの解決（表示用）
+    effective_collection = collection_name if collection_name else AgentConfig.RAG_DEFAULT_COLLECTION
+
+    results = search_rag_knowledge_base_structured(query, collection_name)
     
-    **重要: 一般的なプログラミング言語の文法や使い方に関する質問には、このツールを使用しないでください。**
-    Args:
-        query: 検索したいキーワードや質問文。
-        collection_name: 検索対象のQdrantコレクション名。
-    Returns:
-        str: 検索されたドキュメントの内容（質問と回答のペア）。
+    if isinstance(results, str): # Error or No Result strings
+        return results
+        
+    formatted_results: List[str] = []
+    for i, res in enumerate(results, 1):
+        score: float = res.get("score", 0.0)
+        payload: Dict[str, Any] = res.get("payload", {})
+        q: str = payload.get("question", "N/A")
+        a: str = payload.get("answer", "N/A")
+        # source: str = payload.get("source", "unknown") # ファイル名は使用しない
+
+        formatted_results.append(
+            f"--- Result {i} [Score: {score:.4f}] ---\n"
+            f"Q: {q}\n"
+            f"A: {a}\n"
+            f"Source: {effective_collection}\n"
+        )
+
+    if not formatted_results:
+        return "[[NO_RAG_RESULT_LOW_SCORE]] 検索結果は見つかりましたが、関連性スコアが低すぎたため採用しませんでした。"
+
+    return "\n".join(formatted_results)
+
+
+def search_rag_knowledge_base_structured(
+    query: str,
+    collection_name: Optional[str] = None
+) -> Union[List[Dict[str, Any]], str]:
+    """
+    Qdrantデータベースから専門的な知識を検索します（構造化データ版）。
     """
     if collection_name is None:
         collection_name = AgentConfig.RAG_DEFAULT_COLLECTION
 
     start_time: float = time.time()
-    logger.info(f"ツールアクション: RAG検索を実行: query='{query}', collection='{collection_name}'")
+    logger.info(f"ツールアクション(Structured): RAG検索を実行: query='{query}', collection='{collection_name}'")
 
     metrics: SearchMetrics = SearchMetrics(
         query=query,
@@ -153,20 +225,17 @@ def search_rag_knowledge_base(
 
         existing_collections: List[str] = [c.name for c in client.get_collections().collections]
         if collection_name not in existing_collections:
-            error_msg: str = f"コレクション '{collection_name}' はQdrantサーバーに存在しません。利用可能なコレクション: {existing_collections}"
+            error_msg: str = f"コレクション '{collection_name}' はQdrantサーバーに存在しません。"
             logger.warning(error_msg)
             raise CollectionNotFoundError(error_msg)
 
-        query_vector: List[float] = embed_query(query) # Assuming embed_query returns List[float]
+        query_vector: List[float] = embed_query(query)
         if query_vector is None:
             raise EmbeddingError("クエリの埋め込み生成に失敗しました。")
             
-        # Sparse Vector生成 (Hybrid Search用)
-        # 常に生成するが、検索時にコレクション側が対応していなければ無視される可能性がある
-        # エラーハンドリングは qdrant_client_wrapper 側で吸収することを期待
         sparse_vector = embed_sparse_query_unified(query)
 
-        results: List[Dict[str, Any]] = search_collection( # Assuming search_collection returns List[Dict[str, Any]]
+        results: List[Dict[str, Any]] = search_collection(
             client=client,
             collection_name=collection_name,
             query_vector=query_vector,
@@ -176,80 +245,32 @@ def search_rag_knowledge_base(
 
         metrics.total_results = len(results) if results else 0
 
-        # 結果がない場合の詳細フィードバック
         if not results:
             metrics.latency_ms = (time.time() - start_time) * 1000.0
             _search_metrics_log.append(metrics)
-            logger.info("検索結果: 0件")
-            return (
-                f"[[NO_RAG_RESULT]] 検索結果が見つかりませんでした。"
-                f"コレクション: '{collection_name}'。"
-                f"クエリ: '{query}'。"
-            )
+            return f"[[NO_RAG_RESULT]] 検索結果が見つかりませんでした。コレクション: '{collection_name}'."
 
         scores: List[float] = [res.get("score", 0.0) for res in results]
         metrics.scores = scores
         metrics.top_score = max(scores) if scores else 0.0
 
-        formatted_results: List[str] = []
-        for i, res in enumerate(results, 1):
-            score: float = res.get("score", 0.0)
+        # ============ 共通フィルタリングロジックの適用 ============
+        filtered_results = filter_results_by_keywords(results, query)
 
-            if score < AgentConfig.RAG_SCORE_THRESHOLD:
-                continue
+        # スコア閾値適用
+        final_results = [r for r in filtered_results if r.get("score", 0.0) >= AgentConfig.RAG_SCORE_THRESHOLD]
 
-            payload: Dict[str, Any] = res.get("payload", {})
-            q: str = payload.get("question", "N/A")
-            a: str = payload.get("answer", "N/A")
-            source: str = payload.get("source", "unknown")
-
-            formatted_results.append(
-                f"Result {i} (Score: {score:.2f}):\n"
-                f"Q: {q}\n"
-                f"A: {a}\n"
-                f"Source: {source}"
-            )
-
-        metrics.filtered_results = len(formatted_results)
+        metrics.filtered_results = len(final_results)
         metrics.latency_ms = (time.time() - start_time) * 1000.0
         _search_metrics_log.append(metrics)
 
-        logger.info(
-            f"検索完了: {metrics.filtered_results}/{metrics.total_results} results, "
-            f"top_score={metrics.top_score:.2f}, latency={metrics.latency_ms:.1f}ms"
-        )
+        if not final_results:
+            if filtered_results:
+                return f"[[NO_RAG_RESULT_LOW_SCORE]] スコア閾値未満の結果のみでした。最高スコア: {metrics.top_score:.2f}"
+            return f"[[RAG_SEARCH_FAILED]] 必須キーワードを含む結果が見つかりませんでした。"
 
-        # 閾値以下の結果しかなかった場合の詳細フィードバック
-        if not formatted_results:
-            first_q = results[0].get("payload", {}).get("question", "N/A") if results else "N/A"
-            return (
-                f"[[NO_RAG_RESULT_LOW_SCORE]] 検索結果は見つかりましたが、関連性スコアが低すぎたため採用しませんでした。"
-                f"コレクション: '{collection_name}'。"
-                f"ヒット数 (閾値未満): {metrics.total_results}件。"
-                f"最高スコア: {metrics.top_score:.2f}。"
-                f"参考 (最高スコアのQ): '{first_q[:50]}...'。"
-                f"クエリ: '{query}'。"
-            )
+        return final_results
 
-        return "\n".join(formatted_results)
-
-    except (QdrantConnectionError, CollectionNotFoundError, EmbeddingError) as e:
-        logger.error(f"RAGツールエラー: {e}", exc_info=True)
-        metrics.error = str(e)
-        metrics.latency_ms = (time.time() - start_time) * 1000.0
-        _search_metrics_log.append(metrics)
-        return f"[[RAG_TOOL_ERROR]] エラーが発生しました: {str(e)}"
-    except UnexpectedResponse as e:
-        error_msg: str = f"Qdrantサーバーからの予期せぬ応答: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        metrics.error = error_msg
-        metrics.latency_ms = (time.time() - start_time) * 1000.0
-        _search_metrics_log.append(metrics)
-        return f"[[RAG_TOOL_ERROR]] 検索中にQdrantサーバーエラーが発生しました: {str(e)}"
     except Exception as e:
-        error_msg: str = f"予期せぬエラーが発生しました: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        metrics.error = error_msg
-        metrics.latency_ms = (time.time() - start_time) * 1000.0
-        _search_metrics_log.append(metrics)
-        return f"[[RAG_TOOL_ERROR]] 検索中に予期せぬエラーが発生しました: {str(e)}"
+        logger.error(f"RAGツールエラー: {e}", exc_info=True)
+        return f"[[RAG_TOOL_ERROR]] エラーが発生しました: {str(e)}"

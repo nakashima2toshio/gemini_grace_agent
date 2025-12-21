@@ -92,7 +92,7 @@ qdrant:
   url: "http://localhost:6333"
   collection_name: "customer_support_faq"
   search_limit: 5
-  score_threshold: 0.7
+  score_threshold: 0.45
 
 # -----------------------------------------------------------------------------
 # ツール設定

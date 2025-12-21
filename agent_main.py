@@ -10,9 +10,55 @@ import datetime
 from typing import Dict, List, Any, Optional, Union, Tuple # Added Union, Tuple
 from config import AgentConfig, PathConfig
 from agent_tools import search_rag_knowledge_base, list_rag_collections, RAGToolError
+from qdrant_client import QdrantClient
+from services.qdrant_service import get_all_collections
 
-# Define SYSTEM_INSTRUCTION here or move to config.py for better type hinting if it contains f-strings
-SYSTEM_INSTRUCTION: str = f"""
+def get_system_instruction() -> str:
+    """
+    Qdrantから最新のコレクション一覧を取得し、
+    それに基づいてシステム指示を動的に生成する。
+    """
+    # Qdrantクライアント初期化
+    # AgentConfigにはQDRANT_URLがない場合があるため、config.pyのQdrantConfigを参照するか、
+    # 環境変数、またはデフォルト値を使用する。ここでは安全のため直接QdrantConfig的な値を使うか、
+    # 既存のconfig.pyのインポートを利用する。
+    from config import QdrantConfig # 遅延インポートで循環参照回避
+    
+    collection_names = []
+    try:
+        client = QdrantClient(url=QdrantConfig.URL)
+        collections = get_all_collections(client)
+        collection_names = [c["name"] for c in collections]
+    except Exception as e:
+        logger.warning(f"Failed to fetch collections dynamically: {e}")
+        # フォールバック
+        collection_names = ["(現在利用可能なコレクションはありません)"]
+
+    if not collection_names:
+        collection_names = ["(現在利用可能なコレクションはありません)"]
+
+    # リストをカンマ区切り文字列に
+    collections_str = ", ".join(collection_names)
+    
+    # コレクションごとのヒントも動的に生成
+    collection_hints = []
+    for name in collection_names:
+        if "wikipedia" in name:
+            collection_hints.append(f"    *   「Wikipedia」や一般的な知識に関する質問であれば、`{name}` コレクションを使用してください。")
+        elif "livedoor" in name:
+            collection_hints.append(f"    *   「ニュース」や「ブログ記事」に関する質問であれば、`{name}` コレクションを使用してください。")
+        elif "cc_news" in name:
+            collection_hints.append(f"    *   「英語ニュース」に関する質問であれば、`{name}` コレクションを使用してください。")
+        elif "japanese_text" in name:
+            collection_hints.append(f"    *   「日本語Webテキスト」に関する質問であれば、`{name}` コレクションを使用してください。")
+    
+    # ヒントがない場合のデフォルト
+    if not collection_hints:
+        collection_hints.append("    *   質問の内容に最も関連しそうな名前のコレクションを選択してください。")
+
+    hints_str = "\n".join(collection_hints)
+
+    return f"""
 あなたは、社内ドキュメント検索システムと連携した「ハイブリッド・ナレッジ・エージェント」です。
 あなたの役割は、ユーザーの質問に対して、一般的な知識と、提供されたツール（社内ナレッジ検索）を適切に使い分けて回答することです。
 
@@ -32,12 +78,11 @@ SYSTEM_INSTRUCTION: str = f"""
         *   **ただし、一般的なプログラミング言語の文法や使い方に関する質問にはツールを使用しないでください。**
     *   **ツールの利用時には、必要に応じて `collection_name` 引数に、検索対象のQdrantコレクション名を指定してください。**
     *   **現在利用可能なコレクションは以下の通りです:**
-        {", ".join(AgentConfig.RAG_AVAILABLE_COLLECTIONS)}
+        {collections_str}
     *   あなたの事前学習知識だけで回答せず、必ずツールからの情報を優先してください。
 
 2.  **コレクション選択のヒント**:
-    *   「Wikipedia」に関する質問であれば、`qa_a02_qa_pairs_wikipedia_ja` コレクションを使用してください。
-    *   「ライブドアニュース」に関する質問であれば、`qa_a02_qa_pairs_livedoor` コレクションを使用してください。
+{hints_str}
     *   その他の一般的な質問や、コレクションが特定できない場合は、デフォルトのコレクションを使用してください。
 
 3.  **一般的な会話**:
@@ -78,10 +123,15 @@ def setup_agent() -> ChatSession: # Return type ChatSession
         raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY not found in environment variables.")
     genai.configure(api_key=api_key)
     tools_list: List[Any] = [search_rag_knowledge_base, list_rag_collections] # List of functions
+    
+    # 動的にシステム指示を生成
+    system_instruction = get_system_instruction()
+    logger.info("System instruction generated dynamically.")
+    
     model: GenerativeModel = genai.GenerativeModel(
         model_name=AgentConfig.MODEL_NAME,
         tools=tools_list,
-        system_instruction=SYSTEM_INSTRUCTION
+        system_instruction=system_instruction
     )
     chat: ChatSession = model.start_chat(enable_automatic_function_calling=False)
     return chat
@@ -109,12 +159,24 @@ def run_agent_turn(chat_session: ChatSession, user_input: str, return_tool_info:
     """
     logger.info(f"User Input: {user_input}")
     
+    # --- [IPO LOG] INITIAL INPUT (LEGACY AGENT) ---
+    logger.info(f"\n{'='*20} [LEGACY AGENT IPO: INITIAL INPUT] {'='*20}\n{user_input}\n{'='*60}")
+    
     tool_info: Dict[str, Any] = {"tool_used": False, "tool_name": None, "collection_name": None}
     final_response_text: str = ""
     
     response = chat_session.send_message(user_input)
     
     while True:
+        # --- [IPO LOG] LLM RESPONSE (LEGACY AGENT) ---
+        parts_log = []
+        for part in response.parts:
+            if part.text:
+                parts_log.append(f"[Text]: {part.text.strip()}")
+            if part.function_call:
+                parts_log.append(f"[Function Call]: {part.function_call.name}({part.function_call.args})")
+        logger.info(f"\n{'='*20} [LEGACY AGENT IPO: LLM OUTPUT] {'='*20}\n" + "\n".join(parts_log) + f"\n{'='*60}")
+
         function_call_found: bool = False
         
         for part in response.parts:
@@ -156,6 +218,9 @@ def run_agent_turn(chat_session: ChatSession, user_input: str, return_tool_info:
 
                 log_tool_result: str = str(tool_result)[:500] + "..." if len(str(tool_result)) > 500 else str(tool_result)
                 logger.info(f"Tool Result: {log_tool_result}")
+                
+                # --- [IPO LOG] TOOL RESULT AS INPUT (LEGACY AGENT) ---
+                logger.info(f"\n{'='*20} [LEGACY AGENT IPO: TOOL RESULT INPUT] {'='*20}\n{log_tool_result}\n{'='*60}")
                 
                 response = chat_session.send_message(
                     [genai.protos.Part(

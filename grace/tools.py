@@ -13,7 +13,12 @@ from qdrant_client import QdrantClient
 from google import genai
 from google.genai import types
 
+# Import wrappers for robust execution
+from qdrant_client_wrapper import search_collection, embed_query_unified, embed_sparse_query_unified
+from services.qdrant_service import get_collection_embedding_params
+
 from .config import get_config, GraceConfig
+from regex_mecab import KeywordExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +71,14 @@ class RAGSearchTool(BaseTool):
         self.config = config or get_config()
         self.qdrant_url = qdrant_url or self.config.qdrant.url
         self._client: Optional[QdrantClient] = None
+        
+        # KeywordExtractorの初期化
+        try:
+            self.keyword_extractor = KeywordExtractor(prefer_mecab=True)
+            logger.info("RAGSearchTool: KeywordExtractor initialized")
+        except Exception as e:
+            logger.warning(f"RAGSearchTool: Failed to initialize KeywordExtractor: {e}")
+            self.keyword_extractor = None
 
     @property
     def client(self) -> QdrantClient:
@@ -83,81 +96,64 @@ class RAGSearchTool(BaseTool):
         **kwargs
     ) -> ToolResult:
         """
-        RAG検索を実行
+        RAG検索を実行（Legacy Proven Logic委譲版）
 
         Args:
             query: 検索クエリ
             collection: 検索対象コレクション
-            limit: 取得件数上限
-            score_threshold: スコア閾値
+            limit: 取得件数上限（現在はLegacy側に固定されているが、将来的に拡張可能）
+            score_threshold: スコア閾値（現在はLegacy側のAgentConfigを参照）
 
         Returns:
-            ToolResult: 検索結果とConfidence計算用の統計情報
+            ToolResult: 検索結果
         """
         import time
+        from agent_tools import search_rag_knowledge_base_structured
+        
         start_time = time.time()
-
-        collection = collection or self.config.qdrant.collection_name
-        limit = limit or self.config.qdrant.search_limit
-        score_threshold = score_threshold or self.config.qdrant.score_threshold
-
-        logger.info(f"RAG search: query='{query[:50]}...', collection={collection}")
+        logger.info(f"RAG search (Native): query='{query[:50]}...', collection={collection}")
 
         try:
-            # 既存のqdrant_serviceを使用してクエリをベクトル化
-            from services.qdrant_service import (
-                embed_query_for_search,
-                get_collection_embedding_params
-            )
-
-            # コレクションのEmbedding設定を取得
-            params = get_collection_embedding_params(self.client, collection)
-            model = params.get("model", "gemini-embedding-001")
-            dims = params.get("dims", 3072)
-
-            # クエリをベクトル化
-            query_vector = embed_query_for_search(query, model=model, dims=dims)
-
-            # 検索実行
-            results = self.client.search(
-                collection_name=collection,
-                query_vector=query_vector,
-                limit=limit,
-                with_payload=True,
-                score_threshold=score_threshold
-            )
-
-            # 結果を整形
-            search_results = []
-            scores = []
-
-            for result in results:
-                scores.append(result.score)
-                search_results.append({
-                    "id": result.id,
-                    "score": result.score,
-                    "payload": result.payload
-                })
-
-            # Confidence計算用の統計情報
-            confidence_factors = self._calculate_confidence_factors(scores)
-
+            # 実績のあるLegacyロジック（キーワードフィルタリング等を含む）を呼び出し
+            # results は List[Dict] または str (エラー/メッセージ)
+            results = search_rag_knowledge_base_structured(query, collection)
+            
             execution_time = int((time.time() - start_time) * 1000)
 
-            logger.info(
-                f"RAG search completed: {len(search_results)} results, "
-                f"avg_score={confidence_factors['avg_score']:.3f}"
-            )
+            if isinstance(results, str):
+                # 結果なし、またはエラーメッセージの場合
+                logger.info(f"RAG search returned message: {results}")
+                
+                # エラー文字列が含まれているかチェック
+                is_error = "ERROR" in results or "FAILED" in results
+                
+                return ToolResult(
+                    success=False,
+                    output=[],
+                    error=results if is_error else None,
+                    confidence_factors={
+                        "result_count": 0,
+                        "avg_score": 0.0,
+                        "message": results
+                    },
+                    execution_time_ms=execution_time
+                )
+
+            # 成功時
+            scores = [r.get("score", 0.0) for r in results]
+            confidence_factors = self._calculate_confidence_factors(scores)
+            
+            logger.info(f"RAG search SUCCESS: {len(results)} results found via Legacy Logic.")
 
             return ToolResult(
                 success=True,
-                output=search_results,
+                output=results,
                 confidence_factors=confidence_factors,
                 execution_time_ms=execution_time
             )
 
         except Exception as e:
-            logger.error(f"RAG search failed: {e}")
+            logger.error(f"RAG search failed in Tool wrapper: {e}", exc_info=True)
             return ToolResult(
                 success=False,
                 output=None,
@@ -243,6 +239,9 @@ class ReasoningTool(BaseTool):
             # プロンプト構築
             prompt = self._build_prompt(query, context, sources)
 
+            # --- [IPO LOG] PROCESS INPUT (GRACE REASONING) ---
+            logger.info(f"\n{'='*20} [GRACE REASONING IPO: INPUT] {'='*20}\n{prompt}\n{'='*60}")
+
             # LLM呼び出し
             response = self.client.models.generate_content(
                 model=self.model_name,
@@ -254,6 +253,10 @@ class ReasoningTool(BaseTool):
             )
 
             answer = response.text
+
+            # --- [IPO LOG] PROCESS OUTPUT (GRACE REASONING) ---
+            logger.info(f"\n{'='*20} [GRACE REASONING IPO: OUTPUT] {'='*20}\n{answer}\n{'='*60}")
+
             execution_time = int((time.time() - start_time) * 1000)
 
             # トークン使用量（利用可能な場合）
@@ -292,47 +295,56 @@ class ReasoningTool(BaseTool):
         context: Optional[str],
         sources: Optional[List[Dict]]
     ) -> str:
-        """推論用プロンプトを構築"""
+        """
+        推論用プロンプトを構築（高度化版）
+        Legacy Agentの知見を活かした指示セットを使用。
+        """
         prompt_parts = []
 
         # システム指示
         prompt_parts.append(
-            "あなたは正確で役立つ回答を生成するアシスタントです。\n"
-            "提供された情報を元に、ユーザーの質問に対して明確で具体的な回答を生成してください。\n"
+            "あなたは社内ドキュメント検索システムと連携した「ハイブリッド・ナレッジ・エージェント」です。\n"
+            "提供された【参照情報】を元に、ユーザーの質問に対して正確で誠実な回答を生成してください。\n"
         )
 
-        # ソース情報
+        # ソース情報（RAG結果）
         if sources:
-            prompt_parts.append("\n【参照情報】")
+            prompt_parts.append("\n### 【参照情報】")
             for i, source in enumerate(sources, 1):
                 payload = source.get("payload", {})
                 score = source.get("score", 0)
+                col = source.get("collection", "unknown")
 
-                # ペイロードから関連情報を抽出
                 question = payload.get("question", "")
                 answer = payload.get("answer", "")
                 content = payload.get("content", "")
+                src_file = payload.get("source", "unknown")
 
-                prompt_parts.append(f"\n--- ソース {i} (関連度: {score:.2f}) ---")
+                prompt_parts.append(f"\n--- 情報源 {i} (信頼度: {score:.2f}, コレクション: {col}) ---")
                 if question:
                     prompt_parts.append(f"Q: {question}")
                 if answer:
                     prompt_parts.append(f"A: {answer}")
                 if content and not (question or answer):
-                    prompt_parts.append(content[:500])
+                    prompt_parts.append(content[:1000])
+                prompt_parts.append(f"出典: {src_file}")
 
-        # コンテキスト
+        # 追加コンテキスト（他ステップの結果など）
         if context:
-            prompt_parts.append(f"\n【追加コンテキスト】\n{context}")
+            prompt_parts.append(f"\n### 【補足コンテキスト】\n{context}")
 
         # ユーザーの質問
-        prompt_parts.append(f"\n【ユーザーの質問】\n{query}")
+        prompt_parts.append(f"\n### 【ユーザーの質問】\n{query}")
 
-        # 回答指示
+        # 回答のルール
         prompt_parts.append(
-            "\n【回答指示】\n"
-            "上記の情報を元に、ユーザーの質問に対して明確で具体的な回答を生成してください。"
-            "情報が不足している場合は、その旨を伝えてください。"
+            "\n### 【回答の構成ルール（最重要）】\n"
+            "1. **正確性と誠実さ**: 参照情報にある事実のみを述べてください。情報がない場合は「提供された情報源には見当たりませんでした」と正直に回答してください。\n"
+            "2. **判明した事実を優先**: 質問に対する直接的な回答が見つかった場合は、それを最初に簡潔に述べてください。\n"
+            "3. **出典の明示**: 回答の根拠となった情報がある場合、「社内ナレッジ（出典ファイル名）によると...」の形式で出典を明示してください。\n"
+            "4. **丁寧な日本語**: です・ます調で、読みやすく構造化（箇条書き等）して回答してください。\n"
+            "5. **捏造禁止**: あなた自身の事前知識で情報を補完したり、勝手な推測で回答を作成したりしないでください。\n"
+            "\n上記のルールに従い、プロフェッショナルな回答を生成してください。"
         )
 
         return "\n".join(prompt_parts)

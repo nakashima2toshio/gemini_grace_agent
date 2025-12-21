@@ -16,6 +16,10 @@ from .schemas import (
     validate_plan_dependencies,
 )
 from .config import get_config, GraceConfig
+from services.qdrant_service import get_all_collections
+from qdrant_client import QdrantClient
+from services.prompts import SEARCH_QUERY_INSTRUCTION
+from regex_mecab import KeywordExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +28,21 @@ logger = logging.getLogger(__name__)
 # プロンプト定義
 # =============================================================================
 
-PLAN_GENERATION_PROMPT = """
+PLAN_GENERATION_PROMPT = f"""
 あなたは計画策定の専門家です。ユーザーの質問を分析し、回答を生成するための実行計画を作成してください。
 
 【利用可能なアクション】
 - rag_search: ベクトルDB（Qdrant）から関連情報を検索
-- web_search: Web検索（最新情報が必要な場合）
 - reasoning: 収集した情報を分析・統合して回答を生成
 - ask_user: ユーザーに追加情報や確認を求める
+
+【利用可能なコレクション (rag_search用)】
+{{available_collections}}
+
+【コレクション選択のルール (重要)】
+- **rag_search の collection 引数は、最初に "wikipedia_ja" を指定してください。**
+- 一般的な知識・人物・事実の検索には "wikipedia_ja" が最適です。
+- 他のコレクション（livedoor, cc_news, japanese_text）は、wikipedia_jaで見つからない場合にのみ使用してください。
 
 【計画作成のルール】
 1. 最小限のステップで目標を達成すること（通常2-5ステップ）
@@ -39,6 +50,9 @@ PLAN_GENERATION_PROMPT = """
 3. 依存関係を正しく設定（depends_onは先行ステップのIDのみ）
 4. 失敗時の代替手段（fallback）を検討
 5. 最後のステップは必ず "reasoning" で回答を生成
+6. コレクションは上記リストから最も適切なものを選択すること（存在しないコレクション名は使用不可）
+
+{SEARCH_QUERY_INSTRUCTION}
 
 【計画の複雑度(complexity)の目安】
 - 0.0-0.3: 単純な質問（1-2ステップ）
@@ -50,7 +64,7 @@ PLAN_GENERATION_PROMPT = """
 - 実行に時間がかかる可能性がある場合
 - 外部リソースへのアクセスが必要な場合
 
-ユーザーの質問: {query}
+ユーザーの質問: {{query}}
 
 JSON形式で実行計画を出力してください。
 """
@@ -91,28 +105,60 @@ class Planner:
         self.config = config or get_config()
         self.model_name = model_name or self.config.llm.model
         self.client = genai.Client()
+        
+        # KeywordExtractorの初期化（Legacy Agentと同一）
+        try:
+            self.keyword_extractor = KeywordExtractor(prefer_mecab=True)
+            logger.info("Planner: KeywordExtractor initialized")
+        except Exception as e:
+            logger.warning(f"Planner: Failed to initialize KeywordExtractor: {e}")
+            self.keyword_extractor = None
 
         logger.info(f"Planner initialized with model: {self.model_name}")
 
     def create_plan(self, query: str) -> ExecutionPlan:
         """
-        質問から実行計画を生成
+        質問から実行計画を生成（LLM使用版 - 本来のロジック）
 
         Args:
             query: ユーザーの質問
 
         Returns:
-            ExecutionPlan: 生成された実行計画
-
-        Raises:
-            ValueError: 計画生成に失敗した場合
+            ExecutionPlan: LLMが生成した実行計画
         """
-        logger.info(f"Creating plan for query: {query[:50]}...")
+        logger.info(f"Creating execution plan for: {query[:50]}...")
+
+        # --- Legacy Agentと同一の入力加工 ---
+        augmented_query = query
+        if self.keyword_extractor:
+            try:
+                keywords = self.keyword_extractor.extract(query, top_n=5)
+                if keywords:
+                    keywords_str = ", ".join(keywords)
+                    augmented_query = f"{query}\n\n【重要: 検索クエリ作成の指示】\n以下の抽出された重要キーワードを、必ず検索クエリに含めてください。\n重要キーワード: {keywords_str}"
+                    logger.info(f"Augmented query with keywords: {keywords_str}")
+            except Exception as e:
+                logger.warning(f"Keyword extraction failed: {e}")
+        # ------------------------------------
 
         try:
-            # Gemini APIで構造化出力を生成
-            prompt = PLAN_GENERATION_PROMPT.format(query=query)
+            # 利用可能なコレクションを取得
+            available_collections = self._get_available_collections()
+            collections_str = ", ".join(available_collections) if available_collections else "(コレクションなし)"
 
+            # 複雑度を推定
+            complexity = self.estimate_complexity(query)
+
+            # プロンプトを構築
+            prompt = PLAN_GENERATION_PROMPT.format(
+                available_collections=collections_str,
+                query=augmented_query  # 加工済みクエリを使用
+            ) + "\n\nIMPORTANT: Ensure the output is a valid, complete JSON object. Do not truncate the response."
+
+            # --- [IPO LOG] PROCESS INPUT (GRACE PLANNER) ---
+            logger.info(f"\n{'='*20} [GRACE PLANNER IPO: INPUT] {'='*20}\n{prompt}\n{'='*60}")
+
+            # LLMで計画生成（JSON出力）
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
@@ -120,11 +166,14 @@ class Planner:
                     response_mime_type="application/json",
                     response_schema=ExecutionPlan,
                     temperature=self.config.llm.temperature,
-                    max_output_tokens=self.config.llm.max_tokens,
+                    max_output_tokens=8192,
                 )
             )
 
-            # レスポンスをパース
+            # --- [IPO LOG] PROCESS OUTPUT (GRACE PLANNER) ---
+            logger.info(f"\n{'='*20} [GRACE PLANNER IPO: OUTPUT] {'='*20}\n{response.text}\n{'='*60}")
+
+            # JSONをパースしてExecutionPlanに変換
             plan = ExecutionPlan.model_validate_json(response.text)
 
             # 計画IDを設定
@@ -133,19 +182,54 @@ class Planner:
             # 依存関係を検証
             errors = validate_plan_dependencies(plan)
             if errors:
-                logger.warning(f"Plan dependency warnings: {errors}")
+                logger.warning(f"Plan validation errors: {errors}")
+                # エラーがあってもフォールバックせず、警告のみ
 
             logger.info(
-                f"Plan created: {plan.plan_id} with {len(plan.steps)} steps, "
-                f"complexity={plan.complexity:.2f}"
+                f"Plan created: {len(plan.steps)} steps, "
+                f"complexity={plan.complexity:.2f}, "
+                f"requires_confirmation={plan.requires_confirmation}"
             )
 
             return plan
 
         except Exception as e:
-            logger.error(f"Failed to create plan: {e}")
-            # フォールバック: 単純な計画を生成
+            logger.error(f"Failed to create plan with LLM: {e}")
+            logger.info("Falling back to simple plan")
             return self._create_fallback_plan(query)
+
+    def _create_plan_legacy(self, query: str) -> ExecutionPlan:
+        """
+        質問から実行計画を生成（Legacy Agent委譲版 - バックアップ）
+        """
+        return ExecutionPlan(
+            original_query=query,
+            complexity=0.1,
+            estimated_steps=1,
+            requires_confirmation=False,
+            steps=[
+                PlanStep(
+                    step_id=1,
+                    action="run_legacy_agent",
+                    description="Legacy Agent (ReAct) を実行して回答を生成",
+                    query=query,
+                    expected_output="ユーザーへの回答",
+                    fallback=None
+                )
+            ],
+            success_criteria="ユーザーの質問に適切に回答できている",
+            plan_id=create_plan_id()
+        )
+
+    def _get_available_collections(self) -> list:
+        """利用可能なQdrantコレクションを取得"""
+        try:
+            client = QdrantClient(url=self.config.qdrant.url)
+            cols = get_all_collections(client)
+            return [c["name"] for c in cols]
+        except Exception as e:
+            logger.warning(f"Failed to get collections: {e}")
+            return self.config.qdrant.search_priority  # デフォルトリストを返す
 
     def _create_fallback_plan(self, query: str) -> ExecutionPlan:
         """
@@ -168,8 +252,9 @@ class Planner:
                 PlanStep(
                     step_id=1,
                     action="rag_search",
-                    description="関連情報をRAG検索で取得",
+                    description="wikipedia_jaから関連情報を検索",
                     query=query,
+                    collection="wikipedia_ja",  # 明示的にwikipedia_jaを指定
                     expected_output="関連するドキュメントや情報",
                     fallback="reasoning"
                 ),

@@ -1,6 +1,6 @@
 # python sample_regex_mecab.py
 # MeCab複合名詞版と正規表現版を統合したロバストなキーワード抽出システム
-
+# [Usage:] List: keywords = extractor.extract(sample_text_jp, top_n=10)
 import re
 from typing import List, Dict, Tuple
 from collections import Counter
@@ -22,20 +22,31 @@ class KeywordExtractor:
         self.prefer_mecab = prefer_mecab
         self.mecab_available = self._check_mecab_availability()
 
-        # ストップワード定義
+        # ストップワード定義 (日本語 + 英語)
         self.stopwords = {
+            # 日本語
             'こと', 'もの', 'これ', 'それ', 'ため', 'よう', 'さん',
             'ます', 'です', 'ある', 'いる', 'する', 'なる', 'できる',
             'いう', '的', 'な', 'に', 'を', 'は', 'が', 'で', 'と',
-            'の', 'から', 'まで', '等', 'など', 'よる', 'おく', 'くる'
+            'の', 'から', 'まで', '等', 'など', 'よる', 'おく', 'くる',
+            # 英語
+            'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+            'have', 'has', 'had', 'having', 'do', 'does', 'did', 'done',
+            'a', 'an', 'the', 'and', 'but', 'or', 'as', 'if', 'when',
+            'at', 'by', 'for', 'with', 'about', 'against', 'between',
+            'into', 'through', 'during', 'before', 'after', 'above',
+            'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off',
+            'over', 'under', 'again', 'further', 'then', 'once', 'this',
+            'that', 'these', 'those', 'which', 'who', 'whom', 'whose',
+            'whose', 'it', 'its', 'they', 'them', 'their', 'theirs'
         }
 
         # 重要キーワードの定義（スコアブースト用）
         self.important_keywords = {
-            'AI', '人工知能', '機械学習', '深層学習', 'ディープラーニング',
-            '自然言語処理', 'NLP', 'トランスフォーマー', 'BERT', 'GPT',
-            'CNN', 'Vision', 'Transformer', '医療', '診断', '自動運転',
-            '倫理', 'バイアス', '課題', '問題', 'モデル', 'データ'
+            'AI', 'Artificial Intelligence', 'Machine Learning', 'Deep Learning',
+            'NLP', 'Natural Language Processing', 'Transformer', 'BERT', 'GPT',
+            'CNN', 'Vision', '医療', 'Diagnosis', 'Autonomous Driving',
+            'Ethics', 'Bias', 'Challenges', 'Issues', 'Model', 'Data'
         }
 
         if self.mecab_available:
@@ -57,7 +68,7 @@ class KeywordExtractor:
     def extract(self, text: str, top_n: int = 5,
                 use_scoring: bool = True) -> List[str]:
         """
-        テキストからキーワードを抽出（自動フォールバック対応）
+        テキストからキーワードを抽出（自動フォールバック・言語判定対応）
 
         Args:
             text: 分析対象テキスト
@@ -67,7 +78,10 @@ class KeywordExtractor:
         Returns:
             キーワードリスト
         """
-        if self.mecab_available and self.prefer_mecab:
+        # 言語判定（日本語文字が含まれているか）
+        is_japanese = bool(re.search(r'[ぁ-んァ-ヶー一-龠]', text))
+
+        if self.mecab_available and self.prefer_mecab and is_japanese:
             try:
                 keywords = self._extract_with_mecab(text, top_n, use_scoring)
                 if keywords:  # 空でなければ成功
@@ -75,7 +89,9 @@ class KeywordExtractor:
             except Exception as e:
                 print(f"⚠️ MeCab抽出エラー: {e}")
 
-        # フォールバック: 正規表現版
+        # 日本語がない、またはMeCabエラー・不可の場合は正規表現版
+        if not is_japanese:
+            print("ℹ️ 英語主体のテキストとして判定されました（正規表現モードを使用）")
         return self._extract_with_regex(text, top_n, use_scoring)
 
     def _extract_with_mecab(self, text: str, top_n: int,
@@ -100,7 +116,8 @@ class KeywordExtractor:
                 # 名詞以外が来たらバッファをフラッシュ
                 if compound_buffer:
                     compound_noun = ''.join(compound_buffer)
-                    if len(compound_noun) > 0:
+                    # 英語のゴミ（スペースが詰まった長大な文字列）を簡易的に除外
+                    if len(compound_noun) > 0 and not (re.match(r'^[A-Za-z]{15,}$', compound_noun)):
                         compound_nouns.append(compound_noun)
                     compound_buffer = []
 
@@ -109,7 +126,7 @@ class KeywordExtractor:
         # 最後のバッファをフラッシュ
         if compound_buffer:
             compound_noun = ''.join(compound_buffer)
-            if len(compound_noun) > 0:
+            if len(compound_noun) > 0 and not (re.match(r'^[A-Za-z]{15,}$', compound_noun)):
                 compound_nouns.append(compound_noun)
 
         # フィルタリングとスコアリング
@@ -133,8 +150,8 @@ class KeywordExtractor:
 
     def _filter_and_count(self, words: List[str], top_n: int) -> List[str]:
         """頻度ベースのフィルタリング（シンプル版）"""
-        # ストップワード除外
-        filtered = [w for w in words if w not in self.stopwords and len(w) > 1]
+        # ストップワード除外 (小文字で比較)
+        filtered = [w for w in words if w.lower() not in self.stopwords and len(w) > 1]
 
         # 頻度カウント
         word_freq = Counter(filtered)
@@ -148,8 +165,8 @@ class KeywordExtractor:
         word_freq = Counter(words)
 
         for word, freq in word_freq.items():
-            # ストップワード除外
-            if word in self.stopwords or len(word) <= 1:
+            # ストップワード除外 (小文字で比較)
+            if word.lower() in self.stopwords or len(word) <= 1:
                 continue
 
             score = 0.0
@@ -162,17 +179,25 @@ class KeywordExtractor:
             length_score = min(len(word) / 8.0, 1.0) * 0.3
             score += length_score
 
-            # 3. 重要キーワードブースト
-            if word in self.important_keywords:
+            # 3. 重要キーワードブースト (部分一致も考慮)
+            is_important = False
+            for imp in self.important_keywords:
+                if imp.lower() in word.lower():
+                    is_important = True
+                    break
+            if is_important:
                 score += 0.5
 
             # 4. 文字種スコア
             # カタカナ3文字以上
             if re.match(r'^[ァ-ヴー]{3,}$', word):
                 score += 0.2
-            # 英大文字2文字以上
+            # 英大文字2文字以上 (頭字語)
             elif re.match(r'^[A-Z]{2,}$', word):
                 score += 0.3
+            # 英語の開始が大文字 (固有名詞の可能性)
+            elif re.match(r'^[A-Z][a-z]+$', word):
+                score += 0.1
             # 漢字4文字以上
             elif re.match(r'^[一-龥]{4,}$', word):
                 score += 0.2
@@ -192,14 +217,17 @@ class KeywordExtractor:
             各手法での抽出結果と詳細スコア
         """
         results = {}
+        is_japanese = bool(re.search(r'[ぁ-んァ-ヶー一-龠]', text))
 
         # MeCab複合名詞版
-        if self.mecab_available:
+        if self.mecab_available and is_japanese:
             try:
                 mecab_keywords = self._extract_with_mecab_scored(text, top_n)
                 results['MeCab複合名詞'] = mecab_keywords
             except Exception as e:
                 results['MeCab複合名詞'] = [(f"エラー: {e}", 0.0)]
+        elif not is_japanese:
+            results['MeCab複合名詞'] = [("(英語テキストのためスキップ)", 0.0)]
 
         # 正規表現版
         regex_keywords = self._extract_with_regex_scored(text, top_n)
@@ -233,9 +261,10 @@ class KeywordExtractor:
     def _extract_integrated(self, text: str, top_n: int) -> List[Tuple[str, float]]:
         """統合版: MeCabと正規表現の結果をマージ"""
         all_keywords = set()
+        is_japanese = bool(re.search(r'[ぁ-んァ-ヶー一-龠]', text))
 
-        # MeCabから抽出
-        if self.mecab_available:
+        # MeCabから抽出 (日本語のみ)
+        if self.mecab_available and is_japanese:
             try:
                 mecab_kws = self._extract_with_mecab(text, top_n * 2, use_scoring=False)
                 all_keywords.update(mecab_kws)
@@ -262,6 +291,10 @@ class KeywordExtractor:
         """キーワードの総合スコアを計算"""
         score = 0.0
 
+        # ストップワード除外
+        if keyword.lower() in self.stopwords:
+            return 0.0
+
         # 出現頻度
         freq = text.count(keyword)
         freq_score = min(freq / 3.0, 1.0) * 0.3
@@ -272,7 +305,12 @@ class KeywordExtractor:
         score += length_score
 
         # 重要キーワード
-        if keyword in self.important_keywords:
+        is_important = False
+        for imp in self.important_keywords:
+            if imp.lower() in keyword.lower():
+                is_important = True
+                break
+        if is_important:
             score += 0.4
 
         # 文字種
@@ -280,6 +318,8 @@ class KeywordExtractor:
             score += 0.15
         elif re.match(r'^[A-Z]{2,}$', keyword):
             score += 0.2
+        elif re.match(r'^[A-Z][a-z]+$', keyword):
+            score += 0.1
         elif re.match(r'^[一-龥]{4,}$', keyword):
             score += 0.15
 
@@ -291,7 +331,7 @@ def compare_methods(text: str, top_n: int = 10):
     extractor = KeywordExtractor()
 
     print("=" * 80)
-    print("キーワード抽出手法の比較")
+    print(f"キーワード抽出手法の比較 (Text: {text[:30].strip()}...)")
     print("=" * 80)
 
     results = extractor.extract_with_details(text, top_n)
@@ -302,119 +342,46 @@ def compare_methods(text: str, top_n: int = 10):
         for i, (keyword, score) in enumerate(keywords, 1):
             print(f"  {i:2d}. {keyword:20s} (スコア: {score:.3f})")
 
-    # 共通キーワードの分析
-    print("\n" + "=" * 80)
-    print("手法間の共通性分析")
-    print("=" * 80)
-
-    keyword_sets = {method: set(kw for kw, _ in kws)
-                   for method, kws in results.items()}
-
-    # 全手法で共通
-    common_all = set.intersection(*keyword_sets.values())
-    if common_all:
-        print(f"\n全手法で共通: {', '.join(common_all)}")
-
-    # MeCabと統合版で共通
-    if 'MeCab複合名詞' in keyword_sets and '統合版' in keyword_sets:
-        common_mecab_int = keyword_sets['MeCab複合名詞'] & keyword_sets['統合版']
-        if common_mecab_int:
-            print(f"MeCab・統合版で共通: {', '.join(common_mecab_int)}")
-
-    # 正規表現と統合版で共通
-    if '正規表現' in keyword_sets and '統合版' in keyword_sets:
-        common_regex_int = keyword_sets['正規表現'] & keyword_sets['統合版']
-        if common_regex_int:
-            print(f"正規表現・統合版で共通: {', '.join(common_regex_int)}")
-
-
-def evaluate_coverage_potential(keywords: List[str],
-                                uncovered_text: str,
-                                analyzer=None) -> Dict[str, float]:
-    """
-    キーワードのカバレージ改善ポテンシャルを評価
-
-    Args:
-        keywords: 抽出されたキーワード
-        uncovered_text: 未カバーのテキスト
-        analyzer: SemanticCoverageインスタンス（オプション）
-
-    Returns:
-        評価指標の辞書
-    """
-    metrics = {}
-
-    # 1. キーワードカバレージ率
-    covered_count = sum(1 for kw in keywords if kw in uncovered_text)
-    metrics['キーワードカバレージ率'] = covered_count / len(keywords) if keywords else 0
-
-    # 2. 複合語率
-    compound_count = sum(1 for kw in keywords if len(kw) >= 4)
-    metrics['複合語率'] = compound_count / len(keywords) if keywords else 0
-
-    # 3. 専門用語率
-    technical_pattern = r'^([ァ-ヴー]{3,}|[A-Z]{2,}|[一-龥]{4,})$'
-    technical_count = sum(1 for kw in keywords if re.match(technical_pattern, kw))
-    metrics['専門用語率'] = technical_count / len(keywords) if keywords else 0
-
-    # 4. 意味的関連度（analyzerが提供された場合）
-    if analyzer is not None:
-        try:
-            keyword_text = ' '.join(keywords)
-            kw_emb = analyzer.generate_embedding(keyword_text)
-            text_emb = analyzer.generate_embedding(uncovered_text)
-            similarity = analyzer.cosine_similarity(kw_emb, text_emb)
-            metrics['意味的関連度'] = similarity
-        except Exception:
-            metrics['意味的関連度'] = 0.0
-
-    return metrics
-
 
 def main():
     """メイン実行関数"""
 
-    # サンプルテキスト
-    sample_text = """
+    # 1. 日本語サンプル
+    sample_text_jp = """
     人工知能（AI）は、機械学習と深層学習を基盤として急速に発展しています。
     特に自然言語処理（NLP）の分野では、トランスフォーマーモデルが革命的な成果を上げました。
     BERTやGPTなどの大規模言語モデルは、文脈理解能力を大幅に向上させています。
-    画像認識の分野では、CNNが主流でしたが、最近ではVision Transformerも注目されています。
     AIの応用は医療診断から自動運転まで幅広く、社会に大きな影響を与えています。
-    しかし、AIの倫理的な課題やバイアスの問題も重要な議論となっています。
     """
 
-    # 基本的な抽出テスト
-    print("=" * 80)
-    print("基本的なキーワード抽出テスト")
-    print("=" * 80)
+    # 2. 英語サンプル
+    sample_text_en = """
+    Artificial intelligence (AI) is rapidly advancing based on machine learning and deep learning.
+    In the field of natural language processing (NLP) in particular, transformer models have achieved revolutionary results.
+    Large language models like BERT and GPT have significantly enhanced contextual understanding capabilities.
+    AI applications span widely from medical diagnosis to autonomous driving, profoundly impacting society.
+    """
 
     extractor = KeywordExtractor()
 
-    # デフォルト抽出
-    keywords = extractor.extract(sample_text, top_n=10)
-    print("\n【統合版抽出結果（上位10件）】")
-    for i, kw in enumerate(keywords, 1):
-        print(f"  {i:2d}. {kw}")
+    for lang, text in [("日本語", sample_text_jp), ("英語", sample_text_en)]:
+        print("\n" + "=" * 80)
+        print(f"--- {lang} キーワード抽出テスト ---")
+        print("=" * 80)
+        
+        # デフォルト抽出
+        keywords = extractor.extract(text, top_n=10)
+        print(f"\n【抽出結果（上位10件）】")
+        for i, kw in enumerate(keywords, 1):
+            print(f"  {i:2d}. {kw}")
 
-    print("\n")
+        # 詳細比較
+        compare_methods(text, top_n=10)
 
-    # 詳細比較
-    compare_methods(sample_text, top_n=10)
-
-    # カバレージポテンシャル評価（analyzerなし版）
-    print("\n" + "=" * 80)
-    print("キーワード品質評価")
-    print("=" * 80)
-
-    results = extractor.extract_with_details(sample_text, top_n=10)
-    for method, keywords_scored in results.items():
-        keywords = [kw for kw, _ in keywords_scored]
-        metrics = evaluate_coverage_potential(keywords, sample_text)
-
-        print(f"\n【{method}】")
-        for metric, value in metrics.items():
-            print(f"  {metric}: {value:.2%}")
+    print('Japanese -------------')
+    kywords = extractor.extract(sample_text_jp, top_n=10)
+    print(kywords)
+    print(type(kywords))
 
 
 if __name__ == "__main__":

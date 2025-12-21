@@ -46,7 +46,7 @@ class PlanStep(BaseModel):
         ge=1
     )
 
-    action: Literal["rag_search", "web_search", "reasoning", "ask_user", "code_execute"] = Field(
+    action: Literal["rag_search", "web_search", "reasoning", "ask_user", "code_execute", "run_legacy_agent"] = Field(
         ...,
         description="実行するアクション種別"
     )

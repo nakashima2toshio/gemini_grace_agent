@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class LLMConfig(BaseModel):
     """LLM設定"""
     provider: str = "gemini"
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-2.5-flash"
     temperature: float = 0.7
     max_tokens: int = 4096
     timeout: int = 30
@@ -101,7 +101,8 @@ class QdrantConfig(BaseModel):
     url: str = "http://localhost:6333"
     collection_name: str = "customer_support_faq"
     search_limit: int = 5
-    score_threshold: float = 0.7
+    score_threshold: float = 0.35
+    search_priority: list = Field(default_factory=lambda: ["wikipedia_ja", "livedoor", "cc_news", "japanese_text"])
 
 
 class ToolsConfig(BaseModel):

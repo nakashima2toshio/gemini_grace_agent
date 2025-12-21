@@ -497,6 +497,15 @@ class ReplanManager:
 失敗理由: {context.error_message or "不明"}
 
 失敗したステップ以降の代替アプローチを提案してください。
+
+重要: 出力は必ず以下のJSONスキーマに従った有効なJSONオブジェクトにしてください。
+特に、'action' フィールドは以下のいずれかである必要があります:
+- 'rag_search'
+- 'reasoning'
+- 'ask_user'
+- 'web_search' (必要な場合)
+
+JSON形式以外のテキスト（解説など）を含めないでください。
 """
 
     def _adjust_step_ids(
@@ -505,22 +514,33 @@ class ReplanManager:
         start_id: int,
         completed_count: int
     ) -> List[PlanStep]:
-        """ステップIDを調整"""
+        """ステップIDを調整し、依存関係を直前の完了ステップに修正"""
         adjusted_steps = []
         new_id = start_id
+        last_completed_id = completed_count  # 最後に完了したステップID
 
-        for step in steps:
+        for i, step in enumerate(steps):
+            # 依存関係の再構築
+            # リプランで生成されたステップの依存関係は、原則として
+            # 「直前のステップ（完了済み、またはこのループで追加された前ステップ）」とする
+            
+            new_depends_on = []
+            
+            # 最初のステップなら、直近の完了済みステップに依存
+            if i == 0:
+                if last_completed_id > 0:
+                    new_depends_on = [last_completed_id]
+            else:
+                # それ以降は、一つ前の新ステップに依存
+                new_depends_on = [new_id - 1]
+
             adjusted_step = PlanStep(
                 step_id=new_id,
                 action=step.action,
                 description=step.description,
                 query=step.query,
                 collection=step.collection,
-                depends_on=[
-                    dep - 1 + completed_count
-                    for dep in step.depends_on
-                    if dep > 0
-                ],
+                depends_on=new_depends_on,
                 expected_output=step.expected_output,
                 fallback=step.fallback
             )

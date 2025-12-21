@@ -27,15 +27,16 @@ class ModelConfig:
 
     # 利用可能なモデル一覧
     AVAILABLE_MODELS: List[str] = [
+        "gemini-2.5-flash",           # デフォルト
         "gemini-3-pro-preview",       # 最新Pro（思考モード対応）
         "gemini-2.5-flash-preview",   # 高速・思考対応
-        "gemini-2.0-flash",           # 安定版（推奨デフォルト）
+        "gemini-2.0-flash",           # 安定版
         "gemini-1.5-pro",             # レガシー
         "gemini-1.5-flash",           # レガシー高速
     ]
 
     # デフォルトモデル
-    DEFAULT_MODEL: str = "gemini-2.0-flash"
+    DEFAULT_MODEL: str = "gemini-2.5-flash"
 
     # temperatureパラメータをサポートしないモデル
     # Geminiでは全モデルでtemperatureがサポートされる
@@ -376,6 +377,7 @@ class GeminiConfig:
 
     # 利用可能なモデル一覧
     AVAILABLE_MODELS: List[str] = [
+        "gemini-2.5-flash",
         "gemini-3-pro-preview",
         "gemini-3-pro-image-preview",
         "gemini-2.5-flash-preview",
@@ -384,7 +386,7 @@ class GeminiConfig:
     ]
 
     # デフォルトモデル
-    DEFAULT_MODEL: str = "gemini-2.0-flash"
+    DEFAULT_MODEL: str = "gemini-2.5-flash"
 
     # Embeddingモデル
     EMBEDDING_MODEL: str = "gemini-embedding-001"
