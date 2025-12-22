@@ -1,126 +1,113 @@
-# agent_main.py 詳細設計
+# agent_main.py 詳細設計書
 
-## 1. ファイルの機能概要
-
-`agent_main.py` は、Gemini 2.0 Flash を使用した **CLI ベースの Hybrid RAG エージェント** のエントリーポイントです。
-ユーザーと対話し、一般的な知識と社内ナレッジ（Qdrant上のベクトルデータベース）を自律的に使い分けて回答します。
+## 1. 概要
+`agent_main.py` は、Gemini 2.0 Flash を使用した **CLI (Command Line Interface) 専用の Hybrid RAG エージェント** のエントリーポイントです。
+Streamlit UI (`agent_rag.py` / `services/agent_service.py`) とは独立した実装となっており、サーバーサイドでの単独動作やデバッグ用途に使用されます。
 
 **主な特徴:**
 *   **ReAct (Reasoning + Acting) ループ:** ユーザーの質問に対し、「思考 (Thought) → ツール実行 (Action) → 結果観察 (Observation)」のサイクルを回し、情報を検索・収集してから回答します。
-*   **Chain of Thought (CoT):** 思考プロセスを可視化し、ユーザーに「なぜその検索を行ったか」を提示します。
-*   **Router機能:** プロンプトエンジニアリングにより、質問内容に応じて適切なナレッジベース（コレクション）を自動選択します。
-*   **エラーハンドリング:** ツール実行時のエラーを捕捉し、エージェントが停止せずに対話を継続できるよう設計されています。
+*   **動的システムプロンプト:** 起動時にQdrantからコレクション一覧を取得し、利用可能なナレッジベースに応じてシステム指示（Router Guidelines）を動的に生成します。
+*   **IPOログ:** 入力、LLM応答、ツール結果などの中間状態を詳細にログ出力します。
 
-## 2. 関数一覧
+## 2. モジュール構成と依存関係
 
-| 関数名 | 処理概要 |
+| インポート元 | 使用する機能 |
 | :--- | :--- |
-| **`setup_logging`** | ログ出力設定を行います。`logs/` ディレクトリに日次ログファイルを生成します。 |
-| **`setup_agent`** | Gemini ChatSession を初期化します。APIキーの読み込み、ツールの登録、システムプロンプトの設定を行います。 |
-| **`print_colored`** | CLI上での視認性を高めるため、指定された色でテキストを出力します。 |
-| **`run_agent_turn`** | エージェントの1ターン（ユーザー発話〜最終回答）を実行するコアロジックです。ReActループ（思考・ツール呼び出し・再推論）を制御します。 |
-| **`main`** | メインループです。ユーザー入力を受け付け、`run_agent_turn` を呼び出し、結果を表示します。 |
+| `google.generativeai` | Gemini API クライアント (`GenerativeModel`, `ChatSession`) |
+| `config` | 設定値 (`AgentConfig`, `PathConfig`, `QdrantConfig`) |
+| `agent_tools` | RAG検索ツール (`search_rag_knowledge_base`) |
+| `services.qdrant_service` | コレクション一覧取得 (`get_all_collections`) |
 
-## 3. 主要関数の IPO とプロセスフロー
+## 3. 関数詳細
 
-### 3.1 `run_agent_turn`
+### 3.1 `get_system_instruction`
 
-エージェントの思考と行動のループを制御する最も重要な関数です。
+動的にシステムプロンプトを生成する関数です。
 
-**IPO (Input-Process-Output):**
-
-*   **Input:**
-    *   `chat_session` (ChatSession): Gemini API セッションオブジェクト
-    *   `user_input` (str): ユーザーからの質問文字列
-    *   `return_tool_info` (bool): ツール使用状況を戻り値に含めるかどうかのフラグ
 *   **Process:**
-    1.  ユーザー入力を Gemini API に送信。
-    2.  **While Loop (ReAct Loop):**
-        *   モデルからの応答を解析。
-        *   **Thought (思考)** が含まれていればログ出力。
-        *   **Function Call (ツール呼び出し)** が含まれているか確認。
-        *   **Yes (ツール呼び出しあり):**
-            *   ツール名と引数を抽出。
-            *   対応する Python 関数 (`agent_tools.py` 内) を実行。
-            *   実行結果 (Observation) を `function_response` として Gemini API に返送。
-            *   ループ継続 (次の思考/回答へ)。
-        *   **No (ツール呼び出しなし):**
-            *   最終回答とみなし、テキストを抽出。
-            *   ループ終了。
-*   **Output:**
-    *   `final_response_text` (str): エージェントの最終回答
-    *   (Optional) `tool_info` (Dict): 使用したツールやコレクションの情報
-
-**Process Flow (Mermaid):**
-
-```mermaid
-graph TD
-    Start[Start run_agent_turn] --> Send[Send user_input to API]
-    Send --> LoopStart[Analyze Response]
-    LoopStart -->|Function Call| LogThought[Log Thought]
-    LogThought --> ExecTool[Execute Tool]
-    ExecTool --> Obs[Get Result]
-    Obs --> SendRes[Send function_response to API]
-    SendRes --> LoopStart
-    LoopStart -->|No Function Call| Extract[Extract Answer]
-    Extract --> End[End Return Final Response]
-```
+    1.  Qdrantクライアントを初期化し、`get_all_collections` で全コレクション名を取得。
+    2.  コレクション名に基づいて、使用ヒント（Wikipediaなら一般知識、Livedoorならニュース等）を生成。
+    3.  これらを組み込んだ「Router Guidelines」を含むプロンプト文字列を構築して返す。
 
 ### 3.2 `setup_agent`
 
-**IPO:**
+エージェントの初期化を行います。
 
-*   **Input:** 環境変数 (`GEMINI_API_KEY`), `config.py` (モデル設定, システムプロンプト)
 *   **Process:**
-    1.  APIキーの検証。
-    2.  ツールリスト (`search_rag_knowledge_base` 等) の作成。
-    3.  システムプロンプト (`SYSTEM_INSTRUCTION`) の準備。
-    4.  `genai.GenerativeModel` の初期化。
-    5.  チャットセッションの開始 (`start_chat`).
+    1.  環境変数 (`GEMINI_API_KEY`) の検証。
+    2.  ツールリストの登録 (`search_rag_knowledge_base`, `list_rag_collections`)。
+    3.  `get_system_instruction()` を呼び出し、最新のシステムプロンプトを取得。
+    4.  `genai.GenerativeModel` を初期化し、`chat_session` を開始。
 
-    **Process Flow (Mermaid):**
-    ```mermaid
-    graph TD
-        Start[Start setup_agent] --> CheckAPI[Check API Key]
-        CheckAPI -->|OK| LoadConfig[Load Config and Prompt]
-        CheckAPI -->|NG| Error[Error Occurred]
-        LoadConfig --> InitModel[Initialize Gemini Model]
-        InitModel --> StartChat[Start ChatSession]
-        StartChat --> End[End Return session]
-    ```
+### 3.3 `run_agent_turn`
 
+1ターンの対話（ユーザー入力 → 最終回答）を実行するコアロジックです。
+`services.agent_service.ReActAgent` とは異なり、**関数内で独自にReActループを実装**しています。
+
+*   **Input:**
+    *   `chat_session`: Gemini ChatSession
+    *   `user_input`: ユーザーの質問
+    *   `return_tool_info`: ツール使用情報を返すかどうかのフラグ
+*   **Process (ReAct Loop):**
+    1.  `chat_session.send_message(user_input)` でLLMに問い合わせ。
+    2.  **ループ開始:**
+        *   レスポンス解析: `text` (思考/回答) と `function_call` (ツール呼び出し) をチェック。
+        *   **Thought**: 思考プロセスがあればログ出力。
+        *   **Function Call**:
+            *   ツール名と引数を抽出。
+            *   `tools_map` から対応する関数を実行 (`agent_tools.py` 内のロジック)。
+            *   結果を `function_response` として `chat_session.send_message` で返送。
+            *   ループ継続。
+        *   **Final Answer**: ツール呼び出しがない場合、テキストを最終回答としてループ終了。
 *   **Output:**
-    *   `chat`: 初期化済みの Gemini ChatSession オブジェクト
+    *   最終回答テキスト
+    *   (Optional) ツール使用情報辞書
 
-### 3.3 `main`
-
-**IPO:**
-
-*   **Input:** 標準入力 (User Input)
-*   **Process:**
-    1.  ロギング設定、エージェント初期化。
-    2.  **Interaction Loop:**
-        *   入力待ち (`input()`).
-        *   終了コマンド確認 (`exit`, `quit`).
-        *   `run_agent_turn` 呼び出し。
-        *   回答を標準出力に表示。
-        *   エラー捕捉 (KeyboardInterrupt, Exception).
-
-    **Process Flow (Mermaid):**
     ```mermaid
     graph TD
-        Start[Start main] --> LogSetup[Setup Logging]
-        LogSetup --> AgentSetup[Initialize Agent]
-        AgentSetup --> WaitInput[Wait User Input]
-
-        WaitInput -->|exit or quit| Exit[Exit Program]
-        WaitInput -->|Text Input| CallTurn[Call run_agent_turn]
-
-        CallTurn --> ShowRes[Show Response]
-        ShowRes --> WaitInput
-
-        WaitInput -->|Error| CatchErr[Catch Error and Log]
-        CatchErr --> WaitInput
+        Start[User Input] --> Send[Send to LLM]
+        Send --> Check[Check Function Call]
+        
+        Check -->|Yes| Extract[Extract Tool & Args]
+        Extract --> Exec[Execute Tool via agent_tools]
+        Exec --> Log[Log IPO]
+        Log --> Return[Return Result to LLM]
+        Return --> Check
+        
+        Check -->|No| Answer[Extract Final Text]
+        Answer --> End[Return Response]
     ```
 
-*   **Output:** 標準出力 (Agent Response), ログファイル
+### 3.4 `main`
+
+CLIのメインループです。
+
+*   **Process:**
+    1.  ロギング設定 (`setup_logging`)。
+    2.  エージェント初期化 (`setup_agent`)。
+    3.  **対話ループ (While True):**
+        *   標準入力 (`input()`) 待機。
+        *   終了コマンド (`exit`, `quit`) チェック。
+        *   `run_agent_turn` 実行。
+        *   回答を表示。
+        *   エラー発生時はキャッチしてログ出力し、ループ継続。
+
+## 4. データ構造
+
+### ログ出力 (IPO Log)
+`run_agent_turn` 内では、以下の形式で詳細な処理ログが出力されます。デバッグやトレーサビリティに使用されます。
+
+```text
+==================== [LEGACY AGENT IPO: INITIAL INPUT] ====================
+(ユーザー入力)
+============================================================
+
+==================== [LEGACY AGENT IPO: LLM OUTPUT] ====================
+[Text]: Thought: ...
+[Function Call]: search_rag_knowledge_base(...)
+============================================================
+
+==================== [LEGACY AGENT IPO: TOOL RESULT INPUT] ====================
+(検索結果のJSON文字列)
+============================================================
+```
