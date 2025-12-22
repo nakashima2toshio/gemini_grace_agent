@@ -4,6 +4,8 @@
 
 概要：(Guided Reasoning with Adaptive Confidence Execution)
 
+Plan (計画)->Execute(実行)->Evaluate(評価)->Intervene(介入)->Replan (再計画)
+
 ![image.png](assets/grace_pl.png)
 
 **(Guided Reasoning with Adaptive Confidence Execution)**
@@ -23,11 +25,6 @@
 
 従来のエージェントは、複雑なタスクに対して「迷走（無限ループ）」したり、不確実な情報を「自信満々に回答（ハルシネーション）」したりする課題がありました。
 GRACEは、**「まず計画を立てる」「自分の行動を常に数値で評価する」「自信がない時は人間に聞く」** というメカニズムにより、業務レベルで信頼できるAIエージェントを実現します。
-
-### なぜ Gemini なのか？
-
-本システムは Google の **Gemini モデル群をフル活用します。
-特に **Gemini** の圧倒的な推論速度と長いコンテキストウィンドウは、GRACEのような「計画・実行・評価」を高速に繰り返すアーキテクチャに最適です。また、Gemini Embedding による高精度なベクトル検索も統合されています。
 
 ---
 
