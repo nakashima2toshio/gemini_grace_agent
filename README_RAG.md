@@ -1,4 +1,4 @@
-**Agentの資料へ** [link2agent](README.md)
+**Agent Graceの資料へ** [Agent Grace](README.md) | **ReActの資料へ** [ReAct](README_ReAct.md)
 
 ## RAG Q/A 生成・検索システム
 

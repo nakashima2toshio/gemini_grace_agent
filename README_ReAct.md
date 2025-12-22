@@ -1,4 +1,4 @@
-**RAGのドキュメントへ** [リンク](README_RAG.md)
+**Agent Graceの資料へ** [Agent Grace](README.md) | **RAGの資料へ** [RAG](README_RAG.md)
 
 ## Gemini搭載・自立型RAGエージェントシステム
 
