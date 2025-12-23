@@ -123,7 +123,7 @@ class ConfidenceCalculator:
             config: GRACE設定（Noneの場合はデフォルト）
         """
         self.config = config or get_config()
-        self.weights = self.config.confidence.weights
+        self.weights = self.config.confidence.weightsgrace
         self._validate_weights()
 
         logger.info("ConfidenceCalculator initialized")
@@ -179,12 +179,12 @@ class ConfidenceCalculator:
 
         # 重み付き平均
         if factors.is_search_step:
-            # 検索ステップの場合、検索品質とツール成功率を重視
-            base_score = (
-                search_quality * 0.50 +
-                source_agreement * 0.20 +
-                tool_success * 0.30
-            )
+            # 検索ステップの場合、検索品質（search_quality）をベースにする
+            # tool_successは掛け算による減点として扱う（足し算による薄まりを防ぐ）
+            base_score = search_quality
+            if tool_success < 1.0:
+                base_score *= tool_success
+            
             # 内訳も調整（表示用）
             breakdown["llm_self_eval"] = 0.0  # N/A
             breakdown["query_coverage"] = 0.0 # N/A
@@ -237,10 +237,10 @@ class ConfidenceCalculator:
 
         # === 検索ステップの最終底上げ調整 ===
         # 検索結果が存在し、かつ検索ステップである場合、
-        # ペナルティ後の最終スコアが低くても 0.70 (自動進行ライン) を保証する。
+        # ペナルティ後の最終スコアが低くても 0.85 (自動進行ライン) を保証する。
         # これにより、Legacy Agentと同様に「ヒットすれば進む」挙動を担保する。
         if factors.is_search_step and factors.search_result_count > 0:
-            final_score = max(final_score, 0.70)
+            final_score = max(final_score, 0.85)
 
         return ConfidenceScore(
             score=final_score,
@@ -251,12 +251,15 @@ class ConfidenceCalculator:
 
     def _calc_search_quality(self, factors: ConfidenceFactors) -> float:
         """RAG検索品質のスコア化（最高スコア重視版）"""
-        # 修正: 検索結果数が0でも、最大スコアが継承されていれば計算を続行する
+        # 検索結果数が0でも、最大スコアが継承されていれば計算を続行する
         if factors.search_result_count == 0 and factors.search_max_score == 0:
             return 0.0
 
-        # 平均スコアだけでなく、最高スコアを重視する (70% Max + 30% Avg)
-        # これにより、1つでも良いヒットがあれば信頼度を高く保つ
+        # 1件でも高評価 (0.8以上) があれば、それをそのまま採用する
+        if factors.search_max_score >= 0.8:
+            return factors.search_max_score
+
+        # それ以外（不確かな場合）は、平均スコアも考慮する (70% Max + 30% Avg)
         combined_score = (factors.search_max_score * 0.7) + (factors.search_avg_score * 0.3)
         
         # 分散によるペナルティ（スコアがバラバラすぎる場合）
@@ -291,15 +294,13 @@ class ConfidenceCalculator:
             score *= multiplier
             penalties.append(f"tool_failures(rate={factors.tool_success_rate:.2f})")
 
-        # ソースが1つしかない場合のペナルティは削除（事実確認では1つで十分な場合が多い）
-        # if factors.source_count == 1:
-        #    score *= 0.95
-        #    penalties.append("single_source")
-
-        # ソースが0の場合（検索ステップ以外で自己評価が高い場合は免除）
+        # ソースが0の場合
         if factors.source_count == 0:
+            # 検索ステップで、かつ検索結果がある場合はペナルティを適用しない
+            if factors.is_search_step and factors.search_result_count > 0:
+                pass
             # 検索ステップ以外かつ自己評価が高い場合はペナルティなし
-            if not factors.is_search_step and factors.llm_self_confidence >= 0.8:
+            elif not factors.is_search_step and factors.llm_self_confidence >= 0.8:
                 pass
             else:
                 score *= 0.7

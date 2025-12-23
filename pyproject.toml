@@ -99,7 +99,7 @@ dependencies = [
   "scipy==1.16.2",
   "seaborn==0.13.2",
   "semantic-version==2.10.0",
-  "setuptools==80.9.0",
+  "setuptools==75.8.0",
   "shellingham==1.5.4",
   "six==1.17.0",
   "smart_open==7.3.1",

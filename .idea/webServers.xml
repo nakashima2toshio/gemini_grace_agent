@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="4135888b-ddcf-4503-ba40-2f56fb87bd13" name="grace" url="https://34.84.198.115/">
+        <fileTransfer rootFolder="/home/nakashima/gemini_agent_rag" accessType="SFTP" host="34.84.198.115" port="22" sshConfigId="fd95da5e-8261-4e43-9096-c16c31199a31" sshConfig="nakashima@34.84.198.115:22 key" keyPair="true">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" isUseRsync="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

@@ -153,7 +153,7 @@ graph TD
     end
 
     subgraph DataAccess [データアクセス層]
-        API["Gemini API (2.0 Flash / Embed)"]
+        API["Gemini API (Embed)"]
         DB["Qdrant"]
     end
 
