@@ -27,6 +27,7 @@ click-didyoumean==0.3.1
 click-plugins==1.1.1.2
 click-repl==0.3.0
 cloudpathlib==0.23.0
+cohere
 coloredlogs==15.0.1
 comm==0.2.3
 confection==0.1.5

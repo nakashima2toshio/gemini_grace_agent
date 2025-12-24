@@ -123,7 +123,7 @@ class ConfidenceCalculator:
             config: GRACE設定（Noneの場合はデフォルト）
         """
         self.config = config or get_config()
-        self.weights = self.config.confidence.weightsgrace
+        self.weights = self.config.confidence.weights
         self._validate_weights()
 
         logger.info("ConfidenceCalculator initialized")
@@ -235,13 +235,6 @@ class ConfidenceCalculator:
         # 0.0-1.0の範囲に収める
         final_score = round(min(1.0, max(0.0, final_score)), 3)
 
-        # === 検索ステップの最終底上げ調整 ===
-        # 検索結果が存在し、かつ検索ステップである場合、
-        # ペナルティ後の最終スコアが低くても 0.85 (自動進行ライン) を保証する。
-        # これにより、Legacy Agentと同様に「ヒットすれば進む」挙動を担保する。
-        if factors.is_search_step and factors.search_result_count > 0:
-            final_score = max(final_score, 0.85)
-
         return ConfidenceScore(
             score=final_score,
             factors=factors,
@@ -255,8 +248,9 @@ class ConfidenceCalculator:
         if factors.search_result_count == 0 and factors.search_max_score == 0:
             return 0.0
 
-        # 1件でも高評価 (0.8以上) があれば、それをそのまま採用する
-        if factors.search_max_score >= 0.8:
+        # 1件でも高評価 (0.6以上) があれば、それをそのまま採用する
+        # 注: Hybrid Search (RRF) の場合スコアが低めに出るため、閾値を0.8から0.6に緩和
+        if factors.search_max_score >= 0.6:
             return factors.search_max_score
 
         # それ以外（不確かな場合）は、平均スコアも考慮する (70% Max + 30% Avg)

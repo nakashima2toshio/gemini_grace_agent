@@ -150,6 +150,14 @@ def render_event(event: Dict[str, Any]):
         # Thoughtなどのログ
         if "Thought:" in content or "考え:" in content:
             st.info(content, icon="🧠")
+        elif "【ツール実行結果" in content:
+            # ツール実行結果（検索結果など）をコードブロックで表示
+            parts = content.split("\n", 1)
+            header = parts[0]
+            body = parts[1] if len(parts) > 1 else ""
+            st.markdown(f"**{header}**")
+            if body:
+                st.code(body, language="json")
         else:
             st.text(content) # 一般ログ
 
@@ -327,9 +335,20 @@ def render_chat_area():
     state = st.session_state.get("execution_state")
     if state:
         with st.chat_message("assistant"):
-            st.info("🔄 Processing...")
+            # 進行中のみ "Processing" を表示
+            if not state.is_paused:
+                st.info("🔄 Processing...")
+            
             # 計画表示
             display_execution_plan(state.plan, current_step_id=state.current_step_id)
+            
+            # 途中経過のログを表示（リラン後も見えるように）
+            if "event_history" in st.session_state and st.session_state.event_history:
+                # 介入中はログを確認したい場合が多いのでデフォルトで開く設定にするなどの調整も可能
+                # ここではexpanded=Falseにしておき、ユーザーが必要に応じて開けるようにする
+                with st.expander("📝 思考プロセス (Thought Process)", expanded=False):
+                    for event in st.session_state.event_history:
+                        render_event(event)
             
             # 介入リクエストがあれば表示
             if state.is_paused and state.intervention_request:

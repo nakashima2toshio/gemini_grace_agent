@@ -482,6 +482,21 @@ class Executor:
             # 実行
             tool_result: ToolResult = tool.execute(**kwargs)
 
+            # --- UIへの中間結果通知 (思考プロセス表示用) ---
+            if tool_result.success and tool_result.output:
+                import json
+                try:
+                    # RAG検索結果などはリスト/辞書なので整形する
+                    out_display = json.dumps(tool_result.output, indent=2, ensure_ascii=False) if isinstance(tool_result.output, (list, dict)) else str(tool_result.output)
+                except Exception:
+                    out_display = str(tool_result.output)
+                
+                # IPO風のラベルをつけて通知
+                yield {
+                    "type": "log",
+                    "content": f"📝 【ツール実行結果: {step.action}】\n{out_display}"
+                }
+
             # 実行時間
             execution_time = int((time.time() - start_time) * 1000)
 

@@ -11,6 +11,40 @@ from typing import Any, Optional, Dict
 import yaml
 from pydantic import BaseModel, Field
 
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+
+def init_grace_logging():
+    """GRACEパッケージ用のロギングを初期化"""
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    
+    log_file = log_dir / "grace_run.log"
+    
+    # 既存のハンドラがあるかチェックして重複を防ぐ
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_file, encoding='utf-8'),
+                logging.StreamHandler()
+            ]
+        )
+    else:
+        # graceパッケージの出力を確実にする
+        grace_logger = logging.getLogger("grace")
+        if not any(isinstance(h, logging.FileHandler) for h in grace_logger.handlers):
+            fh = logging.FileHandler(log_file, encoding='utf-8')
+            fh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            grace_logger.addHandler(fh)
+            grace_logger.setLevel(logging.INFO)
+
+# モジュール読み込み時に初期化
+init_grace_logging()
+
 logger = logging.getLogger(__name__)
 
 

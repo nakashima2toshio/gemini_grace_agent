@@ -8,7 +8,12 @@ from dataclasses import dataclass, field
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse, ResponseHandlingException
 from qdrant_client_wrapper import search_collection, embed_query, embed_sparse_query_unified, QDRANT_CONFIG
-from config import AgentConfig
+from config import AgentConfig, CohereConfig
+
+try:
+    import cohere
+except ImportError:
+    cohere = None
 
 logger = logging.getLogger(__name__) # Configure logger for this module
 
@@ -161,6 +166,75 @@ def filter_results_by_keywords(results: List[Dict[str, Any]], query: str) -> Lis
     return filtered_results
 
 
+def rerank_results(
+    query: str,
+    results: List[Dict[str, Any]],
+    top_k: int = 3,
+    threshold: float = 0.5
+) -> List[Dict[str, Any]]:
+    """
+    検索結果をCohere Rerank APIで再評価し、スコアを更新してソートする。
+    
+    Args:
+        query: ユーザーの検索クエリ
+        results: Qdrantからの検索結果リスト
+        top_k: 最終的に残す件数
+        threshold: スコアの足切りライン
+        
+    Returns:
+        再ランク付けされた結果リスト
+    """
+    if not results or not CohereConfig.API_KEY or cohere is None:
+        return results[:top_k]
+
+    try:
+        co = cohere.Client(api_key=CohereConfig.API_KEY)
+        
+        # ドキュメントのテキストリストを作成
+        documents = []
+        for res in results:
+            payload = res.get("payload", {})
+            # QuestionとAnswerを組み合わせて文脈を作る
+            doc_text = f"Question: {payload.get('question', '')}\nAnswer: {payload.get('answer', '')}"
+            documents.append(doc_text)
+
+        # Rerank実行
+        rerank_response = co.rerank(
+            model=CohereConfig.RERANK_MODEL,
+            query=query,
+            documents=documents,
+            top_n=len(documents)
+        )
+
+        # スコアを更新
+        reranked_results = []
+        for r in rerank_response.results:
+            # 元の結果を取得 (indexで対応)
+            original_result = results[r.index]
+            new_score = r.relevance_score
+            
+            # スコアを更新した新しい辞書を作成
+            new_result = original_result.copy()
+            new_result["score"] = new_score
+            
+            # 閾値判定
+            if new_score >= threshold:
+                reranked_results.append(new_result)
+
+        # スコア順はCohereが保証しているはずだが、念のためソート
+        reranked_results.sort(key=lambda x: x["score"], reverse=True)
+        
+        logger.info(f"Re-ranking completed: {len(results)} -> {len(reranked_results)} results (Top score: {reranked_results[0]['score'] if reranked_results else 0.0:.4f})")
+        
+        return reranked_results[:top_k]
+
+    except Exception as e:
+        logger.error(f"Re-ranking failed: {e}")
+        # 失敗時は元の結果をスコア順（RRF）で返す
+        # RRFスコアは低い可能性があるため、警告を出すか、またはそのまま返す
+        return results[:top_k]
+
+
 def search_rag_knowledge_base(
     query: str,
     collection_name: Optional[str] = None
@@ -232,44 +306,47 @@ def search_rag_knowledge_base_structured(
         query_vector: List[float] = embed_query(query)
         if query_vector is None:
             raise EmbeddingError("クエリの埋め込み生成に失敗しました。")
-            
         sparse_vector = embed_sparse_query_unified(query)
 
-        results: List[Dict[str, Any]] = search_collection(
+        # 1. Retrieval (Broad Search)
+        # Re-rankingの効果を高めるため、最終的に欲しい数より多く取得する
+        # Hybrid Search (RRF) を使用
+        candidates: List[Dict[str, Any]] = search_collection(
             client=client,
             collection_name=collection_name,
             query_vector=query_vector,
             sparse_vector=sparse_vector,
-            limit=AgentConfig.RAG_SEARCH_LIMIT
+            limit=20 # 候補を広げる
         )
 
-        metrics.total_results = len(results) if results else 0
+        metrics.total_results = len(candidates) if candidates else 0
 
-        if not results:
+        if not candidates:
             metrics.latency_ms = (time.time() - start_time) * 1000.0
             _search_metrics_log.append(metrics)
             return f"[[NO_RAG_RESULT]] 検索結果が見つかりませんでした。コレクション: '{collection_name}'."
 
-        scores: List[float] = [res.get("score", 0.0) for res in results]
+        # 2. Re-ranking (Cohere)
+        # ここでスコアが「順位スコア(0.66...)」から「確率スコア(0.902...)」に変わる
+        # Cohere APIキーがない場合は、ここでの変更は行われず、RRFスコアのままフィルタリングに進む
+        # (ただし、RRFスコアは低いので threshold=0.5 で足切りされるリスクがあるため、
+        #  rerank_results内でAPIキーがない場合のフォールバックを考慮する必要があるが、
+        #  今回はAPI利用前提の設計となっている)
+        reranked_results = rerank_results(query, candidates, top_k=AgentConfig.RAG_SEARCH_LIMIT)
+
+        # 3. Metrics & Return
+        scores: List[float] = [res.get("score", 0.0) for res in reranked_results]
         metrics.scores = scores
         metrics.top_score = max(scores) if scores else 0.0
-
-        # ============ 共通フィルタリングロジックの適用 ============
-        filtered_results = filter_results_by_keywords(results, query)
-
-        # スコア閾値適用
-        final_results = [r for r in filtered_results if r.get("score", 0.0) >= AgentConfig.RAG_SCORE_THRESHOLD]
-
-        metrics.filtered_results = len(final_results)
+        metrics.filtered_results = len(reranked_results)
+        
         metrics.latency_ms = (time.time() - start_time) * 1000.0
         _search_metrics_log.append(metrics)
 
-        if not final_results:
-            if filtered_results:
-                return f"[[NO_RAG_RESULT_LOW_SCORE]] スコア閾値未満の結果のみでした。最高スコア: {metrics.top_score:.2f}"
-            return f"[[RAG_SEARCH_FAILED]] 必須キーワードを含む結果が見つかりませんでした。"
+        if not reranked_results:
+            return f"[[NO_RAG_RESULT_LOW_SCORE]] スコア閾値未満の結果のみでした。最高スコア: {metrics.top_score:.2f}"
 
-        return final_results
+        return reranked_results
 
     except Exception as e:
         logger.error(f"RAGツールエラー: {e}", exc_info=True)

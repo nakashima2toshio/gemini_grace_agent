@@ -1,3 +1,21 @@
+# GRACE Agent Project Context & Rules
+
+## ⚠️ CRITICAL RULES (MUST ADHERE)
+
+1.  **NO UNAUTHORIZED CHANGES**:
+    *   Do **NOT** modify any code (`replace`, `write_file`, etc.) unless the user explicitly commands "Apply fix", "Modify", or similar corrective actions.
+    *   During "Investigation", "Root Cause Analysis", or "Code Review" phases, use **READ-ONLY** tools only (`read_file`, `search_file_content`, `list_directory`, etc.).
+    *   Never attempt to "try out" a logic change or "revert" a previous change on your own initiative.
+
+2.  **EXPLICIT APPROVAL MANDATORY**:
+    *   Before executing any file-modifying tool, you **MUST** describe the exact changes, the reason for the change, and obtain a "Go ahead" or "Approve" from the user.
+    *   This applies even when correcting your own mistakes or returning to a previous state.
+
+3.  **STRICT SEPARATION OF CONCERNS**:
+    *   Separate the "Analysis" turn from the "Implementation" turn. Complete the analysis first, present the findings, and wait for implementation orders.
+
+---
+
 # GRACE Agent (Guided Reasoning with Adaptive Confidence Execution) - Project Context
 
 ## 1. Project Overview

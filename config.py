@@ -12,7 +12,7 @@ config.py - 設定・定数の一元管理
 - helper_rag.py
 - helper_api.py
 """
-
+import os
 from typing import Dict, List, Any, Optional, Type
 from dataclasses import dataclass
 from pathlib import Path
@@ -366,6 +366,16 @@ class CeleryConfig:
     TASK_SOFT_TIME_LIMIT: int = 240  # 4分
     WORKER_CONCURRENCY: int = 8  # Gemini APIレート制限対策のためデフォルトを8に設定
     WORKER_PREFETCH_MULTIPLIER: int = 1
+
+
+# ===================================================================
+# Cohere API設定
+# ===================================================================
+
+class CohereConfig:
+    """Cohere API設定"""
+    API_KEY: Optional[str] = os.getenv("COHERE_API_KEY")
+    RERANK_MODEL: str = "rerank-multilingual-v3.0"
 
 
 # ===================================================================

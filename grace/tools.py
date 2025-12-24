@@ -111,6 +111,12 @@ class RAGSearchTool(BaseTool):
         from agent_tools import search_rag_knowledge_base_structured
         
         start_time = time.time()
+        
+        # --- [IPO LOG] PROCESS INPUT (RAG SEARCH) ---
+        log_input = f"\n{'='*20} [RAG SEARCH IPO: INPUT] {'='*20}\nQuery: {query}\nCollection: {collection or 'Auto'}\n{'='*60}"
+        logger.info(log_input)
+        print(log_input) # コンソールに強制出力
+        
         logger.info(f"RAG search (Native): query='{query[:50]}...', collection={collection}")
 
         try:
@@ -118,6 +124,20 @@ class RAGSearchTool(BaseTool):
             # results は List[Dict] または str (エラー/メッセージ)
             results = search_rag_knowledge_base_structured(query, collection)
             
+            # --- [IPO LOG] PROCESS OUTPUT (RAG SEARCH) ---
+            import json
+            if isinstance(results, list):
+                if len(results) > 0:
+                    results_display = json.dumps(results, indent=2, ensure_ascii=False)
+                else:
+                    results_display = "⚠️ 検索結果: 0件 (ヒットしませんでした)"
+            else:
+                results_display = str(results)
+
+            log_output = f"\n{'='*20} [RAG SEARCH IPO: OUTPUT] {'='*20}\n{results_display}\n{'='*60}"
+            logger.info(log_output)
+            print(log_output) # コンソールに強制出力
+
             execution_time = int((time.time() - start_time) * 1000)
 
             if isinstance(results, str):
