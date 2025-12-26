@@ -187,6 +187,15 @@ class RAGSearchTool(BaseTool):
                 logger.warning(f"Search failed for collection {target_collection}: {e}")
                 continue
 
+        # --- Dynamic Thresholding (動的な絞り込み) ---
+        # 1位のスコアが非常に高い場合、2位以下のノイズを除去する
+        if final_results:
+            top_score = final_results[0].get("score", 0.0)
+            # 閾値: Top 1が0.98以上の場合、他を切り捨てる
+            if top_score >= 0.98 and len(final_results) > 1:
+                logger.info(f"Dynamic Thresholding: Top score is {top_score:.4f}. Keeping only the top result (dropped {len(final_results)-1} others).")
+                final_results = [final_results[0]]
+
         execution_time = int((time.time() - start_time) * 1000)
 
         # 結果なしの場合
