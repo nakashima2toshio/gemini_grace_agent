@@ -2,6 +2,7 @@
 - （注）現在、GCPのVMでこのアプリを実行している。
 - CPU: vCPU(共有2)、メモリ（4Gバイト）と貧弱なので、
 - ここ、1週間ぐらいで、Google Cloud RUNに移行する予定です。いま、しばらく。
+- バグは収束しました。GitHUB：https://github.com/nakashima2toshio/gemini_grace_agent
 
 # Gemini GRACE Agent System
 
