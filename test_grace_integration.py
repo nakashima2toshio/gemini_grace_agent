@@ -22,7 +22,8 @@ def test_grace_native_integration():
     executor = create_executor()
     
     # 2. 質問の定義
-    query = "浦沢直樹が初めて受賞したのはいつ、何の賞ですか？"
+    # wikipedia_jaにはなさそうで、livedoorにありそうなトピック（アプリレビューなど）
+    query = "iPhoneのTODOリストアプリ「Clear」の特徴は何ですか？"
     logger.info(f"User Query: {query}")
     
     # 3. 計画生成

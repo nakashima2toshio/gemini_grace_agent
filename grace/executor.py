@@ -1,6 +1,5 @@
 """
 GRACE Executor - 計画実行エージェント
-
 生成された計画を順次実行し、結果を管理
 """
 
@@ -180,20 +179,19 @@ class Executor:
     ) -> Generator[ExecutionState, None, ExecutionResult]:
         """
         計画をステップごとに実行（ジェネレータ版）
-        
         UIなどで進捗をリアルタイム表示するために使用
-        
         Args:
             plan: 実行する計画
             state: 既存の状態（再開時などに指定）
-            
         Yields:
             ExecutionState: 各ステップ完了後の状態
-            
         Returns:
             ExecutionResult: 最終実行結果
         """
         logger.info(f"Executing plan (generator): {plan.plan_id}, steps={len(plan.steps)}")
+
+        # 受け取ったプラン内容をログ出力
+        logger.info(f"Received Execution Plan in Executor (generator):\n{plan.model_dump_json(indent=2)}")
 
         # 実行状態を初期化（未指定の場合）
         if state is None:
@@ -346,14 +344,15 @@ class Executor:
     def execute_plan(self, plan: ExecutionPlan) -> ExecutionResult:
         """
         計画を実行（GRACEネイティブ実装）
-
         Args:
             plan: 実行する計画
-
         Returns:
             ExecutionResult: 実行結果
         """
         logger.info(f"Executing plan: {plan.plan_id}, steps={len(plan.steps)}")
+
+        # 受け取ったプラン内容をログ出力
+        logger.info(f"Received Execution Plan in Executor (blocking):\n{plan.model_dump_json(indent=2)}")
 
         # 実行状態を初期化
         state = ExecutionState(plan=plan)
@@ -379,7 +378,21 @@ class Executor:
                     self.on_step_start(step)
 
                 # ステップ実行
-                result = self._execute_step(step, state)
+                step_execution = self._execute_step(step, state)
+                
+                result = None
+                if isinstance(step_execution, Generator):
+                    # ジェネレータの場合は最後まで回して最終結果を取得
+                    try:
+                        while True:
+                            # 中間イベント（ログなど）はブロッキング版では無視するかログ出力
+                            event = next(step_execution)
+                            if isinstance(event, dict) and event.get("type") == "log":
+                                logger.info(event.get("content"))
+                    except StopIteration as e:
+                        result = e.value
+                else:
+                    result = step_execution
 
                 # 結果を保存
                 state.step_results[step.step_id] = result
@@ -453,15 +466,14 @@ class Executor:
     def _execute_step(self, step: PlanStep, state: ExecutionState) -> Any:
         """
         個別ステップの実行
-
         Args:
             step: 実行するステップ
             state: 現在の実行状態
-
         Returns:
             StepResult or Generator: ステップ実行結果（またはジェネレータ）
         """
         logger.info(f"Executing step {step.step_id}: {step.action} - {step.description}")
+
         start_time = time.time()
 
         try:
@@ -500,8 +512,11 @@ class Executor:
             # 実行時間
             execution_time = int((time.time() - start_time) * 1000)
 
+            # ----------------------
             # 信頼度を計算（state引数を渡す）
-            confidence = self._calculate_step_confidence(tool_result, step, state)
+            # ----------------------
+            # confidence = self._calculate_step_confidence(tool_result, step, state)
+            confidence = self._llm_calculate_step_confidence(tool_result, step, state)
 
             # ソースを抽出
             sources = self._extract_sources(tool_result)
@@ -512,7 +527,7 @@ class Executor:
                 output=self._format_output(tool_result.output),
                 confidence=confidence,
                 sources=sources,
-                error=tool_result.error,
+                error=tool_result.error if not tool_result.success else None,
                 execution_time_ms=execution_time
             )
 
@@ -633,6 +648,9 @@ class Executor:
             # 依存ステップの結果をコンテキストとして追加
             context_parts = []
             sources = []
+            logger.info(f"--- Step3 [DEBUG] Reasoning Step ---")
+            logger.info(f"Step: {step}")
+            logger.info(f"State: {state}")
 
             for dep_id in step.depends_on:
                 if dep_id in state.step_results:
@@ -686,8 +704,126 @@ class Executor:
             expected_output=step.expected_output,
             fallback=None  # 二重フォールバックは無し
         )
-        return self._execute_step(fallback_step, state)
+        step_execution = self._execute_step(fallback_step, state)
+        if isinstance(step_execution, Generator):
+            try:
+                while True:
+                    next(step_execution)
+            except StopIteration as e:
+                return e.value
+        return step_execution
 
+    def _llm_calculate_step_confidence(
+        self,
+        tool_result: ToolResult,
+        step: PlanStep,
+        state: ExecutionState
+        ) ->float:
+        """
+        LLMを使用したステップ信頼度の計算
+        """
+        if not tool_result.success:
+            return 0.0
+
+        factors = tool_result.confidence_factors
+        logger.info(f"[_llm_calculate_step_confidence] Initial factors: {factors}")
+
+        # ConfidenceFactorsを構築
+        # source_countの決定: ツールが明示的に返した値を優先
+        extracted_sources = self._extract_sources(tool_result)
+        source_count = factors.get("source_count", len(extracted_sources))
+
+        # ソース一致度 (Source Agreement) の計算
+        source_agreement = 1.0
+        if source_count > 1:
+            # ツール結果からテキストを抽出
+            texts = []
+            if isinstance(tool_result.output, list):
+                for item in tool_result.output:
+                    if isinstance(item, dict):
+                        payload = item.get("payload", {})
+                        # content, text, answer などのフィールドを探す
+                        content = payload.get("content") or payload.get("text") or payload.get("answer")
+                        if content:
+                            texts.append(str(content))
+            
+            if len(texts) > 1:
+                try:
+                    sa_calc = create_source_agreement_calculator(config=self.config)
+                    source_agreement = sa_calc.calculate(texts)
+                    logger.info(f"[_llm_calculate_step_confidence] Calculated source_agreement: {source_agreement:.4f}")
+                except Exception as e:
+                    logger.warning(f"Failed to calculate source_agreement: {e}")
+                    source_agreement = 0.5
+
+        # 依存ステップからのスコア継承ロジック
+        current_result_count = factors.get("result_count", 0)
+        current_max_score = factors.get("max_score", factors.get("avg_score", 0.0))
+        current_avg_score = factors.get("avg_score", 0.0)
+
+        # 自身で検索しておらず、かつ推論ステップなどの場合、依存元のスコアを引き継ぐ
+        if current_result_count == 0 and not (step.action in ["rag_search", "web_search"]):
+            inherited_max = 0.0
+            inherited_found = False
+            for dep_id in step.depends_on:
+                if dep_id in state.step_results:
+                    dep_res = state.step_results[dep_id]
+                    # 依存先の信頼度を継承
+                    if dep_res.confidence > inherited_max:
+                        inherited_max = dep_res.confidence
+                        inherited_found = True
+
+            if inherited_found:
+                logger.info(f"[_llm_calculate_step_confidence] Inherited scores from dependency: max={inherited_max}")
+                current_max_score = inherited_max
+                current_avg_score = inherited_max
+                current_result_count = 1  # 仮想的に1件あったとみなす
+
+        confidence_factors = ConfidenceFactors(
+            # RAG検索関連
+            search_result_count=current_result_count,
+            search_avg_score=current_avg_score,
+            search_max_score=current_max_score,
+            search_score_variance=factors.get("score_variance", 1.0),
+            # ソース関連
+            source_count=source_count,
+            source_agreement=source_agreement,
+            # ツール実行関連
+            tool_success_rate=1.0 if tool_result.success else 0.0,
+            tool_execution_count=1,
+            tool_success_count=1 if tool_result.success else 0,
+            # ステップタイプ
+            is_search_step=(step.action in ["rag_search", "web_search"])
+        )
+        logger.info(f"[_llm_calculate_step_confidence] Constructed ConfidenceFactors: {confidence_factors}")
+
+        # ConfidenceCalculatorで計算
+        confidence_score = self.confidence_calculator.llm_calculate(
+            factors=confidence_factors,
+            step_description=step.description,
+            tool_output=str(tool_result.output)
+        )
+
+        # ステップごとのConfidenceScoreを保存
+        self.step_confidence_scores[step.step_id] = confidence_score
+
+        # アクション決定を取得
+        action_decision = self.confidence_calculator.decide_action(confidence_score)
+
+        # コールバックで通知（Phase 3のHITLと連携）
+        if self.on_confidence_update:
+            self.on_confidence_update(confidence_score, action_decision)
+
+        logger.info(
+            f"Step {step.step_id} confidence: {confidence_score.score:.2f} "
+            f"(level={confidence_score.level}, action={action_decision.level.value})"
+        )
+
+        return confidence_score.score
+
+    # -------------------
+    # Step 3の評価を担当する関数
+    # -------------------
     def _calculate_step_confidence(
         self,
         tool_result: ToolResult,
@@ -695,13 +831,11 @@ class Executor:
         state: ExecutionState
     ) -> float:
         """
-        ステップの信頼度を計算（ConfidenceCalculator使用）
-
+        ステップの信頼度を計算（ConfidenceCalculator使用 - Heuristic版）
         Args:
             tool_result: ツール実行結果
             step: 実行したステップ
             state: 現在の実行状態
-
         Returns:
             float: 信頼度スコア (0.0-1.0)
         """
@@ -709,11 +843,34 @@ class Executor:
             return 0.0
 
         factors = tool_result.confidence_factors
+        logger.info(f"[_calculate_step_confidence] Initial factors: {factors}")
 
         # ConfidenceFactorsを構築
         # source_countの決定: ツールが明示的に返した値を優先
         extracted_sources = self._extract_sources(tool_result)
         source_count = factors.get("source_count", len(extracted_sources))
+
+        # ソース一致度 (Source Agreement) の計算
+        source_agreement = 1.0
+        if source_count > 1:
+            # ツール結果からテキストを抽出
+            texts = []
+            if isinstance(tool_result.output, list):
+                for item in tool_result.output:
+                    if isinstance(item, dict):
+                        payload = item.get("payload", {})
+                        content = payload.get("content") or payload.get("text") or payload.get("answer")
+                        if content:
+                            texts.append(str(content))
+            
+            if len(texts) > 1:
+                try:
+                    sa_calc = create_source_agreement_calculator(config=self.config)
+                    source_agreement = sa_calc.calculate(texts)
+                    logger.info(f"[_calculate_step_confidence] Calculated source_agreement: {source_agreement:.4f}")
+                except Exception as e:
+                    logger.warning(f"Failed to calculate source_agreement: {e}")
+                    source_agreement = 0.5
 
         # 依存ステップからのスコア継承ロジック
         current_result_count = factors.get("result_count", 0)
@@ -733,6 +890,7 @@ class Executor:
                         inherited_found = True
             
             if inherited_found:
+                logger.info(f"[_calculate_step_confidence] Inherited scores from dependency: max={inherited_max}")
                 current_max_score = inherited_max
                 current_avg_score = inherited_max
                 current_result_count = 1  # 仮想的に1件あったとみなす
@@ -745,7 +903,7 @@ class Executor:
             search_score_variance=factors.get("score_variance", 1.0),
             # ソース関連
             source_count=source_count,
-            source_agreement=0.5,  # 単一ソースの場合はデフォルト
+            source_agreement=source_agreement,
             # ツール実行関連
             tool_success_rate=1.0 if tool_result.success else 0.0,
             tool_execution_count=1,
@@ -753,6 +911,7 @@ class Executor:
             # ステップタイプ
             is_search_step=(step.action in ["rag_search", "web_search"])
         )
+        logger.info(f"[_calculate_step_confidence] Constructed ConfidenceFactors: {confidence_factors}")
 
         # ConfidenceCalculatorで計算
         confidence_score = self.confidence_calculator.calculate(confidence_factors)

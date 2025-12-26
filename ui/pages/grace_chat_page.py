@@ -2,8 +2,11 @@ import streamlit as st
 import time
 import sys
 import os
+import glob
+import pandas as pd
 import logging
 from typing import Dict, Any, Optional, List
+from qdrant_client import QdrantClient
 
 # Add project root to path
 sys.path.append(os.getcwd())
@@ -16,6 +19,7 @@ from grace.confidence import ConfidenceScore, ActionDecision, InterventionLevel
 from grace.intervention import InterventionRequest, InterventionAction
 from ui.components.grace_components import display_confidence_metric, display_execution_plan, display_intervention_request
 from ui.components.rag_components import select_model
+from services.agent_service import get_available_collections_from_qdrant_helper
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +28,109 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+def render_document_viewer():
+    """元ドキュメントの表示エリア"""
+    with st.expander("📄 元ドキュメントの表示", expanded=False):
+        st.markdown("ダウンロードしたドキュメントの選択：")
+        
+        output_dir = "OUTPUT"
+        target_patterns = {
+            "cc_news": "cc_news*.txt",
+            "japanese_text": "japanese_text*.txt",
+            "livedoor": "livedoor*.txt",
+            "wikipedia_ja": "wikipedia_ja*.txt"
+        }
+        
+        file_options = {}
+        if os.path.exists(output_dir):
+            for label, pattern in target_patterns.items():
+                files = glob.glob(os.path.join(output_dir, pattern))
+                if files:
+                    # 更新日時順にソートして最新を取得
+                    latest_file = max(files, key=os.path.getctime)
+                    file_options[label] = latest_file
+        
+        if file_options:
+            selected_doc_label = st.selectbox(
+                "ドキュメントを選択:", 
+                options=list(file_options.keys()),
+                key="grace_original_doc_selector"
+            )
+            
+            if selected_doc_label:
+                file_path = file_options[selected_doc_label]
+                st.caption(f"参照ファイル: {file_path}")
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        lines = []
+                        for _ in range(100):
+                            line = f.readline()
+                            if not line: break
+                            lines.append(line)
+                        st.text_area("ファイル内容 (先頭100行):", value="".join(lines), height=300, key="grace_doc_viewer")
+                except Exception as e:
+                    st.error(f"読み込みエラー: {e}")
+        else:
+            st.info("OUTPUTディレクトリにテキストファイルが見つかりません。")
+
+def render_qa_reference():
+    """登録済みQ&Aの参照エリア"""
+    with st.expander("📚 登録済みQ&Aの参照 (入力クエリのヒント)", expanded=False):
+        st.markdown("登録されているコレクションから、質問と回答のサンプルを100件表示します。")
+        
+        # プレビュー用のコレクション取得
+        preview_collections = get_available_collections_from_qdrant_helper()
+        
+        if preview_collections:
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                target_collection = st.selectbox(
+                    "コレクションを選択:", 
+                    preview_collections,
+                    index=0,
+                    key="grace_preview_collection_selector"
+                )
+            
+            if target_collection:
+                try:
+                    # Qdrantクライアント接続
+                    client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+                    
+                    # 上位100件を取得
+                    points, _ = client.scroll(
+                        collection_name=target_collection,
+                        limit=100,
+                        with_payload=True,
+                        with_vectors=False
+                    )
+                    
+                    if points:
+                        data_list = []
+                        for point in points:
+                            payload = point.payload or {}
+                            data_list.append({
+                                "Question": payload.get("question", "N/A"),
+                                "Answer": payload.get("answer", "N/A")
+                            })
+                        
+                        df_preview = pd.DataFrame(data_list)
+                        st.dataframe(
+                            df_preview,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Question": st.column_config.TextColumn("質問 (Question)", width="medium"),
+                                "Answer": st.column_config.TextColumn("回答 (Answer)", width="large"),
+                            }
+                        )
+                    else:
+                        st.info(f"コレクション '{target_collection}' にデータが見つかりませんでした。")
+                        
+                except Exception as e:
+                    st.error(f"データ取得エラー: {e}")
+        else:
+            st.warning("表示可能なコレクションがありません。Qdrantの状態を確認してください。")
 
 def init_session_state():
     """Session Stateの初期化"""
@@ -308,6 +415,10 @@ def render_confidence_sidebar():
 def render_chat_area():
     """チャットエリア描画"""
     st.title("🤖 GRACE Agent Chat")
+    
+    # 補助機能の表示
+    render_document_viewer()
+    render_qa_reference()
     
     # 履歴表示
     for message in st.session_state.messages:

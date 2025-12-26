@@ -147,8 +147,7 @@ class TestPhase1PlanAndExecute:
             with patch.object(executor.llm_evaluator, 'evaluate') as mock_eval:
                 mock_eval.return_value = ConfidenceScore(
                     score=0.8,
-                    level="high",
-                    factors={"llm_eval": 0.8}
+                    factors=ConfidenceFactors(llm_self_confidence=0.8)
                 )
 
                 result = executor.execute_plan(plan)
@@ -187,22 +186,21 @@ class TestPhase2Confidence:
         assert 0.0 <= score.score <= 1.0
         assert score.level in ["very_low", "low", "medium", "high", "very_high"]
 
-    def test_confidence_decides_action(self):
-        """ConfidenceCalculatorがアクションを決定できることをテスト"""
-        config = get_config()
-        calculator = create_confidence_calculator(config=config)
-
-        # 高信頼度
-        high_score = ConfidenceScore(score=0.9, level="very_high", factors={})
-        high_decision = calculator.decide_action(high_score)
-        assert high_decision.level == InterventionLevel.SILENT
-
-        # 低信頼度
-        low_score = ConfidenceScore(score=0.2, level="very_low", factors={})
-        low_decision = calculator.decide_action(low_score)
-        assert low_decision.level in [InterventionLevel.CONFIRM, InterventionLevel.ESCALATE]
-
-
+        def test_confidence_decides_action(self):
+            """ConfidenceCalculator가アクションを決定できることをテスト"""
+            config = get_config()
+            calculator = create_confidence_calculator(config=config)
+        
+            # 高信頼度
+            high_score = ConfidenceScore(score=0.9, factors=ConfidenceFactors())
+            high_decision = calculator.decide_action(high_score)
+            assert high_decision.level == InterventionLevel.SILENT
+    
+            # 低信頼度
+            low_score = ConfidenceScore(score=0.2, factors=ConfidenceFactors())
+            low_decision = calculator.decide_action(low_score)
+            assert low_decision.level in [InterventionLevel.CONFIRM, InterventionLevel.ESCALATE]
+    
 # =============================================================================
 # Phase 3 テスト: HITL
 # =============================================================================
@@ -227,8 +225,8 @@ class TestPhase3HITL:
         # NOTIFYレベルのアクション決定
         action_decision = ActionDecision(
             level=InterventionLevel.NOTIFY,
-            message="信頼度が低下しています",
-            should_continue=True
+            confidence_score=0.8,
+            reason="信頼度が低下しています"
         )
 
         # ダミーのステップと計画
@@ -267,8 +265,8 @@ class TestPhase3HITL:
 
         action_decision = ActionDecision(
             level=InterventionLevel.CONFIRM,
-            message="続行しますか？",
-            should_continue=False
+            confidence_score=0.5,
+            reason="続行しますか？"
         )
 
         step = PlanStep(
@@ -494,8 +492,7 @@ class TestFullIntegration:
             with patch.object(executor.llm_evaluator, 'evaluate') as mock_eval:
                 mock_eval.return_value = ConfidenceScore(
                     score=0.85,
-                    level="high",
-                    factors={"llm_eval": 0.85}
+                    factors=ConfidenceFactors(llm_self_confidence=0.85)
                 )
 
                 result = executor.execute_plan(plan)

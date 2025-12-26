@@ -2,6 +2,8 @@
 
 ## ⚠️ CRITICAL RULES (MUST ADHERE)
 
+0.  **絶対遵守**: 指示されてないこと、頼まれてないことは、絶対にしてはならない。
+
 1.  **NO UNAUTHORIZED CHANGES**:
     *   Do **NOT** modify any code (`replace`, `write_file`, etc.) unless the user explicitly commands "Apply fix", "Modify", or similar corrective actions.
     *   During "Investigation", "Root Cause Analysis", or "Code Review" phases, use **READ-ONLY** tools only (`read_file`, `search_file_content`, `list_directory`, etc.).
@@ -113,6 +115,8 @@ streamlit run rag_qa_pair_qdrant.py
     *   **Avoid** `old_code/` and legacy OpenAI-specific paths.
 *   **Mermaid Diagrams:**
     *   Use **Simple Syntax** (v9 compatible) for compatibility with PyCharm Markdown viewer.
+    *   **Avoid** complex shapes: Do not use `[[...]]` (subroutine), `([...])` (stadium), or `((...))` (circle) if rendering fails. Stick to standard `[]` (rect), `()` (rounded), and `{}` (diamond).
+    *   **Avoid** special characters: Do not use parentheses `()` or brackets `[]` inside node labels (e.g., use `Step A` instead of `Step (A)`).
     *   Avoid complex styling (`:::`) or new features (`@{}`).
     *   Example:
         ```mermaid

@@ -28,7 +28,7 @@ class TestConfigModels:
         config = LLMConfig()
 
         assert config.provider == "gemini"
-        assert config.model == "gemini-2.0-flash"
+        assert config.model == "gemini-2.5-flash"
         assert config.temperature == 0.7
         assert config.max_tokens == 4096
         assert config.timeout == 30
@@ -84,7 +84,7 @@ class TestConfigLoader:
         config = loader.load()
 
         assert isinstance(config, GraceConfig)
-        assert config.llm.model == "gemini-2.0-flash"
+        assert config.llm.model == "gemini-2.5-flash"
 
     def test_load_from_yaml(self):
         """YAMLファイルから読み込み"""

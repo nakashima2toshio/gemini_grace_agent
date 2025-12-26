@@ -1,8 +1,8 @@
-[docker-compose Stop]
-docker-compose -f docker-compose.yml down
+[docker compose Stop]
+docker compose -f docker-compose.yml down
 
-[docker-compose start]
-docker-compose -f docker-compose.yml up -d
+[docker compose start]
+docker compose -f docker-compose.yml up -d
 
 ------------------
 # MCP環境セットアップスクリプト

@@ -3,6 +3,8 @@ GRACE Confidence - 信頼度計算システム
 
 ハイブリッド方式（重み付き平均 + LLM自己評価）による
 多軸信頼度計算を実装
+ーー改修： 2025-12-26 LLM化する。
+
 """
 
 import logging
@@ -59,6 +61,7 @@ class ConfidenceScore:
     factors: ConfidenceFactors           # 計算に使用した要素
     breakdown: Dict[str, float] = field(default_factory=dict)  # 各要素のスコア内訳
     penalties_applied: List[str] = field(default_factory=list)  # 適用されたペナルティ
+    reason: str = ""                     # 信頼度スコアの理由（LLM評価などで使用）
 
     @property
     def level(self) -> str:
@@ -143,14 +146,11 @@ class ConfidenceCalculator:
     def calculate(self, factors: ConfidenceFactors) -> ConfidenceScore:
         """
         ハイブリッドConfidence計算
-
         1. 各要素を0-1にスケーリング
         2. 重み付き平均を計算
         3. ペナルティ適用（検索結果0件など）
-
         Args:
             factors: 信頼度要素
-
         Returns:
             ConfidenceScore: 信頼度スコアと内訳
         """
@@ -240,6 +240,52 @@ class ConfidenceCalculator:
             factors=factors,
             breakdown=breakdown,
             penalties_applied=penalties
+        )
+
+    def llm_calculate(
+        self,
+        factors: ConfidenceFactors,
+        step_description: str = "",
+        tool_output: str = ""
+    ) -> ConfidenceScore:
+        """
+        LLMを使用した信頼度計算（次世代版）
+        
+        Args:
+            factors: 統計的要因（参考情報として使用）
+            step_description: ステップの目的
+            tool_output: ツールの出力
+            
+        Returns:
+            ConfidenceScore: 計算された信頼度
+        """
+        # LLM Evaluatorの準備
+        evaluator = create_llm_evaluator(config=self.config)
+        
+        # LLMによる評価実行
+        eval_result = evaluator.evaluate_with_factors(
+            description=step_description,
+            output=tool_output,
+            factors=factors
+        )
+        
+        final_score = eval_result["score"]
+        reason = eval_result["reason"]
+        
+        # 内訳の作成（デバッグ用）
+        breakdown = {
+            "llm_score": final_score,
+            "reason": 1.0 if reason else 0.0 # ダミー値だが存在確認用
+        }
+        
+        logger.info(f"LLM Confidence Calculation: score={final_score}, reason={reason}")
+        
+        return ConfidenceScore(
+            score=final_score,
+            factors=factors,
+            breakdown=breakdown,
+            reason=reason,
+            penalties_applied=[]
         )
 
     def _calc_search_quality(self, factors: ConfidenceFactors) -> float:
@@ -404,12 +450,10 @@ class LLMSelfEvaluator:
     ) -> float:
         """
         LLMに自己評価させる
-
         Args:
             query: 元の質問
             answer: 生成された回答
             sources: 使用した情報源のリスト
-
         Returns:
             float: 信頼度 (0.0-1.0)
         """
@@ -458,6 +502,91 @@ class LLMSelfEvaluator:
             logger.error(f"LLM self-evaluation error: {e}")
             return 0.5
 
+    def evaluate_with_factors(
+        self,
+        description: str,
+        output: str,
+        factors: ConfidenceFactors
+    ) -> Dict[str, Any]:
+        """
+        Factorsとコンテキストを考慮した総合評価
+        Args:
+            description: ステップの目的
+            output: ツールの出力内容
+            factors: 統計적要因
+        Returns:
+            Dict: {"score": float, "reason": str}
+        """
+        import json
+        
+        prompt = f"""
+あなたはAIエージェントの実行監視役です。
+現在のステップが「成功」し、十分な信頼度があるかを評価してください。
+
+【ステップの目的】
+{description}
+
+【実行結果（ツールの出力）】
+{output[:2000]}... (省略)
+
+【統計データ（Factors）】
+- 検索品質 (Search Quality):
+    - ヒット数: {factors.search_result_count}
+    - 最高スコア: {factors.search_max_score:.4f}
+    - 平均スコア: {factors.search_avg_score:.4f}
+- ツール成功 (Tool Success):
+    - 成功: {"Yes" if factors.tool_success_rate > 0.9 else "No (" + str(factors.tool_success_rate) + ")"}
+- ソース一致度 (Source Agreement):
+    - スコア: {factors.source_agreement:.4f} (1.0に近いほど複数の情報源が一致)
+    - ソース数: {factors.source_count}
+
+【評価基準】
+以下の4項目を総合的に判断して、0.0 〜 1.0 の信頼度スコアを付けてください。
+
+1. 検索品質: 質問に対する回答の根拠となる情報が十分にマッチしているか。
+2. ツール成功: 計画されたアクションがエラーなく、期待される情報を返しているか。
+3. ソース一致度: 複数の情報源がある場合、それらが矛盾していないか。
+4. 目標達成度: このステップの出力だけで（またはこれまでの蓄積で）ステップの目的を達成できているか。
+
+【スコアリング目安】
+- 1.0: 完璧。根拠が明確で、矛盾もなく、目的を完全に達成した。
+- 0.8: ほぼ十分。主要な情報は得られており、信頼できる。
+- 0.5: 部分的。核心的な情報が不足している、または情報源に不安がある。
+- 0.3: 不十分。再検索や再試行（Replan）が必要なレベル。
+- 0.0: 失敗。全く無関係な情報、またはエラー。
+
+回答は以下のJSON形式のみで出力してください。Markdownのコードブロックは不要です。
+{{
+  "score": 0.8,
+  "reason": "検索結果は得られたが、一部の情報が曖昧であるため..."
+}}
+"""
+        try:
+            logger.info(f"LLM evaluate_with_factors prompt len: {len(prompt)}")
+            
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    max_output_tokens=200,
+                    response_mime_type="application/json"
+                )
+            )
+
+            if not response or not response.text:
+                return {"score": 0.5, "reason": "No response from LLM"}
+
+            result = json.loads(response.text)
+            score = float(result.get("score", 0.5))
+            reason = result.get("reason", "No reason provided")
+            
+            return {"score": score, "reason": reason}
+
+        except Exception as e:
+            logger.error(f"evaluate_with_factors failed: {e}")
+            return {"score": 0.5, "reason": f"Evaluation error: {str(e)}"}
+
 
 # =============================================================================
 # Source Agreement Calculator
@@ -480,12 +609,9 @@ class SourceAgreementCalculator:
     def calculate(self, answers: List[str]) -> float:
         """
         複数の回答間の一致度を計算
-
         Embeddingの類似度を使用して一致度を算出
-
         Args:
             answers: 回答のリスト
-
         Returns:
             float: 一致度 (0.0-1.0)
         """
@@ -634,14 +760,12 @@ class ConfidenceAggregator:
     ) -> float:
         """
         複数の信頼度スコアを集計
-
         Args:
             scores: 信頼度スコアのリスト
             method: 集計方法
                 - "mean": 平均
                 - "min": 最小値（最も弱い部分を重視）
                 - "weighted": 重み付き平均（後半のステップを重視）
-
         Returns:
             float: 集計された信頼度
         """
@@ -673,14 +797,11 @@ class ConfidenceAggregator:
     ) -> tuple[float, bool]:
         """
         重要度チェック付きの集計
-
         いずれかのステップが閾値を下回る場合、
         全体の信頼度を低下させる
-
         Args:
             scores: 信頼度スコアのリスト
             critical_threshold: 重要閾値
-
         Returns:
             tuple: (集計スコア, 重要ステップ失敗フラグ)
         """

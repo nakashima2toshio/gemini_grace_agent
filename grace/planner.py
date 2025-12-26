@@ -119,10 +119,8 @@ class Planner:
     def create_plan(self, query: str) -> ExecutionPlan:
         """
         質問から実行計画を生成（LLM使用版 - 本来のロジック）
-
         Args:
             query: ユーザーの質問
-
         Returns:
             ExecutionPlan: LLMが生成した実行計画
         """
@@ -190,6 +188,9 @@ class Planner:
                 f"complexity={plan.complexity:.2f}, "
                 f"requires_confirmation={plan.requires_confirmation}"
             )
+
+            # 最終的なプラン内容をログ出力
+            logger.info(f"Final Execution Plan:\n{plan.model_dump_json(indent=2)}")
 
             return plan
 
@@ -273,10 +274,8 @@ class Planner:
     def estimate_complexity(self, query: str) -> float:
         """
         質問の複雑度を推定（0.0-1.0）
-
         Args:
             query: ユーザーの質問
-
         Returns:
             float: 複雑度スコア
         """
@@ -312,10 +311,8 @@ class Planner:
     def estimate_complexity_with_llm(self, query: str) -> float:
         """
         LLMを使用して質問の複雑度を推定
-
         Args:
             query: ユーザーの質問
-
         Returns:
             float: 複雑度スコア
         """
@@ -345,11 +342,9 @@ class Planner:
     ) -> ExecutionPlan:
         """
         フィードバックに基づいて計画を修正
-
         Args:
             plan: 元の計画
             feedback: ユーザーからのフィードバック
-
         Returns:
             ExecutionPlan: 修正された計画
         """
@@ -401,11 +396,9 @@ def create_planner(
 ) -> Planner:
     """
     Plannerインスタンスを作成
-
     Args:
         config: GRACE設定
         model_name: 使用するモデル名
-
     Returns:
         Planner: Plannerインスタンス
     """

@@ -96,94 +96,134 @@ class RAGSearchTool(BaseTool):
         **kwargs
     ) -> ToolResult:
         """
-        RAG検索を実行（Legacy Proven Logic委譲版）
+        RAG検索を実行（Legacy Proven Logic委譲版 + 独自キーワードフィルタリング + 自動コレクションフォールバック）
 
         Args:
             query: 検索クエリ
-            collection: 検索対象コレクション
-            limit: 取得件数上限（現在はLegacy側に固定されているが、将来的に拡張可能）
-            score_threshold: スコア閾値（現在はLegacy側のAgentConfigを参照）
+            collection: 検索対象コレクション（指定がない場合や、指定したコレクションで結果がない場合は自動的に他を試行）
+            limit: 取得件数上限
+            score_threshold: スコア閾値
 
         Returns:
             ToolResult: 検索結果
         """
         import time
+        import re
         from agent_tools import search_rag_knowledge_base_structured
         
         start_time = time.time()
         
-        # --- [IPO LOG] PROCESS INPUT (RAG SEARCH) ---
-        log_input = f"\n{'='*20} [RAG SEARCH IPO: INPUT] {'='*20}\nQuery: {query}\nCollection: {collection or 'Auto'}\n{'='*60}"
-        logger.info(log_input)
-        print(log_input) # コンソールに強制出力
+        # --- 重要単語抽出 (Regex Logic) ---
+        kanji_katakana_pattern = r'^[\u4e00-\u9fff\u30a0-\u30ffー]+$'
+        kanji_katakana_extract_pattern = r'[\u4e00-\u9fff\u30a0-\u30ffー]{2,}'
+
+        tokens = query.split()
+        required_keywords = [t for t in tokens if re.match(kanji_katakana_pattern, t)]
+        extracted = re.findall(kanji_katakana_extract_pattern, query)
+        required_keywords.extend(extracted)
+        required_keywords = list(set(required_keywords))
         
-        logger.info(f"RAG search (Native): query='{query[:50]}...', collection={collection}")
+        if required_keywords:
+            logger.info(f"RAGSearchTool: Required keywords for filtering: {required_keywords}")
 
-        try:
-            # 実績のあるLegacyロジック（キーワードフィルタリング等を含む）を呼び出し
-            # results は List[Dict] または str (エラー/メッセージ)
-            results = search_rag_knowledge_base_structured(query, collection)
+        # --- 検索対象コレクションの決定（優先順位リスト） ---
+        # 指定があればそれを最初に、なければデフォルト順
+        search_candidates = []
+        if collection:
+            search_candidates.append(collection)
+        
+        # フォールバック用のコレクションを追加（重複排除）
+        # 設定から優先順位を取得
+        priority_list = self.config.qdrant.search_priority
+        for c in priority_list:
+            if c not in search_candidates:
+                search_candidates.append(c)
+        
+        logger.info(f"RAGSearchTool: Search candidates: {search_candidates}")
+
+        final_results = []
+        used_collection = None
+        
+        # --- コレクションを順次検索 ---
+        for target_collection in search_candidates:
+            logger.info(f"RAG search (Native): query='{query[:50]}...', collection={target_collection}")
             
-            # --- [IPO LOG] PROCESS OUTPUT (RAG SEARCH) ---
-            import json
-            if isinstance(results, list):
-                if len(results) > 0:
-                    results_display = json.dumps(results, indent=2, ensure_ascii=False)
-                else:
-                    results_display = "⚠️ 検索結果: 0件 (ヒットしませんでした)"
-            else:
-                results_display = str(results)
-
-            log_output = f"\n{'='*20} [RAG SEARCH IPO: OUTPUT] {'='*20}\n{results_display}\n{'='*60}"
-            logger.info(log_output)
-            print(log_output) # コンソールに強制出力
-
-            execution_time = int((time.time() - start_time) * 1000)
-
-            if isinstance(results, str):
-                # 結果なし、またはエラーメッセージの場合
-                logger.info(f"RAG search returned message: {results}")
+            try:
+                # 検索実行
+                results = search_rag_knowledge_base_structured(query, target_collection)
                 
-                # エラー文字列が含まれているかチェック
-                is_error = "ERROR" in results or "FAILED" in results
+                # エラーまたはメッセージのみの場合はスキップ
+                if isinstance(results, str):
+                    logger.debug(f"Search in {target_collection} returned message: {results}")
+                    continue
                 
-                return ToolResult(
-                    success=False,
-                    output=[],
-                    error=results if is_error else None,
-                    confidence_factors={
-                        "result_count": 0,
-                        "avg_score": 0.0,
-                        "message": results
-                    },
-                    execution_time_ms=execution_time
-                )
+                if not isinstance(results, list) or not results:
+                    continue
 
-            # 成功時
-            scores = [r.get("score", 0.0) for r in results]
-            confidence_factors = self._calculate_confidence_factors(scores)
+                # --- 独自キーワードフィルタリング ---
+                if required_keywords:
+                    initial_count = len(results)
+                    filtered_results = []
+                    for res in results:
+                        payload = res.get("payload", {})
+                        content = (str(payload.get("question", "")) + " " + 
+                                   str(payload.get("answer", "")) + " " + 
+                                   str(payload.get("content", "")))
+                        
+                        if any(kw in content for kw in required_keywords):
+                            filtered_results.append(res)
+                    
+                    results = filtered_results
+                    logger.info(f"RAGSearchTool: Filtered results {initial_count} -> {len(results)} (Collection: {target_collection})")
+
+                # 結果があれば採用してループ終了
+                if results:
+                    final_results = results
+                    used_collection = target_collection
+                    logger.info(f"Found {len(results)} valid results in {target_collection}")
+                    break
             
-            logger.info(f"RAG search SUCCESS: {len(results)} results found via Legacy Logic.")
+            except Exception as e:
+                logger.warning(f"Search failed for collection {target_collection}: {e}")
+                continue
 
-            return ToolResult(
-                success=True,
-                output=results,
-                confidence_factors=confidence_factors,
-                execution_time_ms=execution_time
-            )
+        execution_time = int((time.time() - start_time) * 1000)
 
-        except Exception as e:
-            logger.error(f"RAG search failed in Tool wrapper: {e}", exc_info=True)
+        # 結果なしの場合
+        if not final_results:
+            msg = "No relevant results found in any collection."
             return ToolResult(
                 success=False,
-                output=None,
-                error=str(e),
+                output=[],
+                error=msg,
                 confidence_factors={
                     "result_count": 0,
                     "avg_score": 0.0,
-                    "score_variance": 1.0
-                }
+                    "message": msg
+                },
+                execution_time_ms=execution_time
             )
+
+        # 成功時
+        scores = [r.get("score", 0.0) for r in final_results]
+        confidence_factors = self._calculate_confidence_factors(scores)
+        
+        # どのコレクションで見つかったかを記録
+        confidence_factors["used_collection"] = used_collection
+
+        # --- [IPO LOG] PROCESS OUTPUT (RAG SEARCH) ---
+        import json
+        results_display = json.dumps(final_results, indent=2, ensure_ascii=False)
+        log_output = f"\n{'='*20} [RAG SEARCH IPO: OUTPUT] {'='*20}\nCollection: {used_collection}\n{results_display}\n{'='*60}"
+        logger.info(log_output)
+        print(log_output)
+
+        return ToolResult(
+            success=True,
+            output=final_results,
+            confidence_factors=confidence_factors,
+            execution_time_ms=execution_time
+        )
 
     def _calculate_confidence_factors(self, scores: List[float]) -> Dict[str, Any]:
         """Confidence計算用の統計情報を算出"""

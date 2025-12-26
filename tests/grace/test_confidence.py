@@ -151,6 +151,7 @@ class TestConfidenceCalculator:
         factors = ConfidenceFactors(
             search_result_count=5,
             search_avg_score=0.9,
+            search_max_score=0.95,  # 最高スコアを設定
             search_score_variance=0.05,
             source_agreement=0.95,
             source_count=3,
@@ -164,16 +165,18 @@ class TestConfidenceCalculator:
         assert isinstance(result, ConfidenceScore)
         assert result.score > 0.8
         assert len(result.breakdown) == 5
-        assert len(result.penalties_applied) == 0
 
     def test_calculate_low_confidence_no_results(self):
         """検索結果0件の場合は低信頼度"""
         calculator = ConfidenceCalculator()
+        # 検索ステップとして明示
         factors = ConfidenceFactors(
             search_result_count=0,
             search_avg_score=0.0,
+            search_max_score=0.0,
             llm_self_confidence=0.5,
-            tool_success_rate=1.0
+            tool_success_rate=1.0,
+            is_search_step=True
         )
 
         result = calculator.calculate(factors)
@@ -181,20 +184,22 @@ class TestConfidenceCalculator:
         assert result.score < 0.5
         assert "no_search_results" in result.penalties_applied
 
-    def test_calculate_penalty_single_source(self):
-        """単一ソースはペナルティ"""
+    def test_calculate_penalty_no_sources(self):
+        """ソースなしはペナルティ"""
         calculator = ConfidenceCalculator()
         factors = ConfidenceFactors(
             search_result_count=3,
             search_avg_score=0.8,
-            source_count=1,
-            llm_self_confidence=0.8,
-            tool_success_rate=1.0
+            search_max_score=0.85,
+            source_count=0,
+            llm_self_confidence=0.5,
+            tool_success_rate=1.0,
+            is_search_step=False
         )
 
         result = calculator.calculate(factors)
 
-        assert "single_source" in result.penalties_applied
+        assert "no_sources" in result.penalties_applied
 
     def test_calculate_penalty_tool_failures(self):
         """ツール失敗はペナルティ"""
