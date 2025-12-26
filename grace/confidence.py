@@ -272,6 +272,15 @@ class ConfidenceCalculator:
         final_score = eval_result["score"]
         reason = eval_result["reason"]
         
+        # --- ガードレール: 検索スコアの優先 ---
+        # 検索ステップで、かつ検索システムのスコアが高い場合は、機械的なスコアを尊重する
+        # (LLMがハルシネーションや過度な慎重さでスコアを下げすぎるのを防ぐ)
+        if factors.is_search_step and factors.search_max_score > 0.9:
+            if factors.search_max_score > final_score:
+                logger.info(f"Override LLM score ({final_score:.4f}) with Search Score ({factors.search_max_score:.4f})")
+                final_score = factors.search_max_score
+                reason += f" (検索スコア {factors.search_max_score:.4f} を優先)"
+
         # 内訳の作成（デバッグ用）
         breakdown = {
             "llm_score": final_score,
@@ -557,8 +566,8 @@ class LLMSelfEvaluator:
 
 回答は以下のJSON形式のみで出力してください。Markdownのコードブロックは不要です。
 {{
-  "score": 0.8,
-  "reason": "検索結果は得られたが、一部の情報が曖昧であるため..."
+  "score": 0.0,  // 0.0〜1.0の数値を入力
+  "reason": "評価理由を記述"
 }}
 """
         try:
