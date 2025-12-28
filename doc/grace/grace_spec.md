@@ -2,12 +2,12 @@
 **(Guided Reasoning with Adaptive Confidence Execution)**
 
 ## 1. 概要
-GRACEは、**「計画実行（Plan-and-Execute）」**、**「信頼度評価（Confidence-aware）」**、**「人間との協調（Human-in-the-Loop）」** を統合した次世代の自律型エージェントアーキテクチャです。
+GRACEは、**「計画実行（Plan-and-Execute）」**、**「信頼度評価（Confidence-aware）」**、**「適応型再計画（Adaptive Re-planning）」**、**「人間との協調（Human-in-the-Loop）」** を統合した次世代の自律型エージェントアーキテクチャです。
 従来のReAct型エージェントの弱点（迷走、無限ループ、不確実な回答）を克服するため、実行前に明確な計画を立て、ステップごとに信頼度を評価し、必要に応じて動的に計画修正やユーザーへの確認を行います。
 
 ### 主な特徴
 1.  **Guided (誘導型計画):** ユーザーの質問を分析し、最適な実行計画（ステップ）を事前に生成。
-2.  **Adaptive (適応型実行):** 実行結果やエラーに応じて、動的に計画を修正（リプラン）。
+2.  **Adaptive (適応型実行):** 実行結果やエラー、信頼度不足に応じて、動的に計画を修正（リプラン）。
 3.  **Confidence (信頼度駆動):** RAG検索結果やLLMの自己評価から「信頼度スコア」を算出。
 4.  **Execution (堅牢な実行):** 依存関係を考慮したステップ実行と、Legacyシステムとの互換性維持。
 
@@ -25,7 +25,7 @@ GRACEのコアロジックは `@grace/` ディレクトリ配下に集約され�
 | **Tools** | `tools.py` | エージェントが使用する機能群（RAG検索、LLM推論、ユーザー質問）。 |
 | **Confidence** | `confidence.py` | 実行結果の品質を数値化(0.0-1.0)し、介入レベル(Silent/Confirm等)を決定。 |
 | **Intervention** | `intervention.py` | 信頼度が低い場合のユーザー介入（HITL）フローと、閾値の動的調整。 |
-| **Replan** | `replan.py` | 失敗時や低信頼度時に、計画を修正・再生成するオーケストレーター。 |
+| **Replan** | `replan.py` | 失敗時や低信頼度時に、戦略を選択して計画を修正・再生成するオーケストレーター。 |
 
 ---
 
@@ -69,7 +69,7 @@ graph TD
 2.  **実行フェーズ (Executor)**
     *   `Executor` が計画を受け取り、ステップごとに処理を開始。
     *   Pythonの `Generator` を使用して、UIに進捗状況（`ExecutionState`）を逐次yieldする。
-    *   各ステップで `ToolRegistry` からツールを取得して実行。
+    *   各ステップで `ToolRegistry` からツールを取得し実行。
 
 3.  **信頼度評価フェーズ (Confidence)**
     *   ツール実行結果(`ToolResult`)に基づき、`ConfidenceCalculator` がスコアを算出。
@@ -79,10 +79,15 @@ graph TD
         *   LLM自己評価（Accuracy/Style）
     *   スコアに基づき `ActionDecision`（SILENT, NOTIFY, CONFIRM, ESCALATE）を決定。
 
-4.  **介入・リプランフェーズ (Intervention / Replan)**
-    *   **介入:** `CONFIRM` 以上のレベルの場合、実行を一時停止し、ユーザーに確認を求める。
-    *   **リプラン:** ステップ失敗やユーザーからの修正要求があった場合、`ReplanManager` が作動。
-        *   戦略：部分修正(Partial)、全体作り直し(Full)、代替手段(Fallback)。
+4.  **介入・適応型再計画フェーズ (Intervention & Dynamic Replan)**
+    *   **介入 (Intervention):** 信頼度が `CONFIRM` 以上のレベルの場合、実行を一時停止し、ユーザーに承認や修正を求める。
+    *   **動的再計画 (Dynamic Replan):** 以下のトリガーにより `ReplanOrchestrator` が起動。
+        *   **Trigger:** ステップ実行失敗、信頼度スコア不足 (`LOW_CONFIDENCE`)、ユーザーからの修正指摘、情報不足。
+        *   **Strategy (戦略選択):**
+            *   *Refinement:* 手順を細分化して再実行。
+            *   *Query Expansion:* 検索クエリを拡張して再検索。
+            *   *Alternative:* 別のツールやデータソースへ切り替え。
+            *   *Ask User:* ユーザーに追加情報を問い合わせる。
 
 ---
 
@@ -121,11 +126,13 @@ graph TD
     *   `Escalate (<0.4)`: ユーザー入力必須
 
 ### 4.5 Dynamic Replan (`grace/replan.py`)
-*   **ReplanTrigger:** ステップ失敗、低信頼度、ユーザーフィードバック等をトリガーとする。
-*   **戦略:**
-    *   `PARTIAL`: 失敗したステップ以降のみ再生成。
-    *   `FULL`: 最初から計画を作り直す（クエリ拡張などを伴う）。
-    *   `FALLBACK`: 定義された代替アクション（例: RAG失敗→Web検索）へ切り替え。
+*   **ReplanTrigger:** ステップ失敗、低信頼度、ユーザーフィードバック、情報不足。
+*   **ReplanStrategy (再計画戦略):**
+    1.  **Refinement (詳細化):** 曖昧なステップを複数の具体的ステップに分解。
+    2.  **Alternative (代替手段):** 別のツールやデータソース（例: Web検索）を使用するルートに変更。
+    3.  **Query Expansion (クエリ拡張):** 検索キーワードを変更・拡張して再検索。
+    4.  **Ask User (ユーザー質問):** 自動解決不可能な場合、ユーザーに追加情報を求めるステップを挿入。
+    5.  **Full Replan:** 計画全体を最初から作り直す。
 
 ---
 
@@ -320,11 +327,13 @@ graph TD
     *   `context` (ReplanContext): 失敗ステップ、エラー内容、現状の進捗
 *   **Process**:
     1.  **トリガー分析**: リプランの原因（エラー、低信頼度、ユーザー指摘）を特定。
-    2.  **戦略決定**:
-        *   `PARTIAL`: 失敗したステップ以降のみ再計画。
-        *   `FULL`: 最初から計画を作り直す。
-        *   `FALLBACK`: 定義された代替手段（Web検索など）に切り替え。
-    3.  **計画生成**: Plannerを呼び出し、状況に応じた新しい計画を生成。
+    2.  **戦略決定 (ReplanStrategy)**:
+        *   `Refinement`: 曖昧なステップを詳細化。
+        *   `Alternative`: 代替ツール・ソースへ切り替え。
+        *   `Query Expansion`: 検索クエリを改善。
+        *   `Ask User`: ユーザーに情報提供を依頼。
+        *   `Full Replan`: 全体計画の再生成。
+    3.  **計画生成**: Plannerを呼び出し、選択された戦略に基づいて新しい計画を生成。
     4.  **結合**: 完了済みステップと新しい計画を結合し、整合性を取る。
     
     ```mermaid
@@ -332,18 +341,19 @@ graph TD
         Trigger[Failure/Low Conf] --> Analyze[Analyze Context]
         Analyze --> Strategy{Determine Strategy}
         
-        Strategy -->|Partial| Keep[Keep Completed Steps]
-        Keep --> ReplanPartial[Replan Remaining]
+        Strategy -->|Refinement| Split[Split Step]
+        Strategy -->|Alternative| SwitchTool[Switch Tool]
+        Strategy -->|Query Exp| ModQuery[Expand Query]
+        Strategy -->|Ask User| InsertAsk[Insert AskUser]
+        Strategy -->|Full Replan| ReplanAll[Replan All]
         
-        Strategy -->|Full| ReplanAll[Replan All]
-        
-        Strategy -->|Fallback| ApplyFallback[Use Fallback Action]
-        
-        ReplanPartial --> Merge[Merge Plans]
+        Split --> NewPlan
+        SwitchTool --> NewPlan
+        ModQuery --> NewPlan
+        InsertAsk --> NewPlan
         ReplanAll --> NewPlan
-        ApplyFallback --> NewPlan
         
-        Merge --> NewPlan[New Execution Plan]
+        NewPlan --> Merge[Merge with Executed]
     ```
 *   **Output**:
     *   `ReplanResult`: 新しい実行計画、または中止判断。

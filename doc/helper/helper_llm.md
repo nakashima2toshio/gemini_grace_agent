@@ -21,8 +21,8 @@ graph TD
     App[Application Code] -->|Use| Factory[create_llm_client]
     Factory -->|Create| Client[LLMClient Interface]
     
-    Client <|-- OpenAI[OpenAIClient]
-    Client <|-- Gemini[GeminiClient]
+    Client --- OpenAI[OpenAIClient]
+    Client --- Gemini[GeminiClient]
     
     OpenAI -->|Call| O_API[OpenAI API]
     Gemini -->|Call| G_API[Gemini API]

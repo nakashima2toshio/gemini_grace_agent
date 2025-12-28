@@ -144,8 +144,8 @@ class Planner:
             available_collections = self._get_available_collections()
             collections_str = ", ".join(available_collections) if available_collections else "(コレクションなし)"
 
-            # 複雑度を推定
-            complexity = self.estimate_complexity(query)
+            # 複雑度を推定 (LLMを使用)
+            estimated_complexity = self.estimate_complexity_with_llm(query)
 
             # プロンプトを構築
             prompt = PLAN_GENERATION_PROMPT.format(
@@ -173,6 +173,9 @@ class Planner:
 
             # JSONをパースしてExecutionPlanに変換
             plan = ExecutionPlan.model_validate_json(response.text)
+
+            # 事前に計算した正確な複雑度を適用
+            plan.complexity = estimated_complexity
 
             # 計画IDを設定
             plan.plan_id = create_plan_id()
