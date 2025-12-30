@@ -117,10 +117,16 @@ streamlit run rag_qa_pair_qdrant.py
     *   Use **Simple Syntax** (v9 compatible) for compatibility with PyCharm Markdown viewer.
     *   **Avoid** complex shapes: Do not use `[[...]]` (subroutine), `([...])` (stadium), or `((...))` (circle) if rendering fails. Stick to standard `[]` (rect), `()` (rounded), and `{}` (diamond).
     *   **Avoid** special characters: Do not use parentheses `()` or brackets `[]` inside node labels (e.g., use `Step A` instead of `Step (A)`).
-    *   Avoid complex styling (`:::`) or new features (`@{}`).
+    *   **Avoid** complex styling (`:::`) or new features (`@{}`).
+    *   **Strict ID Rules**: Use only Alphanumeric characters for Node and Subgraph IDs. **No underscores (`_`)**, **No spaces**. (e.g., `SubGraph1` not `Sub_Graph_1`).
+    *   **Quote All Labels**: ALWAYS double-quote labels containing Japanese or special characters.
+        *   Node: `A["日本語ラベル"]`
+        *   Edge: `A -->|"処理実行"| B`
     *   Example:
         ```mermaid
         graph TD
-            A[Start] --> B{Decision}
-            B -->|Yes| C[End]
+            subgraph GroupA
+                A["Start Node"] -->|"Action"| B{"Decision"}
+            end
+            B -->|"Yes"| C["End Node"]
         ```

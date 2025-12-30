@@ -77,13 +77,14 @@ class QAPipeline:
         else:
             raise ValueError("dataset_name または input_file を指定してください")
 
-        def load_data(self) -> pd.DataFrame:
-            """データを読み込む"""
-            # 循環参照を避けるため、ここでインポート (a02に残っている関数を使用...
-            # 将来的には qa_generation/data_io.py に移動すべき)
-            from qa_generation.data_io import load_uploaded_file, load_preprocessed_data
-            
-            logger.info("\n[1/4] データ読み込み...")        if self.input_file:
+    def load_data(self) -> pd.DataFrame:
+        """データを読み込む"""
+        # 循環参照を避けるため、ここでインポート (a02に残っている関数を使用...
+        # 将来的には qa_generation/data_io.py に移動すべき)
+        from qa_generation.data_io import load_uploaded_file, load_preprocessed_data
+        
+        logger.info("\n[1/4] データ読み込み...")
+        if self.input_file:
             df = load_uploaded_file(self.input_file)
             if self.max_docs and len(df) > self.max_docs:
                 df = df.head(self.max_docs)

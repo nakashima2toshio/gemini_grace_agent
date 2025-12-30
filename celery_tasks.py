@@ -14,6 +14,7 @@ import os
 import json
 import logging
 import time
+import traceback
 from typing import List, Dict
 from celery import Celery
 from dotenv import load_dotenv
@@ -201,13 +202,16 @@ def generate_qa_unified_async(
         generator = QAGenerator(client=client, model=model)
         
         # Q/A生成
+        logger.info(f"[統合タスク] Q/A生成API呼び出し開始: chunk={chunk_data.get('id', 'unknown')}")
+        start_api = time.time()
         qa_pairs = generator.generate_for_chunk(chunk_data, config)
+        elapsed_api = time.time() - start_api
         
         # プロバイダー情報を追加
         for qa in qa_pairs:
             qa["provider"] = provider
 
-        logger.info(f"[統合タスク] 完了: {len(qa_pairs)}個のQ/A生成")
+        logger.info(f"[統合タスク] 完了: {len(qa_pairs)}個のQ/A生成 (所要時間: {elapsed_api:.2f}s)")
 
         return {
             "success": True,
@@ -219,7 +223,8 @@ def generate_qa_unified_async(
 
     except Exception as e:
         # エラーログ出力（429等のレート制限エラーを含む）
-        logger.error(f"[統合タスク] エラー (Provider: {provider}): {str(e)}")
+        logger.error(f"[統合タスク] エラー発生 (Provider: {provider}, Chunk: {chunk_data.get('id')}): {str(e)}")
+        logger.error(f"[統合タスク] スタックトレース:\n{traceback.format_exc()}")
 
         # リトライ処理（指数バックオフ）
         if self.request.retries < self.max_retries:

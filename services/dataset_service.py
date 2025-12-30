@@ -187,6 +187,17 @@ def download_hf_dataset(
             if (i + 1) % 50 == 0:
                 log_callback(f"進捗: {i + 1}/{sample_size} 件")
 
+    elif dataset_name == "hotchpotch/fineweb-2-edu-japanese":
+        log_callback(f"📥 {dataset_name} をロード中...")
+        dataset = hf_load_dataset(dataset_name, split=split, streaming=True)
+
+        for i, item in enumerate(dataset):
+            if i >= sample_size:
+                break
+            samples.append(item)
+            if (i + 1) % 100 == 0:
+                log_callback(f"進捗: {i + 1}/{sample_size} 件")
+
     else:
         raise ValueError(f"未対応のデータセット: {dataset_name}")
 

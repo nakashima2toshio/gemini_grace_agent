@@ -161,6 +161,7 @@ class GeminiClient(LLMClient):
             return response_schema.model_validate_json(response.text)
         except Exception as e:
             logger.error(f"JSON parse error: {e}")
+            logger.error(f"Raw response text from Gemini:\n{response.text}")
             raise
 
     def count_tokens(self, text: str, model: Optional[str] = None) -> int:

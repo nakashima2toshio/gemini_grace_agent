@@ -6,6 +6,7 @@ qa_generation/structure.py - チャンク作成・統合モジュール
 
 import logging
 from typing import List, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import tiktoken
 from qa_generation.semantic import SemanticCoverage
@@ -13,7 +14,7 @@ from config import DATASET_CONFIGS
 
 logger = logging.getLogger(__name__)
 
-def create_semantic_chunks(text: str, lang: str = "ja", max_tokens: int = 200, chunk_id_prefix: str = "chunk") -> List[Dict]:
+def create_semantic_chunks(text: str, lang: str = "ja", max_tokens: int = 200, chunk_id_prefix: str = "chunk", semantic_analyzer: Optional[SemanticCoverage] = None) -> List[Dict]:
     """
     セマンティック分割によるチャンク作成（段落優先）
 
@@ -26,12 +27,14 @@ def create_semantic_chunks(text: str, lang: str = "ja", max_tokens: int = 200, c
         lang: 言語（"ja" or "en"）※現在は自動判定
         max_tokens: チャンクの最大トークン数
         chunk_id_prefix: チャンクIDのプレフィックス
+        semantic_analyzer: 外部で初期化されたSemanticCoverageインスタンス（オプション）
 
     Returns:
         チャンクのリスト
     """
     # SemanticCoverageを使用してセマンティック分割を実行
-    semantic_analyzer = SemanticCoverage(embedding_model="gemini-embedding-001")
+    if semantic_analyzer is None:
+        semantic_analyzer = SemanticCoverage(embedding_model="gemini-embedding-001")
 
     # 段落優先のセマンティック分割を実行
     # prefer_paragraphs=True: 段落境界を最優先
@@ -65,8 +68,42 @@ def create_semantic_chunks(text: str, lang: str = "ja", max_tokens: int = 200, c
     return chunks
 
 
+def _process_single_document(idx, row, dataset_type, text_col, title_col, lang, chunk_size, semantic_analyzer) -> List[Dict]:
+    """単一文書の処理（並列実行用）"""
+    # row[text_col]はSeriesやオブジェクトの可能性があるため、明示的にstrに変換
+    text = str(row[text_col]) if pd.notna(row[text_col]) else ""
+
+    # タイトルがある場合は含める
+    if title_col and title_col in row and pd.notna(row[title_col]):
+        doc_id = f"{dataset_type}_{idx}_{str(row[title_col])[:30]}"
+    else:
+        doc_id = f"{dataset_type}_{idx}"
+
+    try:
+        chunk_id_prefix = f"{doc_id}_chunk"
+        chunks = create_semantic_chunks(
+            text=text,
+            lang=lang,
+            max_tokens=chunk_size,
+            chunk_id_prefix=chunk_id_prefix,
+            semantic_analyzer=semantic_analyzer
+        )
+
+        # 各チャンクにメタデータを追加
+        for i, chunk in enumerate(chunks):
+            chunk['doc_id'] = doc_id
+            chunk['doc_idx'] = idx
+            chunk['chunk_idx'] = i
+            chunk['dataset_type'] = dataset_type
+        
+        return chunks
+    except Exception as e:
+        logger.warning(f"チャンク作成エラー (doc {idx}): {e}")
+        return []
+
+
 def create_document_chunks(df: pd.DataFrame, dataset_type: str, max_docs: Optional[int] = None, config: Optional[Dict] = None) -> List[Dict]:
-    """DataFrameから文書チャンクを作成（セマンティック分割）
+    """DataFrameから文書チャンクを作成（セマンティック分割・並列処理）
     Args:
         df: データフレーム
         dataset_type: データセットタイプ
@@ -90,44 +127,35 @@ def create_document_chunks(df: pd.DataFrame, dataset_type: str, max_docs: Option
     # 処理する文書数を制限
     docs_to_process = df.head(max_docs) if max_docs else df
 
-    logger.info(f"チャンク作成開始: {len(docs_to_process)}件の文書（セマンティック分割）")
+    logger.info(f"チャンク作成開始: {len(docs_to_process)}件の文書（セマンティック分割・8並列）")
+
+    # セマンティック分析器を一度だけ初期化（オーバーヘッド削減）
+    semantic_analyzer = SemanticCoverage(embedding_model="gemini-embedding-001")
 
     total_docs = len(docs_to_process)
-    for i, (idx, row) in enumerate(docs_to_process.iterrows()):
-        # 進捗ログ（10件ごと）
-        if (i + 1) % 10 == 0 or (i + 1) == total_docs:
-            logger.info(f"  チャンク作成進捗: {i + 1}/{total_docs} 文書完了")
+    completed_count = 0
 
-        # row[text_col]はSeriesやオブジェクトの可能性があるため、明示的にstrに変換
-        text = str(row[text_col]) if pd.notna(row[text_col]) else ""
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        # タスクのサブミット
+        future_to_idx = {
+            executor.submit(
+                _process_single_document, 
+                idx, row, dataset_type, text_col, title_col, lang, chunk_size, semantic_analyzer
+            ): idx
+            for idx, row in docs_to_process.iterrows()
+        }
 
-        # タイトルがある場合は含める
-        if title_col and title_col in row and pd.notna(row[title_col]):
-            doc_id = f"{dataset_type}_{idx}_{str(row[title_col])[:30]}"
-        else:
-            doc_id = f"{dataset_type}_{idx}"
-
-        # セマンティック分割によるチャンク作成を使用
-        try:
-            chunk_id_prefix = f"{doc_id}_chunk"
-            chunks = create_semantic_chunks(
-                text=text,
-                lang=lang,
-                max_tokens=chunk_size,
-                chunk_id_prefix=chunk_id_prefix
-            )
-
-            # 各チャンクにメタデータを追加
-            for i, chunk in enumerate(chunks):
-                chunk['doc_id'] = doc_id
-                chunk['doc_idx'] = idx
-                chunk['chunk_idx'] = i
-                chunk['dataset_type'] = dataset_type
-                all_chunks.append(chunk)
-
-        except Exception as e:
-            logger.warning(f"チャンク作成エラー (doc {idx}): {e}")
-            continue
+        # 結果の収集
+        for future in as_completed(future_to_idx):
+            completed_count += 1
+            if completed_count % 10 == 0 or completed_count == total_docs:
+                logger.info(f"  チャンク作成進捗: {completed_count}/{total_docs} 文書完了")
+            
+            try:
+                chunks = future.result()
+                all_chunks.extend(chunks)
+            except Exception as e:
+                logger.error(f"予期せぬエラー: {e}")
 
     logger.info(f"チャンク作成完了: {len(all_chunks)}個のチャンク（セマンティック分割）")
     return all_chunks

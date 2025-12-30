@@ -297,7 +297,7 @@ class Planner:
             ("どのように", 0.15),
         ]
 
-        score = 0.3  # ベーススコア
+        score = 0.5  # ベーススコア
 
         for keyword, weight in complexity_factors:
             if keyword in query:

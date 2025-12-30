@@ -1,9 +1,37 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-make_qa.py - Q/Aペア生成 CLIエントリーポイント
+事前稼働：
+# ※PCのスペック(CPUコア数/メモリ)に合わせて調整してください(例: 4~8~24~36)
+./start_celery.sh start -w 24
+
+# ステータス確認
+./start_celery.sh status
+
+# 停止
+./start_celery.sh stop
+
+# 再起動
+./start_celery.sh restart -w 24
+---
+# Flower起動
+celery -A celery_config flower --port=5555
 ============================================
 新しいアーキテクチャに基づくQ/A生成ツール
+make_qa.py - Q/Aペア生成 CLIエントリーポイント
+============================================
+[Usage: ]
+python make_qa.py \
+--dataset fineweb_edu_ja \
+--use-celery \
+--celery-workers 24 \
+--analyze-coverage \
+--model gemini-2.0-flash \
+--batch-chunks 3 \
+--merge-chunks
+
+============================================
+
 """
 
 import sys

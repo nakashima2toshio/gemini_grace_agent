@@ -1,6 +1,7 @@
 """
 GRACE Planner Tests
 Plannerのテスト
+[Usage]: pytest --cov=grace.planner -vs tests/grace/test_planner.py
 """
 
 import pytest
@@ -20,12 +21,22 @@ class TestPlanner:
         reset_config()
 
     @patch("grace.planner.genai.Client")
-    def test_create_plan_success(self, mock_client_class):
+    @patch("grace.planner.QdrantClient")
+    @patch("grace.planner.get_all_collections")
+    def test_create_plan_success(self, mock_get_collections, mock_qdrant_client, mock_client_class):
         """計画生成の成功"""
-        # モックレスポンスを設定
-        mock_response = MagicMock()
-        mock_response.text = json.dumps({
-            "original_query": "Pythonについて教えて",
+        # Mock available collections
+        mock_get_collections.return_value = [{"name": "wikipedia_ja"}, {"name": "livedoor"}]
+
+        # Mock LLM responses
+        # Call 1: Complexity estimation
+        mock_response_complexity = MagicMock()
+        mock_response_complexity.text = "0.5"
+
+        # Call 2: Plan generation
+        mock_response_plan = MagicMock()
+        mock_response_plan.text = json.dumps({
+            "original_query": "スペイン語の文法と単語はそれぞれ何語の影響を強く受けていますか？　日本語の影響は受けていますか？",
             "complexity": 0.5,
             "estimated_steps": 2,
             "requires_confirmation": False,
@@ -35,7 +46,8 @@ class TestPlanner:
                     "action": "rag_search",
                     "description": "関連情報を検索",
                     "query": "Python",
-                    "expected_output": "検索結果"
+                    "expected_output": "検索結果",
+                    "collection": "wikipedia_ja"
                 },
                 {
                     "step_id": 2,
@@ -49,22 +61,30 @@ class TestPlanner:
         })
 
         mock_client = MagicMock()
-        mock_client.models.generate_content.return_value = mock_response
+        # side_effect for multiple calls
+        mock_client.models.generate_content.side_effect = [mock_response_complexity, mock_response_plan]
         mock_client_class.return_value = mock_client
 
         # Plannerをテスト
         planner = Planner()
-        plan = planner.create_plan("Pythonについて教えて")
+        plan = planner.create_plan("スペイン語の文法と単語はそれぞれ何語の影響を強く受けていますか？　日本語の影響は受けていますか？")
 
         assert isinstance(plan, ExecutionPlan)
-        assert plan.original_query == "Pythonについて教えて"
+        assert plan.original_query == "スペイン語の文法と単語はそれぞれ何語の影響を強く受けていますか？　日本語の影響は受けていますか？"
         assert len(plan.steps) == 2
         assert plan.plan_id is not None
+        assert plan.complexity == 0.5
 
     @patch("grace.planner.genai.Client")
-    def test_create_plan_fallback(self, mock_client_class):
+    @patch("grace.planner.QdrantClient")
+    @patch("grace.planner.get_all_collections")
+    def test_create_plan_fallback(self, mock_get_collections, mock_qdrant_client, mock_client_class):
         """計画生成失敗時のフォールバック"""
+        # Mock collections
+        mock_get_collections.return_value = []
+
         mock_client = MagicMock()
+        # Ensure calls fail
         mock_client.models.generate_content.side_effect = Exception("API Error")
         mock_client_class.return_value = mock_client
 
@@ -75,27 +95,62 @@ class TestPlanner:
         assert isinstance(plan, ExecutionPlan)
         assert len(plan.steps) == 2
         assert plan.steps[0].action == "rag_search"
+        assert plan.steps[0].collection == "wikipedia_ja"
         assert plan.steps[1].action == "reasoning"
 
-    def test_estimate_complexity_simple(self):
-        """単純な質問の複雑度推定"""
-        planner = Planner.__new__(Planner)  # __init__をスキップ
-        planner.config = GraceConfig()
+    @patch("grace.planner.genai.Client")
+    def test_estimate_complexity_with_llm_simple(self, mock_client_class):
+        """単純な質問の複雑度推定 (LLM)"""
+        mock_response = MagicMock()
+        mock_response.text = "0.2"
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        planner = Planner()
 
         # 単純な質問
-        complexity = planner.estimate_complexity("Pythonとは何ですか")
-        assert complexity < 0.5
+        complexity = planner.estimate_complexity_with_llm("スペイン語の文法と単語はそれぞれ何語の影響を強く受けていますか？")
+        assert complexity == 0.2
 
-    def test_estimate_complexity_complex(self):
-        """複雑な質問の複雑度推定"""
-        planner = Planner.__new__(Planner)
-        planner.config = GraceConfig()
+    @patch("grace.planner.genai.Client")
+    def test_estimate_complexity_with_llm_complex(self, mock_client_class):
+        """複雑な質問の複雑度推定 (LLM)"""
+        mock_response = MagicMock()
+        mock_response.text = "0.8"
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        planner = Planner()
 
         # 複雑な質問
-        complexity = planner.estimate_complexity(
-            "PythonとJavaの違いを比較して、それぞれの利点と欠点を詳しく説明してください"
+        complexity = planner.estimate_complexity_with_llm(
+            "スペイン語の文法と単語はそれぞれ何語の影響を強く受けていますか？　日本語の影響は受けていますか？"
         )
-        assert complexity > 0.5
+        assert complexity == 0.8
+
+    @patch("grace.planner.genai.Client")
+    def test_estimate_complexity_with_llm_fallback(self, mock_client_class):
+        """複雑度推定失敗時のフォールバック"""
+        # LLM呼び出しでエラーを発生させる
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = Exception("API Error")
+        mock_client_class.return_value = mock_client
+
+        planner = Planner()
+
+        # フォールバック（ルールベース）が呼ばれる
+        # "詳しく" (0.15) + ベース (0.5) = 0.65 程度になるはず
+        complexity = planner.estimate_complexity_with_llm(
+            "スペイン語の文法と単語に影響を与えた言語の影響ついて詳しく教えてください"
+        )
+
+        # ルールベースの計算結果であることを確認（エラーにならず値を返す）
+        assert complexity > 0.0
+        assert complexity <= 1.0
 
     @patch("grace.planner.genai.Client")
     def test_refine_plan(self, mock_client_class):

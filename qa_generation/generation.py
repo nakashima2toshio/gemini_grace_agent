@@ -140,6 +140,7 @@ Output in JSON format:
 
         try:
             combined_input = f"{system_prompt}\n\n{user_prompt}"
+            logger.debug(f"Gemini構造化出力試行中... (chunk: {chunk.get('id')})")
             parsed_data = self.client.generate_structured(
                 prompt=combined_input,
                 response_schema=QAPairsResponse,
@@ -167,11 +168,12 @@ Output in JSON format:
             return qa_pairs
 
         except Exception as e:
-            logger.warning(f"構造化出力失敗、テキスト生成にフォールバック: {str(e)[:100]}")
+            logger.warning(f"構造化出力失敗、テキスト生成にフォールバック (chunk: {chunk.get('id')}): {str(e)[:100]}")
             
             try:
                 # フォールバック: テキスト生成してJSON解析
                 combined_input = f"{system_prompt}\n\n{user_prompt}"
+                logger.debug(f"Geminiテキスト生成試行中... (chunk: {chunk.get('id')})")
                 response_text = self.client.generate_content(
                     prompt=combined_input,
                     model=self.model

@@ -68,11 +68,11 @@
 ```mermaid
 graph TD
     User((ユーザー<br>ブラウザ)) -->|http://localhost:8500| Streamlit[Streamlit アプリケーション<br>agent_rag.py<br>Port: 8500]
-    
+  
     Streamlit -->|Q&A生成/Embedding| Gemini(Gemini API<br>クラウド)
     Streamlit -->|ベクトル検索| Qdrant[(Qdrant<br>Port: 6333<br>Docker)]
     Streamlit -.->|タスク登録| Redis[(Redis<br>Port: 6379<br>Docker)]
-    
+  
     subgraph Background Jobs
         Celery[[Celery Workers<br>並列処理]]
         Celery -->|タスク取得/結果保存| Redis
@@ -89,13 +89,14 @@ graph TD
 
 ### 1.3 前提条件・動作環境
 
-| 項目 | 要件 |
-|------|------|
-| OS | macOS / Linux / Windows (WSL2推奨) |
-| Python | 3.10 以上 |
-| Docker | Docker Desktop または Docker Engine |
-| メモリ | 8GB 以上推奨 |
-| ディスク | 10GB 以上の空き容量 |
+
+| 項目     | 要件                                |
+| -------- | ----------------------------------- |
+| OS       | macOS / Linux / Windows (WSL2推奨)  |
+| Python   | 3.10 以上                           |
+| Docker   | Docker Desktop または Docker Engine |
+| メモリ   | 8GB 以上推奨                        |
+| ディスク | 10GB 以上の空き容量                 |
 
 ---
 
@@ -123,7 +124,7 @@ sudo apt install python3.11 python3.11-venv python3-pip
 
 #### Windows
 
-Python公式サイト(<https://www.python.org/downloads/)からインストーラをダウンロードしてインストール。>
+Python公式サイト([https://www.python.org/downloads/)からインストーラをダウンロードしてインストール。](https://www.python.org/downloads/)%E3%81%8B%E3%82%89%E3%82%A4%E3%83%B3%E3%82%B9%E3%83%88%E3%83%BC%E3%83%A9%E3%82%92%E3%83%80%E3%82%A6%E3%83%B3%E3%83%AD%E3%83%BC%E3%83%89%E3%81%97%E3%81%A6%E3%82%A4%E3%83%B3%E3%82%B9%E3%83%88%E3%83%BC%E3%83%AB%E3%80%82)
 
 ### 2.2 仮想環境の作成
 
@@ -173,18 +174,19 @@ conda activate rag_qa
 
 **主要パッケージ:**
 
-| パッケージ | バージョン | 用途 |
-|-----------|-----------|------|
-| google-generativeai | 0.8.0 | Gemini API クライアント |
-| streamlit | 1.48.1 | Web UI フレームワーク |
-| qdrant-client | 1.16.1 | Qdrant クライアント |
-| redis | 7.1.0 | Redis クライアント |
-| pandas | 2.3.3 | データ処理 |
-| tiktoken | 0.12.0 | トークンカウント |
-| mecab-python3 | 1.0.10 | 形態素解析 |
-| celery | 5.5.3 | タスクキュー・並列処理 |
-| kombu | 5.5.4 | メッセージング |
-| flower | 2.0.1 | Celery監視UI |
+
+| パッケージ          | バージョン | 用途                    |
+| ------------------- | ---------- | ----------------------- |
+| google-generativeai | 0.8.0      | Gemini API クライアント |
+| streamlit           | 1.48.1     | Web UI フレームワーク   |
+| qdrant-client       | 1.16.1     | Qdrant クライアント     |
+| redis               | 7.1.0      | Redis クライアント      |
+| pandas              | 2.3.3      | データ処理              |
+| tiktoken            | 0.12.0     | トークンカウント        |
+| mecab-python3       | 1.0.10     | 形態素解析              |
+| celery              | 5.5.3      | タスクキュー・並列処理  |
+| kombu               | 5.5.4      | メッセージング          |
+| flower              | 2.0.1      | Celery監視UI            |
 
 ### 2.4 MeCabのインストール(日本語処理用)
 
@@ -232,7 +234,7 @@ touch .env
 
 ### 3.2 Gemini API Keyの取得・設定
 
-1. Google AI Studio(<https://aistudio.google.com/)にアクセス>
+1. Google AI Studio([https://aistudio.google.com/)にアクセス](https://aistudio.google.com/)%E3%81%AB%E3%82%A2%E3%82%AF%E3%82%BB%E3%82%B9)
 2. API Keys ページで新しいキーを作成
 3. .env ファイルに記載
 
@@ -275,7 +277,7 @@ python -c "from dotenv import load_dotenv; import os; load_dotenv(); print('GEMI
 
 #### macOS
 
-Docker Desktop for Mac(<https://www.docker.com/products/docker-desktop/)をインストール。>
+Docker Desktop for Mac([https://www.docker.com/products/docker-desktop/)をインストール。](https://www.docker.com/products/docker-desktop/)%E3%82%92%E3%82%A4%E3%83%B3%E3%82%B9%E3%83%88%E3%83%BC%E3%83%AB%E3%80%82)
 
 #### Ubuntu/Debian
 
@@ -328,7 +330,7 @@ curl http://localhost:6333/health
 curl http://localhost:6333/collections
 ```
 
-**ブラウザでも確認可能:** <http://localhost:6333/dashboard>
+**ブラウザでも確認可能:** [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
 
 #### Redis
 
@@ -343,11 +345,12 @@ redis-cli info server | head -5
 
 ### 4.4 Docker トラブルシューティング
 
-| 問題 | 原因 | 対処法 |
-|------|------|--------|
-| port already in use | ポート競合 | 既存プロセスを停止するか、ポート変更 |
-| permission denied | Docker権限なし | sudo usermod -aG docker $USER 後に再ログイン |
-| コンテナが起動しない | リソース不足 | Docker Desktopのメモリ割り当てを増加 |
+
+| 問題                 | 原因           | 対処法                                       |
+| -------------------- | -------------- | -------------------------------------------- |
+| port already in use  | ポート競合     | 既存プロセスを停止するか、ポート変更         |
+| permission denied    | Docker権限なし | sudo usermod -aG docker $USER 後に再ログイン |
+| コンテナが起動しない | リソース不足   | Docker Desktopのメモリ割り当てを増加         |
 
 ```bash
 # サービス停止
@@ -411,7 +414,7 @@ task_retry_kwargs = {
 chmod +x start_celery.sh
 
 # ワーカー起動(24ワーカー)
-# ※PCのスペック(CPUコア数/メモリ)に合わせて調整してください(例: 4~8)
+# ※PCのスペック(CPUコア数/メモリ)に合わせて調整してください(例: 4~8~24~36)
 ./start_celery.sh start -w 24
 
 # ステータス確認
@@ -473,7 +476,7 @@ Flowerを使用すると、Celeryタスクの状態をWebブラウザで監視�
 celery -A celery_config flower --port=5555
 ```
 
-**ブラウザでアクセス:** <http://localhost:5555>
+**ブラウザでアクセス:** [http://localhost:5555](http://localhost:5555)
 
 Flower画面で確認できる情報:
 
@@ -511,12 +514,13 @@ celery -A celery_tasks inspect stats
 mkdir -p datasets OUTPUT qa_output logs
 ```
 
-| ディレクトリ | 用途 |
-|-------------|------|
-| datasets/ | ダウンロードした生データ |
-| OUTPUT/ | 前処理済みデータ |
-| qa_output/ | 生成されたQ&Aペア |
-| logs/ | Celeryログファイル |
+
+| ディレクトリ | 用途                     |
+| ------------ | ------------------------ |
+| datasets/    | ダウンロードした生データ |
+| OUTPUT/      | 前処理済みデータ         |
+| qa_output/   | 生成されたQ&Aペア        |
+| logs/        | Celeryログファイル       |
 
 ### 6.2 agent_rag.py の起動
 
@@ -536,7 +540,7 @@ mkdir -p datasets OUTPUT qa_output logs
 
 ### 6.3 ブラウザでのアクセス確認
 
-1. ブラウザで <http://localhost:8500> を開く
+1. ブラウザで [http://localhost:8500](http://localhost:8500) を開く
 2. サイドバーで「説明」画面を選択
 3. データフロー図が表示されれば正常起動
 
@@ -572,12 +576,13 @@ python -c "from dotenv import load_dotenv; import os; load_dotenv(); print('GEMI
 
 ### 7.2 正常起動時の状態
 
-| サービス | ポート | 確認方法 | 正常時の応答 |
-|---------|--------|---------|-------------|
-| Streamlit | 8500 | ブラウザアクセス | 画面表示 |
-| Qdrant | 6333 | curl localhost:6333/health | {"status":"ok"} |
-| Redis | 6379 | redis-cli ping | PONG |
-| Celery | - | ./start_celery.sh status | ワーカー: (ok) 起動中 |
+
+| サービス  | ポート | 確認方法                   | 正常時の応答          |
+| --------- | ------ | -------------------------- | --------------------- |
+| Streamlit | 8500   | ブラウザアクセス           | 画面表示              |
+| Qdrant    | 6333   | curl localhost:6333/health | {"status":"ok"}       |
+| Redis     | 6379   | redis-cli ping             | PONG                  |
+| Celery    | -      | ./start_celery.sh status   | ワーカー: (ok) 起動中 |
 
 ### 7.3 起動スクリプト(一括起動)
 
@@ -679,9 +684,9 @@ cat .env | grep GEMINI_API_KEY
 
 * **原因**: APIのレート制限(RPM/TPM)を超過しています。
 * **対策**:
-    1. Celeryのワーカー数を減らす (`./start_celery.sh restart -w 4`)
-    2. `celery_rate_limit_fix.py` (もしあれば) を適用するか、リトライ設定を確認する
-    3. Pay-as-you-goプランへの移行を検討する
+  1. Celeryのワーカー数を減らす (`./start_celery.sh restart -w 4`)
+  2. `celery_rate_limit_fix.py` (もしあれば) を適用するか、リトライ設定を確認する
+  3. Pay-as-you-goプランへの移行を検討する
 
 #### MeCabエラー
 
@@ -799,22 +804,24 @@ python a02_make_qa_para.py --dataset cc_news --use-celery --celery-workers 24
 
 ### B. ポート一覧
 
-| サービス | ポート | 用途 |
-|---------|--------|------|
-| Streamlit | 8500 | Web UI |
-| Qdrant | 6333 | ベクトルDB API |
-| Qdrant Dashboard | 6333 | 管理画面 |
-| Redis | 6379 | Celeryブローカー |
-| Flower | 5555 | Celery監視UI |
+
+| サービス         | ポート | 用途             |
+| ---------------- | ------ | ---------------- |
+| Streamlit        | 8500   | Web UI           |
+| Qdrant           | 6333   | ベクトルDB API   |
+| Qdrant Dashboard | 6333   | 管理画面         |
+| Redis            | 6379   | Celeryブローカー |
+| Flower           | 5555   | Celery監視UI     |
 
 ### C. 環境変数一覧
 
-| 変数名 | 必須 | デフォルト | 説明 |
-|-------|------|-----------|------|
-| GEMINI_API_KEY | Yes | - | Gemini API キー |
-| QDRANT_URL | No | <http://localhost:6333> | Qdrant URL |
-| REDIS_URL | No | redis://localhost:6379/0 | Redis URL |
-| LOG_LEVEL | No | INFO | ログレベル |
+
+| 変数名         | 必須 | デフォルト                                     | 説明            |
+| -------------- | ---- | ---------------------------------------------- | --------------- |
+| GEMINI_API_KEY | Yes  | -                                              | Gemini API キー |
+| QDRANT_URL     | No   | [http://localhost:6333](http://localhost:6333) | Qdrant URL      |
+| REDIS_URL      | No   | redis://localhost:6379/0                       | Redis URL       |
+| LOG_LEVEL      | No   | INFO                                           | ログレベル      |
 
 ### D. ファイル構成
 
@@ -838,7 +845,8 @@ gemini_rag_qa/
 
 ## 更新履歴
 
-| 日付 | 変更内容 |
-|------|---------|
-| 2025-11-28 | 初版作成 |
+
+| 日付       | 変更内容                                      |
+| ---------- | --------------------------------------------- |
+| 2025-11-28 | 初版作成                                      |
 | 2025-12-03 | 構成図のMermaid化、トラブルシューティング追記 |
