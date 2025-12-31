@@ -54,12 +54,15 @@ Google GenAI SDKを使用した実装です。
     *   `prompt` (str): プロンプト
     *   `response_schema` (Type[BaseModel]): Pydanticモデルクラス
     *   `model` (Optional[str]): モデル名
+    *   `**kwargs`: `max_output_tokens`, `temperature` 等の生成パラメータ
 *   **Process**:
     1.  モデルインスタンスを初期化。
     2.  `generation_config` で `response_mime_type: "application/json"` を設定。
-    3.  プロンプトにJSONスキーマ定義を追加（明示的な指示）。
-    4.  `model.generate_content` を呼び出し。
-    5.  レスポンスのテキストを `response_schema.model_validate_json` でパース。
+    3.  `kwargs` から `max_output_tokens` や `temperature` を抽出し、`generation_config` に正しく反映（SDKの `TypeError` 回避のため）。
+    4.  プロンプトにJSONスキーマ定義を追加（明示的な指示）。
+    5.  `model.generate_content` を呼び出し。
+    6.  レスポンスのテキストを `response_schema.model_validate_json` でパース。
+    7.  パース失敗時はエラーログを出力し、Geminiからの**生のレスポンス内容**を記録。
 *   **Output**:
     *   `BaseModel`: 検証済みのPydanticオブジェクト。
 

@@ -16,10 +16,12 @@ import logging
 import time
 import traceback
 from typing import List, Dict
-from celery import Celery
 from dotenv import load_dotenv
 # 環境変数読み込み
 load_dotenv()
+
+# celery_config.pyからCeleryアプリケーションをインポート
+from celery_config import app
 
 # 共通モジュールからインポート
 # noqa: E402
@@ -42,31 +44,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Celeryアプリケーション設定
-app = Celery(
-    'qa_generation',
-    broker=os.getenv('CELERY_BROKER_URL', CeleryConfig.BROKER_URL),
-    backend=os.getenv('CELERY_RESULT_BACKEND', CeleryConfig.RESULT_BACKEND)
-)
-
-# Celery設定
-app.conf.update(
-    task_serializer=CeleryConfig.TASK_SERIALIZER,
-    accept_content=CeleryConfig.ACCEPT_CONTENT,
-    result_serializer=CeleryConfig.RESULT_SERIALIZER,
-    timezone=CeleryConfig.TIMEZONE,
-    enable_utc=CeleryConfig.ENABLE_UTC,
-    # タスクのタイムアウト設定
-    task_time_limit=CeleryConfig.TASK_TIME_LIMIT,
-    task_soft_time_limit=CeleryConfig.TASK_SOFT_TIME_LIMIT,
-    # 並列度の制御
-    worker_concurrency=CeleryConfig.WORKER_CONCURRENCY,
-    worker_prefetch_multiplier=CeleryConfig.WORKER_PREFETCH_MULTIPLIER,
-    # リトライ設定
-    task_acks_late=True,
-    task_reject_on_worker_lost=True,
-)
 
 
 # ===========================================

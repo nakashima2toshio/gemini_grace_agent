@@ -3,7 +3,7 @@
 """
 事前稼働：
 # ※PCのスペック(CPUコア数/メモリ)に合わせて調整してください(例: 4~8~24~36)
-./start_celery.sh start -w 24
+./start_celery.sh start -w 8
 
 # ステータス確認
 ./start_celery.sh status

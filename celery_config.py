@@ -89,6 +89,12 @@ class CeleryConfig:
 # 設定を適用
 app.config_from_object(CeleryConfig())
 
+# タスクの自動検出（重要）
+app.autodiscover_tasks(['celery_tasks'])
+
+# タスクを明示的にインポート（確実にタスクを登録するため）
+import celery_tasks  # noqa: F401, E402
+
 # OpenAI API設定
 OPENAI_CONFIG = {
     'api_key': os.getenv('OPENAI_API_KEY'),

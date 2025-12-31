@@ -72,8 +72,12 @@ start_workers() {
         cleanup_workers
     fi
 
-    # Celeryワーカーを起動
-    celery -A celery_tasks worker \
+    # gRPC DNS解決の環境変数を設定
+    export GRPC_DNS_RESOLVER=native
+    export GRPC_ENABLE_FORK_SUPPORT=1
+
+    # Celeryワーカーを起動（celery_configを使用）
+    celery -A celery_config worker \
         --loglevel=${LOG_LEVEL} \
         --concurrency=${WORKERS} \
         --pool=prefork \

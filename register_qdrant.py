@@ -9,12 +9,24 @@ Embedding（ベクトル化）してQdrantデータベースに登録します�
 推奨される使用法（高精度RAG向け）:
 make_qa.py で生成した "qa_pairs_*.csv" を入力とし、
 --collection には "qa_{データセット名}" のような名前を指定してください。
+
+# 生成されたファイルを確認
+ls -t qa_output/pipeline/qa_pairs_fineweb_edu_ja_*.csv | head -n 1
+
+# 登録実行 (例: ファイル名が qa_pairs_fineweb_edu_ja_20251230_123456.csv の場合)：
+python register_qdrant.py \
+--input-file qa_output/pipeline/qa_pairs_fineweb_edu_ja_20251230_123456.csv \
+--collection qa_fineweb_edu_ja \
+--recreate \
+--batch-size 100
+
 """
 
 import argparse
 import logging
 import os
 import sys
+import re
 import pandas as pd
 from typing import List, Dict
 
@@ -34,6 +46,15 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+def normalize_source_filename(filename: str) -> str:
+    """
+    ファイル名から日時サフィックス（例: _20251230_232641）を除去して正規化する。
+    UI(agent_rag.py)での参照を安定させるための処理。
+    """
+    # 日時パターン (_YYYYMMDD_HHMMSS) を置換
+    normalized = re.sub(r'_\d{8}_\d{6}', '', filename)
+    return normalized
 
 def main():
     parser = argparse.ArgumentParser(
@@ -205,18 +226,19 @@ def main():
             # ペイロードにはCSVの全カラムを含める
             # domain, source (ファイル名) は検索時のフィルタリングに重要
             source_filename = os.path.basename(args.input_file)
+            normalized_filename = normalize_source_filename(source_filename)
+            
             points = build_points_for_qdrant(
                 batch_df, 
                 vectors, 
                 domain=domain_val,
-                source_file=source_filename
+                source_file=normalized_filename
             )
             
             # ソースファイル情報をペイロードに追加（build_points_for_qdrantで入る場合もあるが念のため）
-            filename = os.path.basename(args.input_file)
             for point in points:
                 if "source" not in point.payload:
-                    point.payload["source"] = filename
+                    point.payload["source"] = normalized_filename
 
             # C. Qdrantへアップサート
             upsert_points_to_qdrant(client, args.collection, points)
@@ -235,6 +257,40 @@ def main():
 
     logger.info(f"\n🎉 完了！ 合計 {total_processed} 件のデータをコレクション '{args.collection}' に登録しました。")
     logger.info(f"   使用プロバイダー: {args.provider}")
+
+    # =================================================================
+    # UI用正規化CSVの作成 (agent_rag.pyでの参照用)
+    # =================================================================
+    try:
+        source_filename = os.path.basename(args.input_file)
+        normalized_filename = normalize_source_filename(source_filename)
+        output_dir = "qa_output" # UIが参照するデフォルトディレクトリ
+        
+        # ディレクトリがない場合は作成（念のため）
+        os.makedirs(output_dir, exist_ok=True)
+        
+        output_path = os.path.join(output_dir, normalized_filename)
+        
+        logger.info(f"📋 UI用ファイル作成: {output_path}")
+        
+        # 必要なカラムのみ抽出して保存
+        # UI表示に必要なのは question, answer, およびメタデータの一部
+        columns_to_keep = ['question', 'answer']
+        
+        # 存在確認
+        available_columns = [col for col in columns_to_keep if col in df.columns]
+        
+        if available_columns:
+            # 念のため元データ全体ではなく、登録対象となったデータ（max_docs適用後）を使用
+            df_ui = df[available_columns].copy()
+            df_ui.to_csv(output_path, index=False, encoding='utf-8')
+            logger.info(f"   -> 作成完了 ({len(df_ui)}行)")
+        else:
+            logger.warning(f"   -> 必要なカラム({columns_to_keep})が見つからないためスキップ")
+
+    except Exception as e:
+        logger.error(f"UI用ファイル作成エラー: {e}")
+        # これは付帯処理なので、エラーでもスクリプト自体は成功終了とする
 
 if __name__ == "__main__":
     main()

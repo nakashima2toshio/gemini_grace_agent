@@ -66,7 +66,7 @@ GRACE Agentプロジェクトの新しいアーキテクチャに基づいて設
 | 引数 | 説明 | デフォルト |
 | :--- | :--- | :--- |
 | `--use-celery` | Celeryワーカーを使用した並列処理を有効化する。 | `False` |
-| `--celery-workers` | 並列実行するワーカータスクの同時実行数。 | `8` |
+| `--celery-workers` | 並列実行するワーカータスクの同時実行数。Gemini APIのDNS制限を考慮し、**8** 程度を推奨。 | `8` |
 
 ---
 
@@ -130,8 +130,10 @@ python make_qa.py --input-file ./my_docs/manual.txt --merge-chunks --batch-chunk
 数千件のドキュメントを処理する場合、Celeryを使って並列化します。
 ※ 事前に `sh start_workers.sh` 等でワーカーを起動しておく必要があります。
 
+**推奨ワーカー数**: Gemini APIのDNS解決制限（503 Service Unavailable）を避けるため、`--celery-workers 8` 程度での実行を推奨します。
+
 ```bash
-python make_qa.py --dataset wikipedia_ja --use-celery --celery-workers 16
+python make_qa.py --dataset wikipedia_ja --use-celery --celery-workers 8
 ```
 
 ### カバレージ分析付き
@@ -140,3 +142,17 @@ python make_qa.py --dataset wikipedia_ja --use-celery --celery-workers 16
 ```bash
 python make_qa.py --dataset tech_blog --analyze-coverage
 ```
+
+---
+
+## 6. トラブルシューティング
+
+### DNSエラー (503 Service Unavailable)
+**症状**: `google.api_core.exceptions.ServiceUnavailable: 503 DNS resolution failed...`
+**原因**: 並列実行数が多すぎて、Google APIへのDNSリクエストが一時的に制限されている可能性があります。
+**対策**: ワーカー数（`--celery-workers`）を減らしてください（例: 24 -> 8）。
+
+### 型エラー (TypeError: unexpected keyword argument)
+**症状**: `TypeError: GenerativeModel.generate_content() got an unexpected keyword argument 'max_output_tokens'`
+**原因**: 古いコードベースで発生していましたが、`helper_llm.py` の修正により解決済みです。最新のコードを使用してください。
+**対策**: ワーカーを再起動してください（`./start_celery.sh restart`）。

@@ -153,6 +153,13 @@ class GeminiClient(LLMClient):
         
         # Gemini JSON mode
         generation_config = {"response_mime_type": "application/json"}
+        
+        # kwargsからgeneration_configに移動
+        if "max_output_tokens" in kwargs:
+            generation_config["max_output_tokens"] = kwargs.pop("max_output_tokens")
+        if "temperature" in kwargs:
+            generation_config["temperature"] = kwargs.pop("temperature")
+
         # スキーマをプロンプトに追加する簡易実装（SDKの進化に合わせて変更可能）
         schema_prompt = f"{prompt}\n\nOutput in JSON format following this schema: {response_schema.model_json_schema()}"
         
