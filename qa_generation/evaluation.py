@@ -209,11 +209,19 @@ def analyze_coverage(chunks: List[Dict], qa_pairs: List[Dict], dataset_type: str
 
     # カバレージ行列計算
     logger.info("カバレージ行列計算中...")
-    coverage_matrix = np.zeros((len(chunks), len(qa_pairs)))
-    for i in range(len(doc_embeddings)):
-        for j in range(len(qa_embeddings)):
-            similarity = analyzer.cosine_similarity(doc_embeddings[i], qa_embeddings[j])
-            coverage_matrix[i, j] = similarity
+    # 行列演算により全類似度を一括計算（NumPy/BLASによる高速化）
+    try:
+        # すでに正規化済みのベクトルのため、行列積がコサイン類似度となります
+        coverage_matrix = np.dot(doc_embeddings, qa_embeddings.T)
+        # 数値計算上の微小な誤差を [-1.0, 1.0] にクリップ
+        coverage_matrix = np.clip(coverage_matrix, -1.0, 1.0)
+    except Exception as e:
+        logger.error(f"行列計算エラー (フォールバック実行): {e}")
+        coverage_matrix = np.zeros((len(chunks), len(qa_pairs)))
+        for i in range(len(doc_embeddings)):
+            for j in range(len(qa_embeddings)):
+                similarity = analyzer.cosine_similarity(doc_embeddings[i], qa_embeddings[j])
+                coverage_matrix[i, j] = similarity
 
     # データセット別最適閾値を取得
     thresholds = get_optimal_thresholds(dataset_type)
