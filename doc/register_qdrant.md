@@ -12,10 +12,93 @@ RAG (Retrieval-Augmented Generation) システムにおいて、生成された�
 2.  **柔軟な入力対応:** Q/Aペアだけでなく、`Combined_Text` などのカラムを指定して任意のテキストデータを登録可能です。
 3.  **Gemini Embedding対応:** Google Gemini API (`gemini-embedding-001`) を使用し、高精度な 3072次元ベクトルを生成します（OpenAIへの切り替えも可能）。
 4.  **バッチ処理:** 大規模データでもメモリを圧迫せず、APIレート制限を考慮しながら効率的に登録します。
+5.  **ファイル名の正規化:** Qdrant登録時にソースファイル名から日時サフィックスを除去し、UI（`agent_rag.py`）での参照を安定させます。
+6.  **UI向け正規化CSVの自動生成:** 登録完了後、UI表示に必要なカラムのみを抽出した軽量なCSVファイルを `qa_output/` に自動生成します。
 
 ---
 
-## 2. 使用方法
+## 2. モジュール構成 (クラス・関数一覧)
+
+`register_qdrant.py` は単一のスクリプトファイルとして構成されていますが、外部サービスモジュール (`services/qdrant_service.py`) と連携して動作します。
+
+| 名称 | 種別 | 概要 | 主要な役割 |
+| :--- | :--- | :--- | :--- |
+| `main` | 関数 | スクリプトのエントリーポイント。 | 引数解析、ファイル読み込み、処理のオーケストレーション。 |
+| `normalize_source_filename` | 関数 | ファイル名から日時情報を除去する。 | UI連携のためのファイル名正規化。 |
+| `create_qdrant_client` | 関数 (外部) | Qdrantクライアントを初期化。 | DB接続の確立。 |
+| `create_or_recreate_collection...` | 関数 (外部) | コレクションの作成・再作成。 | ベクトル設定を含むDB初期化。 |
+| `embed_texts_for_qdrant` | 関数 (外部) | テキストをベクトル化。 | Gemini API呼び出しによるEmbedding生成。 |
+| `build_points_for_qdrant` | 関数 (外部) | 登録用データ構造を作成。 | ベクトルとメタデータ（ペイロード）の結合。 |
+| `upsert_points_to_qdrant` | 関数 (外部) | データをDBに登録。 | バッチ単位でのアップサート実行。 |
+
+---
+
+## 3. IPO (Input-Process-Output) 詳細
+
+### 3.1 `main` 関数
+
+*   **Input**:
+    *   コマンドライン引数 (`--input-file`, `--collection` 等)
+    *   入力CSVファイル
+    *   環境変数 (`GOOGLE_API_KEY` 等)
+*   **Process**:
+    1.  引数の検証と設定のロード。
+    2.  CSVファイルの読み込みと前処理（件数制限など）。
+    3.  ベクトル化対象テキストの抽出（Q/A結合 or 指定カラム）。
+    4.  Qdrantコレクションの準備（作成 or 再作成）。
+    5.  バッチループ:
+        *   テキストのベクトル化 (`embed_texts_for_qdrant`)
+        *   ファイル名の正規化 (`normalize_source_filename`)
+        *   登録用ポイントデータの構築 (`build_points_for_qdrant`)
+        *   Qdrantへの登録 (`upsert_points_to_qdrant`)
+    6.  UI表示用CSVファイルの自動生成。
+*   **Output**:
+    *   Qdrantデータベースへのレコード登録。
+    *   `qa_output/` 配下への正規化CSVファイル出力。
+    *   実行ログ（コンソール）。
+
+```mermaid
+graph TD
+    In[CLI Args & CSV] --> Valid{Validation}
+    Valid -->|OK| Load[Load CSV]
+    Load --> Prep[Prepare Texts]
+    Prep --> DB_Init[Init Qdrant Collection]
+    
+    DB_Init --> Batch_Loop[Batch Loop]
+    
+    subgraph "Batch Processing"
+        Batch_Loop --> Embed[Generate Embeddings]
+        Embed --> Norm[Normalize Filename]
+        Norm --> Build[Build Points]
+        Build --> Upsert[Upsert to Qdrant]
+    end
+    
+    Upsert --> Check{More Data?}
+    Check -->|Yes| Batch_Loop
+    Check -->|No| Gen_UI[Generate UI CSV]
+    
+    Gen_UI --> Out[Done]
+```
+
+### 3.2 `normalize_source_filename` 関数
+
+*   **Input**:
+    *   `filename` (str): 元のファイル名 (例: `data_20251231_120000.csv`)
+*   **Process**:
+    1.  正規表現 `_\d{8}_\d{6}` を使用して日時パターンを検索。
+    2.  該当パターンを空文字に置換して削除。
+*   **Output**:
+    *   `normalized` (str): 正規化されたファイル名 (例: `data.csv`)
+
+```mermaid
+graph LR
+    In(Original Filename) --> Regex[Remove Timestamp Pattern]
+    Regex --> Out(Normalized Filename)
+```
+
+---
+
+## 4. 使用方法
 
 ### 基本コマンド
 
@@ -34,68 +117,22 @@ python register_qdrant.py --input-file <CSVパス> --collection <コレクショ
 
 | 引数 | 説明 | デフォルト |
 | :--- | :--- | :--- |
-| `--recreate` | 指定したコレクションが既に存在する場合、削除して作り直します。 | `False` |
+| `--recreate` | 指定したコレクションが既に存在する場合、削除して作り直す。 | `False` |
 | `--batch-size` | 1回の処理で扱うデータ件数。 | `50` |
-| `--text-col` | ベクトル化の対象とするカラム名。指定がない場合、`question`+`answer` または `Combined_Text` を自動検出します。 | `None` |
-| `--domain` | ペイロードの `domain` フィールドに設定する値（フィルタリング用）。 | コレクション名 |
+| `--text-col` | ベクトル化の対象とするカラム名。指定がない場合、自動検出。 | `None` |
 | `--max-docs` | 登録する件数を制限します（テスト用）。 | `None` (全件) |
-| `--provider` | 使用するEmbeddingプロバイダー (`gemini` or `openai`)。 | `gemini` |
 
 ---
 
-## 3. 推奨されるユースケース
+## 5. Web UI (agent_rag.py) との連携
 
-### ケース1: 生成したQ/Aペアを登録する（高精度RAG向け）
+本ツールは、Web UIでのデータプレビュー機能を正常に動作させるため、以下の処理を自動的に行います。
 
-`make_qa.py` で生成されたファイルを入力とする場合、最も推奨される方法です。
-質問と回答が結合されてベクトル化されるため、ユーザーの質問に対して意味的に近い回答を検索しやすくなります。
+### ファイル名の正規化ロジック
+入力ファイル名が `qa_pairs_fineweb_edu_ja_20251230_232641.csv` の場合、Qdrantの `source` メタデータおよび生成されるUI用CSV名は `qa_pairs_fineweb_edu_ja.csv` に正規化されます。これにより、データ更新（再登録）を行ってもUI側の参照先を変える必要がありません。
 
-```bash
-python register_qdrant.py \
-  --input-file qa_output/pipeline/qa_pairs_fineweb_edu_ja_20251229.csv \
-  --collection qa_fineweb_edu_ja \
-  --recreate
-```
-
-### ケース2: 元のドキュメントを直接登録する（網羅性重視）
-
-Q/A生成前の、前処理済みテキストデータを登録する場合です。
-`Combined_Text` カラム（タイトル+本文）を対象にします。
-
-```bash
-python register_qdrant.py \
-  --input-file OUTPUT/preprocessed_fineweb_edu_ja.csv \
-  --collection doc_fineweb_edu_ja \
-  --text-col Combined_Text \
-  --recreate
-```
-
----
-
-## 4. 処理フロー
-
-```mermaid
-graph TD
-    A["入力CSVファイル"] -->|"読み込み"| B{"カラム判定"}
-    B -->|"question, answerあり"| C["Q+A結合テキスト作成"]
-    B -->|"text-col指定"| D["指定カラムテキスト取得"]
-    
-    C --> E["バッチ処理ループ"]
-    D --> E
-    
-    E -->|"Gemini API"| F["Embedding生成 3072次元"]
-    F -->|"PointStruct構築"| G["Qdrantポイント作成"]
-    
-    G --> H["メタデータ付与"]
-    NoteNode["source: ファイル名<br/>domain: コレクション名"] -.-> H
-    
-    H -->|"Upsert API"| I["Qdrant DB"]
-```
-
-## 5. Qdrantコレクション設定
-
-本ツールで作成されるコレクションは以下の設定を持ちます。
-
-*   **Vector Size:** 3072 (Gemini) / 1536 (OpenAI)
-*   **Distance Metric:** Cosine (コサイン類似度)
-*   **Payload Index:** `domain` (Keyword型) - 高速なフィルタリングのため自動作成されます。
+### UI用CSVの出力
+登録完了後、`qa_output/` ディレクトリに以下の仕様でCSVが出力されます。
+- **ファイル名**: 正規化された名前（例: `qa_pairs_fineweb_edu_ja.csv`）
+- **抽出カラム**: `question`, `answer`
+- **用途**: `agent_rag.py` の「Qdrant検索」画面でのデータプレビュー表示

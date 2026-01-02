@@ -6,11 +6,11 @@ config.py - 設定・定数の一元管理
 プロジェクト全体の設定と定数を一元管理
 
 使用箇所:
-- rag_qa_pair_qdrant.py
-- celery_tasks.py
-- a02_make_qa_para.py
-- helper_rag.py
-- helper_api.py
+- agent_rag.py (Web UI)
+- make_qa.py / register_qdrant.py / make_qa_register_qdrant.py (CLI)
+- celery_tasks.py / celery_config.py
+- helper_rag.py / helper_llm.py
+- qdrant_client_wrapper.py
 """
 import os
 from typing import Dict, List, Any, Optional, Type
@@ -99,7 +99,7 @@ class DatasetInfo:
     split: Optional[str] = "train"
     text_field: str = "text"
     title_field: Optional[str] = None
-    text_column: Optional[str] = None  # a02_make_qa_para用
+    text_column: Optional[str] = None  # Q/A生成パイプライン（make_qa.py）用
     sample_size: int = 1000
     min_text_length: int = 100
     chunk_size: int = 300

@@ -93,14 +93,22 @@ class QAPipeline:
         else:
             return load_preprocessed_data(self.dataset_name)
 
-    def create_chunks(self, df: pd.DataFrame) -> List[Dict]:
+    def create_chunks(self, df: pd.DataFrame, 
+                      overlap_tokens: int = 0, 
+                      use_similarity: bool = False, 
+                      similarity_threshold: float = 0.7) -> List[Dict]:
         """チャンクを作成する"""
         logger.info("\n[2/4] チャンク作成...")
         dataset_type = self.config.get("type", "unknown")
         # ローカルファイルの場合、max_docsは読み込み時に適用済み
         max_docs_for_chunks = None if self.input_file else self.max_docs
         
-        chunks = create_document_chunks(df, dataset_type, max_docs_for_chunks, config=self.config)
+        chunks = create_document_chunks(
+            df, dataset_type, max_docs_for_chunks, config=self.config,
+            overlap_tokens=overlap_tokens,
+            use_similarity=use_similarity,
+            similarity_threshold=similarity_threshold
+        )
         
         if not chunks:
             logger.error("チャンクが作成されませんでした")
@@ -191,11 +199,19 @@ class QAPipeline:
             min_tokens: int = 150,
             max_tokens: int = 400,
             analyze_coverage: bool = True,
-            coverage_threshold: Optional[float] = None):
+            coverage_threshold: Optional[float] = None,
+            overlap_tokens: int = 0,
+            use_similarity: bool = False,
+            similarity_threshold: float = 0.7):
         """パイプライン実行のショートカット"""
         try:
             df = self.load_data()
-            chunks = self.create_chunks(df)
+            chunks = self.create_chunks(
+                df, 
+                overlap_tokens=overlap_tokens, 
+                use_similarity=use_similarity, 
+                similarity_threshold=similarity_threshold
+            )
             qa_pairs = self.generate_qa(
                 chunks, use_celery, celery_workers, batch_chunks, merge_chunks, min_tokens, max_tokens
             )

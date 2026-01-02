@@ -45,38 +45,40 @@ class SemanticCoverage:
             return False
 
     def create_semantic_chunks(self, document: str, max_tokens: int = 200, min_tokens: int = 50,
+                               overlap_tokens: int = 0, use_similarity: bool = False,
+                               similarity_threshold: float = 0.7,
                                prefer_paragraphs: bool = True, verbose: bool = True) -> List[Dict]:
         """
-        文書を意味的に区切られたチャンクに分割（段落優先のセマンティック分割）
+        文書を意味的に区切られたチャンクに分割（高度なセマンティック分割）
 
-        重要ポイント：
-        1. 段落の境界で分割（最優先 - 筆者の意図したセマンティック境界）
-        2. 文の境界で分割（意味の断絶を防ぐ）
-        3. トピックの変化を検出
-        4. 適切なサイズを維持（埋め込みモデルの制限内）
+        追加機能：
+        - チャンクオーバーラップ: 前のチャンクの末尾を次に追加し、文脈を維持。
+        - ベクトル類似度分割: 文間の埋め込みベクトルの距離を見てトピック境界を特定。
 
         Args:
             document: 分割対象の文書
-            max_tokens: チャンクの最大トークン数（デフォルト: 200）
-            min_tokens: チャンクの最小トークン数（デフォルト: 50）
-            prefer_paragraphs: 段落ベースの分割を優先するか（デフォルト: True）
+            max_tokens: チャンクの最大トークン数
+            min_tokens: チャンクの最小トークン数
+            overlap_tokens: 前のチャンクと重複させるトークン数
+            use_similarity: ベクトル類似度による分割を行うか
+            similarity_threshold: 分割判定の類似度閾値（低いほど大きく分割）
+            prefer_paragraphs: 段落ベースの分割を優先するか
             verbose: 詳細な出力を行うか
 
         Returns:
-            チャンク辞書のリスト（id, text, type, sentences等を含む）
+            チャンク辞書のリスト
         """
 
         # Step 1: 段落ベースの分割を試行（prefer_paragraphs=Trueの場合）
         if prefer_paragraphs:
             para_chunks = self._chunk_by_paragraphs(document, max_tokens, min_tokens)
+            
+            # オーバーラップが必要な場合は、ここで調整が必要だが、
+            # paragraph優先時は筆者の意図を尊重するため、基本はそのまま。
+            # ただし、overlap_tokens > 0 の場合は後続処理で対応。
 
             if verbose:
                 logger.info(f"段落ベースのチャンク数: {len(para_chunks)}")
-                type_counts = {}
-                for chunk in para_chunks:
-                    chunk_type = chunk.get('type', 'unknown')
-                    type_counts[chunk_type] = type_counts.get(chunk_type, 0) + 1
-                logger.info(f"チャンクタイプ内訳: {type_counts}")
 
             # 段落ベースのチャンクを標準フォーマットに変換
             chunks = []
@@ -88,33 +90,46 @@ class SemanticCoverage:
                     "text"              : chunk_text,
                     "type"              : chunk['type'],
                     "sentences"         : sentences,
-                    "start_sentence_idx": 0,  # 段落ベースでは文インデックスは相対的
+                    "start_sentence_idx": 0,
                     "end_sentence_idx"  : len(sentences) - 1
                 })
         else:
-            # Step 1 (旧方式): 文単位で分割
+            # Step 1 (旧方式/高度方式): 全文を文単位で分割
             sentences = self._split_into_sentences(document)
             if verbose:
                 logger.info(f"文の数: {len(sentences)}")
+
+            # 類似度による分割ポイントの特定
+            similarities = []
+            if use_similarity and len(sentences) > 1:
+                similarities = self._calculate_sentence_similarities(sentences)
 
             # Step 2: 意味的に関連する文をグループ化
             chunks = []
             current_chunk = []
             current_tokens = 0
-
+            
             for i, sentence in enumerate(sentences):
-                sentence_tokens = self.unified_client.count_tokens(sentence, model=self.embedding_model)
+                # トークンカウントはローカルで実行（DNSエラー防止）
+                sentence_tokens = len(self.tokenizer.encode(sentence))
 
-                # 現在のチャンクにこの文を追加すべきか判断
-                if current_tokens + sentence_tokens > max_tokens and current_chunk:
-                    # Use unified client for token counting when forming chunks
-                    chunk_text_tokens = self.unified_client.count_tokens(" ".join(current_chunk), model=self.embedding_model)
-                    # チャンクを保存
+                # 分割の判定条件
+                # 1. トークン数が上限を超える
+                # 2. 類似度が閾値を下回る（use_similarity=Trueの場合）
+                should_split = False
+                if current_chunk:
+                    if current_tokens + sentence_tokens > max_tokens:
+                        should_split = True
+                    elif use_similarity and i > 0 and i-1 < len(similarities):
+                        if similarities[i-1] < similarity_threshold:
+                            should_split = True
+
+                if should_split:
                     chunk_text = " ".join(current_chunk)
                     chunks.append({
                         "id"                : f"chunk_{len(chunks)}",
                         "text"              : chunk_text,
-                        "type"              : "sentence_group",
+                        "type"              : "semantic_group" if use_similarity else "sentence_group",
                         "sentences"         : current_chunk.copy(),
                         "start_sentence_idx": i - len(current_chunk),
                         "end_sentence_idx"  : i - 1
@@ -130,7 +145,7 @@ class SemanticCoverage:
                 chunks.append({
                     "id"                : f"chunk_{len(chunks)}",
                     "text"              : " ".join(current_chunk),
-                    "type"              : "sentence_group",
+                    "type"              : "semantic_group" if use_similarity else "sentence_group",
                     "sentences"         : current_chunk,
                     "start_sentence_idx": len(sentences) - len(current_chunk),
                     "end_sentence_idx"  : len(sentences) - 1
@@ -139,7 +154,57 @@ class SemanticCoverage:
         # Step 3: トピックの連続性を考慮した再調整
         chunks = self._adjust_chunks_for_topic_continuity(chunks, min_tokens)
 
+        # Step 4: チャンクオーバーラップの適用
+        if overlap_tokens > 0:
+            chunks = self._apply_chunk_overlap(chunks, overlap_tokens)
+
         return chunks
+
+    def _calculate_sentence_similarities(self, sentences: List[str]) -> List[float]:
+        """隣接する文のコサイン類似度を計算する"""
+        try:
+            embeddings = self.generate_embeddings_batch(sentences)
+            similarities = []
+            for i in range(len(embeddings) - 1):
+                sim = self.cosine_similarity(embeddings[i], embeddings[i+1])
+                similarities.append(sim)
+            return similarities
+        except Exception as e:
+            logger.error(f"類似度計算失敗: {e}")
+            return [1.0] * (len(sentences) - 1) # 失敗時は分割しないように1.0を返す
+
+    def _apply_chunk_overlap(self, chunks: List[Dict], overlap_tokens: int) -> List[Dict]:
+        """前のチャンクの末尾を次のチャンクの冒頭に重複させる"""
+        if len(chunks) <= 1:
+            return chunks
+
+        new_chunks = [chunks[0].copy()]
+        
+        for i in range(1, len(chunks)):
+            current_chunk = chunks[i].copy()
+            prev_chunk = chunks[i-1]
+            
+            # 前のチャンクから末尾の文を抽出（overlap_tokensに収まる範囲で）
+            overlap_sentences = []
+            current_overlap_count = 0
+            
+            for sent in reversed(prev_chunk["sentences"]):
+                sent_tokens = len(self.tokenizer.encode(sent))
+                if current_overlap_count + sent_tokens <= overlap_tokens:
+                    overlap_sentences.insert(0, sent)
+                    current_overlap_count += sent_tokens
+                else:
+                    break
+            
+            if overlap_sentences:
+                overlap_text = " ".join(overlap_sentences)
+                current_chunk["text"] = overlap_text + " " + current_chunk["text"]
+                current_chunk["overlap_text"] = overlap_text
+                current_chunk["is_overlapped"] = True
+            
+            new_chunks.append(current_chunk)
+            
+        return new_chunks
 
     def _split_into_paragraphs(self, text: str) -> List[str]:
         """

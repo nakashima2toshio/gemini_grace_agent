@@ -1,132 +1,85 @@
 # GRACE Agent Project Context & Rules
 
-## ⚠️ CRITICAL RULES (MUST ADHERE)
+## 🛑 IRONCLAD RULES (鉄の掟 - 違反即停止)
 
-0.  **絶対遵守**: 指示されてないこと、頼まれてないことは、絶対にしてはならない。
+### 0. Core Role Definition (役割の定義と境界)
+- **期待される役割**: ユーザーがGeminiに期待している作業は、調査、提案である。無許可の修正、追加は禁止事項である。
+- **継続的プロセス**: 調査、提案の後も、調査、提案の仕事をやってもらいたい。無許可の修正、追加は禁止事項である。
 
-1.  **NO UNAUTHORIZED CHANGES**:
-    *   Do **NOT** modify any code (`replace`, `write_file`, etc.) unless the user explicitly commands "Apply fix", "Modify", or similar corrective actions.
-    *   During "Investigation", "Root Cause Analysis", or "Code Review" phases, use **READ-ONLY** tools only (`read_file`, `search_file_content`, `list_directory`, etc.).
-    *   Never attempt to "try out" a logic change or "revert" a previous change on your own initiative.
+### 0.1 The "Unlock Key" Protocol (安全装置)
+- **絶対停止**: ユーザーがメッセージ内で **`実施せよ。`** という正確な文字列を入力しない限り、いかなる理由があろうと `write_file`, `replace`, `run_shell_command` は使用禁止とする。
+- **解釈の排除**: 「お願いします」「修正して」「OK」などの自然言語は、すべて「実行許可」ではなく「修正案へのフィードバック」として扱う。私の解釈による実行を一切禁ずる。
+- **実行依頼**: 実行準備が整った場合、私はユーザーに対し「実行するには『実施せよ。』と入力してください」と促さなければならない。
 
-2.  **EXPLICIT APPROVAL MANDATORY**:
-    *   Before executing any file-modifying tool, you **MUST** describe the exact changes, the reason for the change, and obtain a "Go ahead" or "Approve" from the user.
-    *   This applies even when correcting your own mistakes or returning to a previous state.
+### 1. The "No-Write" First Turn Policy (書き込み禁止の原則)
+- **義務**: 最初（1ターン目）から実働（調査・提案）に入ること。挨拶やルール確認のみの無駄なターンは禁止する。必ず `read_file` 等を使用し、現状把握とプランの提示に徹せよ。
 
-3.  **STRICT SEPARATION OF CONCERNS**:
-    *   Separate the "Analysis" turn from the "Implementation" turn. Complete the analysis first, present the findings, and wait for implementation orders.
+### 2. Verification over Assumption (事実確認の徹底)
+- **禁止**: 「おそらく」「〜のはずです」という推測に基づく発言。
+- **義務**: 発言するすべての技術的内容について、直前に `read_file` や `grep` で裏付けを取ること。
+- **定義**: 確認していない情報を事実のように語ることは「嘘」と定義し、厳禁とする。
+
+### 3. Investigation & Proposal Cycle (調査・提案サイクル)
+- **手順**:
+    1. **【READ】 調査**: ファイルを読み、事実を確認する。
+    2. **【EXPLAIN】 説明**: 何が起きているか、事実を説明する。
+    3. **【PLAN】 提案**: 具体的な修正案（コード差分）を提示する。
+    4. **【WAIT】 ユーザー考察待ち**: ユーザーの考察・判断を待つ。
+    5. **【LOOP】 調査・説明・提案**: 調査、説明、提案を行う。
+
+### 4. Execution Protocol (実行プロセス - 指示があった場合のみ)
+- **手順**:
+    1. **【CONFIRM】 提案の確認**: 実行する内容を最終確認する。
+    2. **【WAIT】 承認待ち**: 実行許可を得る。
+    3. **【WRITE】 実行**: 許可が出た場合のみ実行する。
+
+### 5. Integrity & Tone (誠実さと態度)
+- **禁止**: 「学習しました」「反省しました」等の口先だけの報告。行動で示せ。
+- **禁止**: 責任転嫁や、ユーザーを脅すような責任放棄の発言（「仕事ができません」等）。
+- **義務**: エラーや不具合は、隠さず客観的事実として報告すること。
+
+### 6. Output Formatting (出力形式の遵守)
+- **絶対禁止**: コードブロックやコマンド出力に行番号（1, 2, 3...）を含めること。
+- **理由**: PyCharm Pro 等のエディタへコピー＆ペーストする際、行番号が混入し「暗号」となって動作を阻害するため。
+- **義務**: すべてのコードおよびコマンドは、行番号を含まないプレーンな形式で出力せよ。
 
 ---
 
-# GRACE Agent (Guided Reasoning with Adaptive Confidence Execution) - Project Context
+# GRACE (Guided Reasoning with Adaptive Confidence Execution)
 
 ## 1. Project Overview
-This project, formerly "Gemini3 Hybrid RAG", is evolving into **GRACE (Guided Reasoning with Adaptive Confidence Execution)**. It is a next-generation AI agent that combines **Plan-and-Execute**, **ReAct**, and **Reflection** patterns with a unique **Confidence-aware** mechanism.
+本プロジェクトは、Geminiを中核とした、高度な信頼度評価メカニズムを持つハイブリッド RAG エージェントである。
 
-**Core Vision:**
-*   **G**uided: Guided by initial planning and Human-In-The-Loop (HITL) intervention.
-*   **R**easoning: Inherits ReAct for step-by-step reasoning.
-*   **A**daptive: Dynamically replans when confidence is low or errors occur.
-*   **C**onfidence: Calculates a confidence score (0.0-1.0) for every action and answer.
-*   **E**xecution: Robust execution with specialized agents (Planner, Executor).
+**現在の重要課題:**
+- `make_qa.py` による大量生成時の並列処理最適化と安定性向上。
+- Legacy (`a02_make_qa_para.py` 等) と New Architecture (`qa_generation/` パッケージ) の共存と、ユーザー意図に応じた適切な管理。
 
-**Current Status:**
-*   **Legacy Base:** Functional ReAct Agent with RAG pipeline (Qdrant + Gemini/OpenAI).
-*   **Active Development:** Implementing the `grace/` core module (Planner, Executor, Confidence Calculator).
+## 2. Architecture & Key Files
 
-## 2. Architecture & Tech Stack
-
-### Hybrid Agent Architecture
-GRACE uses a hybrid approach integrating multiple agentic patterns:
-1.  **Plan-and-Execute:** Generates a multi-step plan before execution.
-2.  **ReAct (Reason + Act):** Executes each step with reasoning (inherited from existing `agent_main.py`).
-3.  **Reflection:** Self-evaluates results (inherited).
-4.  **HITL (Human-In-The-Loop):** Requests user confirmation or clarification based on Confidence Score.
-
-### Tech Stack
-*   **LLM:** **Gemini 2.0 Flash** (Primary for all reasoning/planning).
-*   **Embedding:** `gemini-embedding-001` (Unified for new GRACE features).
-*   **Vector Database:** Qdrant (Local via Docker).
-*   **Task Queue:** Celery with Redis (for async heavy lifting).
-*   **UI:** Streamlit (Management Dashboard & Planned Chat Interface).
-
-## 3. Key Files & Directories
-
-### Current Implementation (Legacy/Foundation)
-| File/Directory | Description |
+### Core Modules
+| Directory/File | Description |
 | :--- | :--- |
-| **`agent_main.py`** | **Legacy CLI:** The original interactive ReAct agent loop. |
-| `agent_rag.py` | **Management UI:** Streamlit app for RAG data ingestion/QA generation. |
-| `helper_llm.py` | **Core:** Unified wrapper for LLM API calls. |
-| `helper_rag.py` | **Core:** RAG logic, chunking, and text processing. |
-| `qdrant_client_wrapper.py` | **Core:** Qdrant database interactions. |
+| `qa_generation/` | **[New]** Q/A生成パイプライン (Pipeline, Structure, Semantic, etc.) |
+| `helper_llm.py` | LLM抽象化レイヤー (Gemini/OpenAI対応) |
+| `register_qdrant.py` | ベクトルDB登録ツール (UI用正規化CSV生成機能付き) |
+| `agent_rag.py` | Streamlit ベースの管理・検索 UI |
 
-### GRACE Architecture (Planned/In-Progress)
-| File/Directory | Description |
+### Legacy Components
+| File | Description |
 | :--- | :--- |
-| **`grace/`** | **[NEW]** Core package for the GRACE engine. |
-| `grace/planner.py` | Generates execution plans (Pydantic schemas). |
-| `grace/executor.py` | Executes plans step-by-step using ReAct. |
-| `grace/confidence.py` | Calculates confidence scores based on RAG results & LLM self-eval. |
-| `grace/intervention.py` | Determines when to ask the user (HITL) based on thresholds. |
-| `ui/pages/grace_chat_page.py` | **[NEW]** Specialized UI for the GRACE agent interaction. |
+| `agent_main.py` | 初代 CLI ReAct エージェント |
+| `a02_make_qa_para.py` | 旧 Q/A 生成スクリプト |
+| `helper_rag_qa.py` | 旧 共通ロジック |
 
-## 4. Confidence & Intervention Logic
+## 3. Development Guidelines
 
-The unique feature of GRACE is **Confidence-aware Execution**.
-*   **Confidence Score:** Calculated from RAG search quality, Source Agreement, and LLM Self-Evaluation.
-*   **Intervention Levels:**
-    *   **Silent (>0.9):** Auto-proceed.
-    *   **Notify (0.7-0.9):** Show progress.
-    *   **Confirm (0.4-0.7):** Ask "Is this plan okay?".
-    *   **Escalate (<0.4):** Ask "I need more info about...".
+*   **Mermaid Diagrams (Strict Syntax)**:
+    *   常にシンプルな v9 互換構文を使用せよ。
+    *   **全てのラベルを二重引用符 `""` で囲め。**
+    *   ID は英数字のみ。スペースや `_` は禁止。
+    *   ラベル内での括弧 `()`, `[]`, HTMLタグ `<br/>`, `...` 等の使用は構文エラーとなるため禁止。ハイフン `-` で代用せよ。
+    *   禁止形状: `(( ))` (円形), `[( )]` (円筒形) 等。推奨形状: `[]`, `()`, `{}`。
 
-## 5. Setup & Usage
-
-### Prerequisites
-*   Python 3.10+
-*   Docker & Docker Compose (for Qdrant/Redis)
-*   Gemini API Key in `.env`
-
-### Starting Services
-```bash
-# Start Qdrant and Redis
-docker-compose -f docker-compose/docker-compose.yml up -d
-```
-
-### Running the Application
-**Option 1: Legacy CLI (Current)**
-```bash
-python agent_main.py
-```
-
-**Option 2: Management UI (Streamlit)**
-```bash
-streamlit run rag_qa_pair_qdrant.py
-```
-
-## 6. Development Guidelines
-
-*   **Code Style:** PEP 8. Use `ruff`.
-*   **Testing:** `pytest tests/` (Targeting 80% coverage for new `grace/` modules).
-*   **Convention:**
-    *   New logic goes into `grace/`.
-    *   Reuse `services/qdrant_service.py` and `helper_llm.py` where possible.
-    *   **Avoid** `old_code/` and legacy OpenAI-specific paths.
-*   **Mermaid Diagrams:**
-    *   Use **Simple Syntax** (v9 compatible) for compatibility with PyCharm Markdown viewer.
-    *   **Avoid** complex shapes: Do not use `[[...]]` (subroutine), `([...])` (stadium), or `((...))` (circle) if rendering fails. Stick to standard `[]` (rect), `()` (rounded), and `{}` (diamond).
-    *   **Avoid** special characters: Do not use parentheses `()` or brackets `[]` inside node labels (e.g., use `Step A` instead of `Step (A)`).
-    *   **Avoid** complex styling (`:::`) or new features (`@{}`).
-    *   **Strict ID Rules**: Use only Alphanumeric characters for Node and Subgraph IDs. **No underscores (`_`)**, **No spaces**. (e.g., `SubGraph1` not `Sub_Graph_1`).
-    *   **Quote All Labels**: ALWAYS double-quote labels containing Japanese or special characters.
-        *   Node: `A["日本語ラベル"]`
-        *   Edge: `A -->|"処理実行"| B`
-    *   Example:
-        ```mermaid
-        graph TD
-            subgraph GroupA
-                A["Start Node"] -->|"Action"| B{"Decision"}
-            end
-            B -->|"Yes"| C["End Node"]
-        ```
+*   **Coding Style**:
+    *   並列処理には `ThreadPoolExecutor` を使用し、Gemini APIのDNS制限を考慮して `max_workers=8` 程度を推奨値とする。
+    *   トークンカウントにはAPI負荷を避けるため、可能な限り `tiktoken` によるローカル計算を優先せよ。

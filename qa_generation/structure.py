@@ -14,12 +14,14 @@ from config import DATASET_CONFIGS
 
 logger = logging.getLogger(__name__)
 
-def create_semantic_chunks(text: str, lang: str = "ja", max_tokens: int = 200, chunk_id_prefix: str = "chunk", semantic_analyzer: Optional[SemanticCoverage] = None) -> List[Dict]:
+def create_semantic_chunks(text: str, lang: str = "ja", max_tokens: int = 200, chunk_id_prefix: str = "chunk", 
+                           semantic_analyzer: Optional[SemanticCoverage] = None,
+                           overlap_tokens: int = 0, use_similarity: bool = False,
+                           similarity_threshold: float = 0.7) -> List[Dict]:
     """
-    セマンティック分割によるチャンク作成（段落優先）
+    セマンティック分割によるチャンク作成（高度なオプション対応）
 
     helper_rag_qa.pyのSemanticCoverage.create_semantic_chunks()を使用し、
-    段落境界を最優先したセマンティック分割を実行。
     文脈を保持しながら適切なサイズでチャンクを作成。
 
     Args:
@@ -28,6 +30,9 @@ def create_semantic_chunks(text: str, lang: str = "ja", max_tokens: int = 200, c
         max_tokens: チャンクの最大トークン数
         chunk_id_prefix: チャンクIDのプレフィックス
         semantic_analyzer: 外部で初期化されたSemanticCoverageインスタンス（オプション）
+        overlap_tokens: 前のチャンクと重複させるトークン数
+        use_similarity: ベクトル類似度による分割を行うか
+        similarity_threshold: 分割判定の類似度閾値
 
     Returns:
         チャンクのリスト
@@ -36,16 +41,15 @@ def create_semantic_chunks(text: str, lang: str = "ja", max_tokens: int = 200, c
     if semantic_analyzer is None:
         semantic_analyzer = SemanticCoverage(embedding_model="gemini-embedding-001")
 
-    # 段落優先のセマンティック分割を実行
-    # prefer_paragraphs=True: 段落境界を最優先
-    # max_tokens: チャンクの最大トークン数
-    # min_tokens: 最小トークン数（小さすぎるチャンクは自動マージ）
-    # verbose=False: 詳細ログを抑制
+    # 高度なセマンティック分割を実行
     semantic_chunks = semantic_analyzer.create_semantic_chunks(
         document=text,
         max_tokens=max_tokens,
-        min_tokens=50,  # 最小トークン数
-        prefer_paragraphs=True,  # 段落優先モード
+        min_tokens=50,
+        overlap_tokens=overlap_tokens,
+        use_similarity=use_similarity,
+        similarity_threshold=similarity_threshold,
+        prefer_paragraphs=True,
         verbose=False
     )
 
@@ -68,7 +72,8 @@ def create_semantic_chunks(text: str, lang: str = "ja", max_tokens: int = 200, c
     return chunks
 
 
-def _process_single_document(idx, row, dataset_type, text_col, title_col, lang, chunk_size, semantic_analyzer) -> List[Dict]:
+def _process_single_document(idx, row, dataset_type, text_col, title_col, lang, chunk_size, semantic_analyzer, 
+                             overlap_tokens=0, use_similarity=False, similarity_threshold=0.7) -> List[Dict]:
     """単一文書の処理（並列実行用）"""
     # row[text_col]はSeriesやオブジェクトの可能性があるため、明示的にstrに変換
     text = str(row[text_col]) if pd.notna(row[text_col]) else ""
@@ -86,7 +91,10 @@ def _process_single_document(idx, row, dataset_type, text_col, title_col, lang, 
             lang=lang,
             max_tokens=chunk_size,
             chunk_id_prefix=chunk_id_prefix,
-            semantic_analyzer=semantic_analyzer
+            semantic_analyzer=semantic_analyzer,
+            overlap_tokens=overlap_tokens,
+            use_similarity=use_similarity,
+            similarity_threshold=similarity_threshold
         )
 
         # 各チャンクにメタデータを追加
@@ -102,13 +110,19 @@ def _process_single_document(idx, row, dataset_type, text_col, title_col, lang, 
         return []
 
 
-def create_document_chunks(df: pd.DataFrame, dataset_type: str, max_docs: Optional[int] = None, config: Optional[Dict] = None) -> List[Dict]:
+def create_document_chunks(df: pd.DataFrame, dataset_type: str, max_docs: Optional[int] = None, 
+                           config: Optional[Dict] = None, 
+                           overlap_tokens: int = 0, use_similarity: bool = False, 
+                           similarity_threshold: float = 0.7) -> List[Dict]:
     """DataFrameから文書チャンクを作成（セマンティック分割・並列処理）
     Args:
         df: データフレーム
         dataset_type: データセットタイプ
         max_docs: 処理する最大文書数
-        config: データセット設定（指定がない場合はDATASET_CONFIGSから取得）
+        config: データセット設定
+        overlap_tokens: 重複トークン数
+        use_similarity: 類似度分割を使用するか
+        similarity_threshold: 類似度閾値
     Returns:
         チャンクのリスト
     """
@@ -140,7 +154,8 @@ def create_document_chunks(df: pd.DataFrame, dataset_type: str, max_docs: Option
         future_to_idx = {
             executor.submit(
                 _process_single_document, 
-                idx, row, dataset_type, text_col, title_col, lang, chunk_size, semantic_analyzer
+                idx, row, dataset_type, text_col, title_col, lang, chunk_size, semantic_analyzer,
+                overlap_tokens, use_similarity, similarity_threshold
             ): idx
             for idx, row in docs_to_process.iterrows()
         }

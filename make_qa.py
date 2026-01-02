@@ -136,6 +136,23 @@ def main():
         default=None,
         help="カバレージ判定の類似度閾値"
     )
+    parser.add_argument(
+        "--overlap-tokens",
+        type=int,
+        default=0,
+        help="チャンク間の重複トークン数"
+    )
+    parser.add_argument(
+        "--use-similarity",
+        action="store_true",
+        help="ベクトル類似度によるセマンティック分割を使用"
+    )
+    parser.add_argument(
+        "--similarity-threshold",
+        type=float,
+        default=0.7,
+        help="セマンティック分割の類似度閾値"
+    )
 
     args = parser.parse_args()
 
@@ -172,7 +189,10 @@ def main():
             min_tokens=args.min_tokens,
             max_tokens=args.max_tokens,
             analyze_coverage=args.analyze_coverage,
-            coverage_threshold=args.coverage_threshold
+            coverage_threshold=args.coverage_threshold,
+            overlap_tokens=args.overlap_tokens,
+            use_similarity=args.use_similarity,
+            similarity_threshold=args.similarity_threshold
         )
         
         logger.info(f"Make QA 完了: {result['saved_files']['summary']}")
