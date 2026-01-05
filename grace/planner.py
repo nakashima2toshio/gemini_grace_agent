@@ -40,17 +40,26 @@ PLAN_GENERATION_PROMPT = f"""
 {{available_collections}}
 
 【コレクション選択のルール (重要)】
-- **rag_search の collection 引数は、最初に "wikipedia_ja" を指定してください。**
-- 一般的な知識・人物・事実の検索には "wikipedia_ja" が最適です。
-- 他のコレクション（livedoor, cc_news, japanese_text）は、wikipedia_jaで見つからない場合にのみ使用してください。
+- `rag_search` の `collection` 引数は、原則として指定しないでください（`null` または省略）。
+   * 特定のコレクション（例: wikipedia_ja）に限定せず、利用可能なすべてのコレクションから網羅的に検索を行うためです。
+   * システム側で自動的に最適なコレクション順序で検索を実行します。
+- 例外: ユーザーが明示的に「livedoorニュースから検索して」のように指定した場合のみ、そのコレクション名を指定してください。
 
-【計画作成のルール】
-1. 最小限のステップで目標を達成すること（通常2-5ステップ）
-2. 各ステップには明確な期待出力を設定
-3. 依存関係を正しく設定（depends_onは先行ステップのIDのみ）
-4. 失敗時の代替手段（fallback）を検討
-5. 最後のステップは必ず "reasoning" で回答を生成
-6. コレクションは上記リストから最も適切なものを選択すること（存在しないコレクション名は使用不可）
+【検索クエリの作成ルール】
+- `rag_search` の `query` 引数は、ユーザーの質問文を極力そのまま使用してください。
+   * 単語の羅列（例: "金色夜叉 尾崎紅葉"）に変換せず、自然言語の文脈
+   （例:"〜の構成者は誰ですか？"）を維持することで、ベクトル検索の精度が向上します。
+
+【計画作成のルール (厳守)】
+1. 検索アクション（rag_search）は、可能な限り「1つのステップ」にまとめてください。
+    * 質問を分解して複数の検索ステップを作らないでください。
+2. `rag_search` の `query` は、ユーザーの元の質問文を「完全一致でコピー」してください。
+    * 要約、キーワード化、分割は一切禁止です。
+    * 悪い例: "金色夜叉 構成者"
+    * 良い例: "『金色夜叉:尾崎紅葉不如帰:徳富蘆花』の構成者は誰ですか？"
+3. 依存関係を正しく設定してください（depends_onは先行ステップのIDのみ）。
+4. 失敗時の代替手段（fallback）を検討してください。
+5. 最後のステップは必ず "reasoning" で回答を生成してください
 
 {SEARCH_QUERY_INSTRUCTION}
 
@@ -127,16 +136,16 @@ class Planner:
         logger.info(f"Creating execution plan for: {query[:50]}...")
 
         # --- Legacy Agentと同一の入力加工 ---
-        augmented_query = query
-        if self.keyword_extractor:
-            try:
-                keywords = self.keyword_extractor.extract(query, top_n=5)
-                if keywords:
-                    keywords_str = ", ".join(keywords)
-                    augmented_query = f"{query}\n\n【重要: 検索クエリ作成の指示】\n以下の抽出された重要キーワードを、必ず検索クエリに含めてください。\n重要キーワード: {keywords_str}"
-                    logger.info(f"Augmented query with keywords: {keywords_str}")
-            except Exception as e:
-                logger.warning(f"Keyword extraction failed: {e}")
+        # augmented_query = query
+        # if self.keyword_extractor:
+        #     try:
+        #         keywords = self.keyword_extractor.extract(query, top_n=5)
+        #         if keywords:
+        #             keywords_str = ", ".join(keywords)
+        #             augmented_query = f"{query}\n\n【重要: 検索クエリ作成の指示】\n以下の抽出された重要キーワードを、必ず検索クエリに含めてください。\n重要キーワード: {keywords_str}"
+        #             logger.info(f"Augmented query with keywords: {keywords_str}")
+        #     except Exception as e:
+        #         logger.warning(f"Keyword extraction failed: {e}")
         # ------------------------------------
 
         try:
@@ -150,7 +159,8 @@ class Planner:
             # プロンプトを構築
             prompt = PLAN_GENERATION_PROMPT.format(
                 available_collections=collections_str,
-                query=augmented_query  # 加工済みクエリを使用
+                # query=augmented_query  # 加工済みクエリを使用
+                query=query
             ) + "\n\nIMPORTANT: Ensure the output is a valid, complete JSON object. Do not truncate the response."
 
             # --- [IPO LOG] PROCESS INPUT (GRACE PLANNER) ---

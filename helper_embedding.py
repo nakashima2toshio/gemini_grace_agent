@@ -178,20 +178,14 @@ class GeminiEmbedding(EmbeddingClient):
         """単一テキストのEmbedding生成（3072次元）"""
         config = {"output_dimensionality": self._dims}
         
-        # task_typeの指定（retrieval_queryなど）
-        # google-genai SDK 1.52.0+ supports task_type in embed_content? 
-        # Actually it might be in 'title' or separate arg depending on SDK version.
-        # Checking doc: embed_content(..., task_type="RETRIEVAL_QUERY")
-        # But here we pass it as argument to method.
+        if task_type:
+            config["task_type"] = task_type
         
         kwargs = {
             "model": self.model,
             "contents": text,
             "config": config
         }
-        
-        if task_type:
-            kwargs["task_type"] = task_type
 
         response = self.client.models.embed_content(**kwargs)
         return response.embeddings[0].values
@@ -225,9 +219,10 @@ class GeminiEmbedding(EmbeddingClient):
                 response = self.client.models.embed_content(
                     model=self.model,
                     contents=batch_texts,
-                    config={"output_dimensionality": self._dims},
-                    # Ingestion usually implies retrieval_document, but let's leave default for now to avoid breaking existing data
-                    # task_type="retrieval_document" 
+                    config={
+                        "output_dimensionality": self._dims,
+                        "task_type": "retrieval_document"
+                    }
                 )
                 
                 # レスポンスからベクトルを抽出

@@ -16,7 +16,7 @@ import sys
 import re
 import json
 import logging
-import subprocess
+# import subprocess
 import threading
 import queue
 from datetime import datetime

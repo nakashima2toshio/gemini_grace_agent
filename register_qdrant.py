@@ -235,10 +235,22 @@ def main():
                 source_file=normalized_filename
             )
             
-            # ソースファイル情報をペイロードに追加（build_points_for_qdrantで入る場合もあるが念のため）
+            # ソースファイル情報とEmbedding情報をペイロードに追加
+            # これにより、検索時に適切なプロバイダー/モデルを選択可能にする
             for point in points:
                 if "source" not in point.payload:
                     point.payload["source"] = normalized_filename
+                
+                # Embeddingメタデータの追加
+                point.payload["embedding_provider"] = args.provider
+                # 注意: embed_texts_for_qdrantはモデル名を引数に取るが、現状はgemini固定に近い
+                # 正確を期すならqdrant_serviceからモデル名を取得すべきだが、
+                # ここではargs.providerに基づいて設定
+                if args.provider == "gemini":
+                    point.payload["embedding_model"] = "gemini-embedding-001"
+                elif args.provider == "openai":
+                    point.payload["embedding_model"] = "text-embedding-3-small" # デフォルト
+
 
             # C. Qdrantへアップサート
             upsert_points_to_qdrant(client, args.collection, points)

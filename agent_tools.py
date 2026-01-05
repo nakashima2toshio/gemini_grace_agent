@@ -1,7 +1,16 @@
 # agent_tools.py
+"""
+Rankの無効化：
+1. [UI/Agent] RAGSearchTool.execute (GRACEエージェント)
+   * ↘ 呼び出し: search_rag_knowledge_base_structured
+       * ↘ [直接実行]: rerank_results (Cohere API使用)
+2. 無効化 Code
+    reranked_results = rerank_results(query, candidates, top_k=AgentConfig.RAG_SEARCH_LIMIT)
+"""
 
 import os
 import time
+import json
 import logging
 from typing import List, Optional, Dict, Any, Union
 from dataclasses import dataclass, field
@@ -174,13 +183,11 @@ def rerank_results(
 ) -> List[Dict[str, Any]]:
     """
     検索結果をCohere Rerank APIで再評価し、スコアを更新してソートする。
-    
     Args:
         query: ユーザーの検索クエリ
         results: Qdrantからの検索結果リスト
         top_k: 最終的に残す件数
         threshold: スコアの足切りライン
-        
     Returns:
         再ランク付けされた結果リスト
     """

@@ -7,12 +7,33 @@ make_qa_register_qdrant.py - Q/A生成からQdrant登録までを完結する統
 そしてQdrantベクトルデータベースへの登録を一貫して行います。
 
 [Usage: ]
+・celery起動：
+redis cashe clear:
+redis-cli -n 0 DEL qa_generation
+
+# ステータス確認
+./start_celery.sh status
+
+# 停止
+./start_celery.sh stop
+
+# 再起動
+./start_celery.sh restart -w 24
+
 python make_qa_register_qdrant.py \
   --dataset fineweb_edu_ja \
   --collection qa_fineweb_edu_ja \
   --use-celery \
   --celery-workers 24 \
   --recreate
+
+python make_qa_register_qdrant.py \
+--dataset wikipedia_ja \
+--collection qa_wikipedia_ja \
+--use-celery \
+--celery-workers 24 \
+--recreate
+
 """
 
 import sys
@@ -141,8 +162,14 @@ def run_registration(csv_path: str, collection_name: str, recreate: bool, batch_
         output_path = os.path.join(output_dir, normalized_filename)
         
         logger.info(f"📋 UI用ファイル作成: {output_path}")
-        df[['question', 'answer']].to_csv(output_path, index=False, encoding='utf-8')
-        logger.info(f"   -> 作成完了")
+        
+        # カラム存在チェック
+        if 'question' in df.columns and 'answer' in df.columns:
+            df[['question', 'answer']].to_csv(output_path, index=False, encoding='utf-8')
+            logger.info(f"   -> 作成完了")
+        else:
+            logger.warning(f"   -> 必要なカラム(question, answer)が見つからないためスキップ")
+            
     except Exception as e:
         logger.warning(f"UI用ファイル作成失敗: {e}")
 
@@ -203,7 +230,7 @@ def main():
             similarity_threshold=args.similarity_threshold
         )
         
-        generated_csv = result['saved_files'].get('csv')
+        generated_csv = result['saved_files'].get('qa_csv')
         if not generated_csv or not os.path.exists(generated_csv):
             logger.error("Q/A生成フェーズでCSVファイルが作成されませんでした。")
             sys.exit(1)

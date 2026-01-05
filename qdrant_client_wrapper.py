@@ -130,11 +130,9 @@ COLLECTION_CSV_MAPPING = {
 def batched(seq: Iterable, size: int):
     """
     イテラブルをバッチに分割
-
     Args:
         seq: 分割対象のイテラブル
         size: バッチサイズ
-
     Yields:
         バッチリスト
     """
@@ -162,12 +160,10 @@ class QdrantHealthChecker:
     def check_port(self, host: str, port: int, timeout: float = 2.0) -> bool:
         """
         ポートが開いているかチェック
-
         Args:
             host: ホスト名
             port: ポート番号
             timeout: タイムアウト秒数
-
         Returns:
             ポートが開いているかどうか
         """

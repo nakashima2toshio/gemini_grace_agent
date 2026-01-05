@@ -113,7 +113,8 @@ def _process_single_document(idx, row, dataset_type, text_col, title_col, lang, 
 def create_document_chunks(df: pd.DataFrame, dataset_type: str, max_docs: Optional[int] = None, 
                            config: Optional[Dict] = None, 
                            overlap_tokens: int = 0, use_similarity: bool = False, 
-                           similarity_threshold: float = 0.7) -> List[Dict]:
+                           similarity_threshold: float = 0.7,
+                           max_workers: int = 8) -> List[Dict]:
     """DataFrameから文書チャンクを作成（セマンティック分割・並列処理）
     Args:
         df: データフレーム
@@ -123,6 +124,7 @@ def create_document_chunks(df: pd.DataFrame, dataset_type: str, max_docs: Option
         overlap_tokens: 重複トークン数
         use_similarity: 類似度分割を使用するか
         similarity_threshold: 類似度閾値
+        max_workers: 並列処理のワーカー数
     Returns:
         チャンクのリスト
     """
@@ -141,7 +143,7 @@ def create_document_chunks(df: pd.DataFrame, dataset_type: str, max_docs: Option
     # 処理する文書数を制限
     docs_to_process = df.head(max_docs) if max_docs else df
 
-    logger.info(f"チャンク作成開始: {len(docs_to_process)}件の文書（セマンティック分割・8並列）")
+    logger.info(f"チャンク作成開始: {len(docs_to_process)}件の文書（セマンティック分割・{max_workers}並列）")
 
     # セマンティック分析器を一度だけ初期化（オーバーヘッド削減）
     semantic_analyzer = SemanticCoverage(embedding_model="gemini-embedding-001")
@@ -149,7 +151,7 @@ def create_document_chunks(df: pd.DataFrame, dataset_type: str, max_docs: Option
     total_docs = len(docs_to_process)
     completed_count = 0
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # タスクのサブミット
         future_to_idx = {
             executor.submit(

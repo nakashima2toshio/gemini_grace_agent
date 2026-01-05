@@ -169,6 +169,8 @@ def get_collection_embedding_params(
             return {"model": "text-embedding-3-small", "dims": 1536}
         elif size == 3072:
             return {"model": "gemini-embedding-001", "dims": 3072}
+        elif size == 768:
+            return {"model": "gemini-embedding-001", "dims": 768}
         elif size > 0:
             # 未知の次元数の場合はサイズだけ更新してモデルはデフォルト（または汎用）
             return {"model": "unknown-embedding-model", "dims": size}
@@ -782,7 +784,7 @@ def embed_query_for_search(
     # 次元数による判定
     if dims == 1536:
         provider = "openai"
-    elif dims == 3072:
+    elif dims == 3072 or dims == 768:
         provider = "gemini"
     
     # モデル名による判定 (次元数が指定されていない場合のフォールバック)
@@ -794,8 +796,12 @@ def embed_query_for_search(
             
     logger.info(f"embed_query_for_search: query='{query}', model='{model}', dims={dims} -> provider='{provider}'")
     
-    embedding_client = create_embedding_client(provider=provider)
-    vector = embedding_client.embed_text(query)
+    # Embeddingクライアントを作成。次元数も明示的に渡す。
+    embedding_client = create_embedding_client(provider=provider, dims=dims)
+    
+    # Geminiの場合は検索用途 (retrieval_query) を明示
+    task_type = "retrieval_query" if provider == "gemini" else None
+    vector = embedding_client.embed_text(query, task_type=task_type)
     
     logger.info(f"embed_query_for_search: generated vector dim={len(vector)}")
     return vector

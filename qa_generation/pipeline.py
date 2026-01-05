@@ -96,7 +96,8 @@ class QAPipeline:
     def create_chunks(self, df: pd.DataFrame, 
                       overlap_tokens: int = 0, 
                       use_similarity: bool = False, 
-                      similarity_threshold: float = 0.7) -> List[Dict]:
+                      similarity_threshold: float = 0.7,
+                      max_workers: int = 8) -> List[Dict]:
         """チャンクを作成する"""
         logger.info("\n[2/4] チャンク作成...")
         dataset_type = self.config.get("type", "unknown")
@@ -107,7 +108,8 @@ class QAPipeline:
             df, dataset_type, max_docs_for_chunks, config=self.config,
             overlap_tokens=overlap_tokens,
             use_similarity=use_similarity,
-            similarity_threshold=similarity_threshold
+            similarity_threshold=similarity_threshold,
+            max_workers=max_workers
         )
         
         if not chunks:
@@ -210,7 +212,8 @@ class QAPipeline:
                 df, 
                 overlap_tokens=overlap_tokens, 
                 use_similarity=use_similarity, 
-                similarity_threshold=similarity_threshold
+                similarity_threshold=similarity_threshold,
+                max_workers=celery_workers
             )
             qa_pairs = self.generate_qa(
                 chunks, use_celery, celery_workers, batch_chunks, merge_chunks, min_tokens, max_tokens

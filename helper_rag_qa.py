@@ -199,12 +199,10 @@ class BestKeywordSelector:
                      return_details: bool = False) -> Dict[str, Any]:
         """
         3つの手法で抽出し、最良の結果を選択
-
         Args:
             text: 分析対象テキスト
             top_n: 抽出するキーワード数
             return_details: 詳細情報を返すか
-
         Returns:
             最良のキーワードと選択理由
         """

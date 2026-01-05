@@ -114,14 +114,15 @@ class RAGSearchTool(BaseTool):
         start_time = time.time()
         
         # --- 重要単語抽出 (Regex Logic) ---
-        kanji_katakana_pattern = r'^[\u4e00-\u9fff\u30a0-\u30ffー]+$'
-        kanji_katakana_extract_pattern = r'[\u4e00-\u9fff\u30a0-\u30ffー]{2,}'
-
-        tokens = query.split()
-        required_keywords = [t for t in tokens if re.match(kanji_katakana_pattern, t)]
-        extracted = re.findall(kanji_katakana_extract_pattern, query)
-        required_keywords.extend(extracted)
-        required_keywords = list(set(required_keywords))
+        required_keywords = []  # ★ 空で初期化しておく
+        # kanji_katakana_pattern = r'^[\u4e00-\u9fff\u30a0-\u30ffー]+$'
+        # kanji_katakana_extract_pattern = r'[\u4e00-\u9fff\u30a0-\u30ffー]{2,}'
+        #
+        # tokens = query.split()
+        # required_keywords = [t for t in tokens if re.match(kanji_katakana_pattern, t)]
+        # extracted = re.findall(kanji_katakana_extract_pattern, query)
+        # required_keywords.extend(extracted)
+        # required_keywords = list(set(required_keywords))
         
         if required_keywords:
             logger.info(f"RAGSearchTool: Required keywords for filtering: {required_keywords}")
@@ -132,10 +133,10 @@ class RAGSearchTool(BaseTool):
         if collection:
             search_candidates.append(collection)
         
-        # フォールバック用のコレクションを追加（重複排除）
-        # 設定から優先順位を取得
-        priority_list = self.config.qdrant.search_priority
-        for c in priority_list:
+        # フォールバック用のコレクションを追加（重複排除・動的取得）
+        # Qdrantから全コレクションを取得し、優先順位リストに従ってソート
+        dynamic_collections = self._get_all_collections_dynamic()
+        for c in dynamic_collections:
             if c not in search_candidates:
                 search_candidates.append(c)
         
@@ -147,6 +148,7 @@ class RAGSearchTool(BaseTool):
         # --- コレクションを順次検索 ---
         for target_collection in search_candidates:
             logger.info(f"RAG search (Native): query='{query[:50]}...', collection={target_collection}")
+            print(f"🔍 Searching collection: {target_collection}") # コンソールにも出力
             
             try:
                 # 検索実行
@@ -161,20 +163,20 @@ class RAGSearchTool(BaseTool):
                     continue
 
                 # --- 独自キーワードフィルタリング ---
-                if required_keywords:
-                    initial_count = len(results)
-                    filtered_results = []
-                    for res in results:
-                        payload = res.get("payload", {})
-                        content = (str(payload.get("question", "")) + " " + 
-                                   str(payload.get("answer", "")) + " " + 
-                                   str(payload.get("content", "")))
-                        
-                        if any(kw in content for kw in required_keywords):
-                            filtered_results.append(res)
-                    
-                    results = filtered_results
-                    logger.info(f"RAGSearchTool: Filtered results {initial_count} -> {len(results)} (Collection: {target_collection})")
+                # if required_keywords:
+                #     initial_count = len(results)
+                #     filtered_results = []
+                #     for res in results:
+                #         payload = res.get("payload", {})
+                #         content = (str(payload.get("question", "")) + " " +
+                #                    str(payload.get("answer", "")) + " " +
+                #                    str(payload.get("content", "")))
+                #
+                #         if any(kw in content for kw in required_keywords):
+                #             filtered_results.append(res)
+                #
+                #     results = filtered_results
+                #     logger.info(f"RAGSearchTool: Filtered results {initial_count} -> {len(results)} (Collection: {target_collection})")
 
                 # 結果があれば採用してループ終了
                 if results:
@@ -233,6 +235,38 @@ class RAGSearchTool(BaseTool):
             confidence_factors=confidence_factors,
             execution_time_ms=execution_time
         )
+
+    def _get_all_collections_dynamic(self) -> List[str]:
+        """Qdrantから全コレクション一覧を動的に取得し、優先順位付けして返す"""
+        try:
+            # Qdrantからコレクション一覧を取得
+            collections_response = self.client.get_collections()
+            all_collections = [c.name for c in collections_response.collections]
+            
+            # 設定ファイルの優先順位を取得
+            priority_list = self.config.qdrant.search_priority
+            
+            # 優先順位リストにあるものを先に、それ以外を後に配置
+            sorted_collections = []
+            
+            # 1. 優先順位リストにあるものを追加（存在チェック付き）
+            for c in priority_list:
+                if c in all_collections:
+                    sorted_collections.append(c)
+            
+            # 2. 残りのコレクションを追加
+            for c in all_collections:
+                if c not in sorted_collections:
+                    sorted_collections.append(c)
+            
+            logger.info(f"RAGSearchTool: Dynamic collections list: {sorted_collections}")
+            return sorted_collections
+            
+        except Exception as e:
+            logger.error(f"Failed to get collections dynamically: {e}", exc_info=True) # エラーログ強化
+            print(f"❌ Failed to get collections dynamically: {e}") # コンソールにも出力
+            # 失敗時は設定ファイルの値をそのまま返す
+            return self.config.qdrant.search_priority
 
     def _calculate_confidence_factors(self, scores: List[float]) -> Dict[str, Any]:
         """Confidence計算用の統計情報を算出"""

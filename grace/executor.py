@@ -1,3 +1,4 @@
+# grace/executor.py
 """
 GRACE Executor - 計画実行エージェント
 生成された計画を順次実行し、結果を管理

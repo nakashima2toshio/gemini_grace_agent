@@ -69,12 +69,10 @@ class KeywordExtractor:
                 use_scoring: bool = True) -> List[str]:
         """
         テキストからキーワードを抽出（自動フォールバック・言語判定対応）
-
         Args:
             text: 分析対象テキスト
             top_n: 抽出するキーワード数
             use_scoring: スコアリングを使用するか
-
         Returns:
             キーワードリスト
         """
@@ -212,7 +210,6 @@ class KeywordExtractor:
     def extract_with_details(self, text: str, top_n: int = 10) -> Dict[str, List[Tuple[str, float]]]:
         """
         詳細情報付きでキーワードを抽出（比較分析用）
-
         Returns:
             各手法での抽出結果と詳細スコア
         """
@@ -368,7 +365,7 @@ def main():
         print("\n" + "=" * 80)
         print(f"--- {lang} キーワード抽出テスト ---")
         print("=" * 80)
-        
+
         # デフォルト抽出
         keywords = extractor.extract(text, top_n=10)
         print(f"\n【抽出結果（上位10件）】")
@@ -378,10 +375,15 @@ def main():
         # 詳細比較
         compare_methods(text, top_n=10)
 
-    print('Japanese -------------')
-    kywords = extractor.extract(sample_text_jp, top_n=10)
-    print(kywords)
-    print(type(kywords))
+    print('\nJapanese -------------')
+    keywords = extractor.extract(sample_text_jp, top_n=10)
+    print(keywords)
+    print(type(keywords))
+
+    print('\nEnglish -------------')
+    keywords = extractor.extract(sample_text_en, top_n=10)
+    print(keywords)
+    # print(type(keywords))
 
 
 if __name__ == "__main__":
