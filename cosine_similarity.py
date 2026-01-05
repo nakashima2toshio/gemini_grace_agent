@@ -19,15 +19,6 @@ class ChunksResult(BaseModel):
     sentiment: str
 
 def main():
-    # APIキー設定
-    genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-    chunks_model = genai.GenerativeModel(
-        "gemini-2.5-flash",
-        generation_config=genai.GenarationConfig(
-            response_mime_type="application/json",
-            response_schema=ChunksResult
-        )
-    )
     """メイン実行関数"""
 
     # 1. 日本語サンプル
@@ -67,8 +58,20 @@ def main():
 
     # （2）文章に分割する機能: recursive_character_text_splitter
     # qa_generation/semantic.py の _chunk_by_paragraphs および _split_into_sentencesで分割する。
-    # 初期化
-
+    # APIキー設定
+    genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+    chunks_model = genai.GenerativeModel(
+        "gemini-2.5-flash",
+        generation_config=genai.GenarationConfig(
+            response_mime_type="application/json",
+            response_schema=ChunksResult
+        )
+    )
+    semantic_prompt = """
+    
+    """
+    input_text = sample_text_recursive_character_text_splitter
+    output_text = ''
     semantic = SemanticCoverage(embedding_model="gemini-embedding-001")
 
 
