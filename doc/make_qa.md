@@ -1,4 +1,20 @@
-# make_qa.py ドキュメント
+## make_qa.py ドキュメント
+
+| 区分 | 要素 | 内容 | 関連する引数・設定 |
+| :--- | :--- | :--- | :--- |
+| **Input** | **1. データソース** | ・**Hugging Face Dataset**<br>・**ローカルファイル** (`.txt`, `.csv`, `.jsonl`, `.parquet`) | `--dataset`<br>`--input-file` |
+| | **2. 生成モデル** | LLMモデル名（Geminiなど） | `--model` (デフォルト: `gemini-2.0-flash`) |
+| | **3. 処理範囲・単位** | ・最大ドキュメント数<br>・テキスト分割設定（最小/最大トークン、オーバーラップ） | `--max-docs`<br>`--min-tokens`, `--max-tokens`, `--overlap-tokens` |
+| | **4. 実行制御** | ・並列処理（Celery）の使用<br>・バッチサイズ、マージ設定 | `--use-celery`, `--celery-workers`<br>`--batch-chunks`, `--merge-chunks` |
+| | **5. 品質・分析** | ・カバレッジ分析（網羅性チェック）<br>・類似度判定の使用 | `--analyze-coverage`, `--coverage-threshold`<br>`--use-similarity`, `--similarity-threshold` |
+| | **6. 認証情報** | APIキー（環境変数） | `GOOGLE_API_KEY` |
+| **Process** | **1. 初期化** | パイプライン (`QAPipeline`) の構築 | `QAPipeline(...)` |
+| | **2. データロード** | データセットまたはファイルの読み込みとテキスト抽出 | `pipeline.run(...)` 内部処理 |
+| | **3. チャンク分割** | 設定に基づきテキストを適切なサイズのチャンクに分割 | `min_tokens`, `max_tokens`, `overlap_tokens` |
+| | **4. 生成 (LLM)** | Gemini API を呼び出してQ/Aペアを生成<br>（Celery有効時は並列分散処理） | `model`, `batch_chunks` |
+| | **5. 分析・集約** | ・カバレッジ分析（オプション）<br>・生成結果の結合と整形 | `analyze_coverage`, `merge_chunks` |
+| **Output** | **1. データファイル** | ・**Q/Aデータ (CSV/JSONL)**<br>・**メタデータ/統計情報** | `--output` (デフォルト: `./outputs`)<br>`qa_dataset_*.csv` |
+| | **2. 実行ログ** | ・処理ステータス、生成数<br>・保存ファイルパス | 標準出力 (logging) |
 
 ## 1. 概要
 
