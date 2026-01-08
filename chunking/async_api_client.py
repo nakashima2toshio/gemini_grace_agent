@@ -2,7 +2,7 @@
 """
 非同期APIクライアント
 - asyncio.to_thread() で同期APIをラップ
-- AdaptiveSemaphore で動的並列数制御
+- Semaphore で並列数制御（固定）
 - リトライロジック（3回、指数バックオフ）
 - 不完全JSONの検出とリトライ
 """
@@ -19,75 +19,11 @@ from google.genai import types
 logger = logging.getLogger(__name__)
 
 
-class AdaptiveSemaphore:
-    """
-    動的に並列数を調整するセマフォ
-    - 429エラー（レート制限）発生時に並列数を減少
-    - 連続成功時に並列数を増加
-    """
-
-    def __init__(
-        self,
-        initial_limit: int = 8,
-        min_limit: int = 1,
-        max_limit: int = 16,
-        success_threshold: int = 10  # この回数連続成功で増加
-    ):
-        self._limit = initial_limit
-        self._min_limit = min_limit
-        self._max_limit = max_limit
-        self._success_threshold = success_threshold
-        self._semaphore = asyncio.Semaphore(initial_limit)
-        self._consecutive_successes = 0
-        self._lock = asyncio.Lock()
-
-    async def acquire(self):
-        await self._semaphore.acquire()
-
-    def release(self):
-        self._semaphore.release()
-
-    async def on_success(self):
-        """成功時に呼び出し"""
-        async with self._lock:
-            self._consecutive_successes += 1
-            if self._consecutive_successes >= self._success_threshold:
-                await self._increase_limit()
-                self._consecutive_successes = 0
-
-    async def on_rate_limit_error(self):
-        """429エラー時に呼び出し"""
-        async with self._lock:
-            self._consecutive_successes = 0
-            await self._decrease_limit()
-
-    async def _decrease_limit(self):
-        """並列数を減少"""
-        new_limit = max(self._min_limit, self._limit - 2)
-        if new_limit != self._limit:
-            logger.warning(f"Decreasing concurrency: {self._limit} -> {new_limit}")
-            self._limit = new_limit
-            # 新しいセマフォを作成（既存の待機タスクには影響しない）
-            self._semaphore = asyncio.Semaphore(new_limit)
-
-    async def _increase_limit(self):
-        """並列数を増加"""
-        new_limit = min(self._max_limit, self._limit + 1)
-        if new_limit != self._limit:
-            logger.info(f"Increasing concurrency: {self._limit} -> {new_limit}")
-            self._limit = new_limit
-            self._semaphore = asyncio.Semaphore(new_limit)
-
-    @property
-    def current_limit(self) -> int:
-        return self._limit
-
-
 class AsyncAPIClient:
     """
     非同期APIクライアント
     - asyncio.to_thread() で同期APIをラップ
-    - AdaptiveSemaphore で動的並列数制御
+    - Semaphore で並列数制御（固定）
     - リトライロジック（3回、指数バックオフ）
     - 不完全JSONの検出とリトライ
     """
@@ -102,16 +38,13 @@ class AsyncAPIClient:
         """
         Args:
             api_key: Google API Key
-            max_workers: 並列数（デフォルト: 8）
+            max_workers: 並列数（デフォルト: 8、固定）
             max_retries: リトライ回数（デフォルト: 3）
             max_output_tokens: 出力トークン制限（デフォルト: 4096）
         """
         self.client = genai.Client(api_key=api_key)
-        self.semaphore = AdaptiveSemaphore(
-            initial_limit=max_workers,
-            min_limit=1,
-            max_limit=max_workers * 2
-        )
+        self.max_workers = max_workers
+        self.semaphore = asyncio.Semaphore(max_workers)
         self.max_retries = max_retries
         self.max_output_tokens = max_output_tokens
         self._total_requests = 0
@@ -175,13 +108,10 @@ class AsyncAPIClient:
         Returns:
             レスポンステキスト、または失敗時はNone
         """
-        await self.semaphore.acquire()
-        try:
+        async with self.semaphore:
             return await self._execute_with_retry(
                 model, contents, response_schema, task_id
             )
-        finally:
-            self.semaphore.release()
 
     async def _execute_with_retry(
         self,
@@ -226,7 +156,6 @@ class AsyncAPIClient:
                         f"End preview: ...{preview}"
                     )
 
-                await self.semaphore.on_success()
                 return response.text
 
             except ValueError as e:
@@ -244,7 +173,6 @@ class AsyncAPIClient:
 
                 # レート制限エラーの判定
                 if "429" in error_str or "rate" in error_str or "quota" in error_str:
-                    await self.semaphore.on_rate_limit_error()
                     wait_time = 30 * (attempt + 1)
                     logger.warning(
                         f"[{task_id}] Rate limit hit. "
@@ -275,7 +203,7 @@ class AsyncAPIClient:
                 (self._total_requests - self._failed_requests) / self._total_requests * 100
                 if self._total_requests > 0 else 0
             ),
-            "current_concurrency": self.semaphore.current_limit
+            "concurrency": self.max_workers
         }
 
     def reset_stats(self):

@@ -128,6 +128,19 @@ class DatasetConfig:
             qa_per_chunk=3,
             lang="ja",
         ),
+        "wikipedia_ja_5per": DatasetInfo(
+            name="Wikipedia日本語版（5%サンプル）",
+            icon="📚",
+            description="Wikipedia日本語版の5%サンプルデータ（前処理済み）",
+            file="OUTPUT/wikipedia_ja_5per_chunks_cleaned.csv",
+            text_field="text",
+            text_column="text",
+            sample_size=999999,  # 実質的にファイル全体を使用
+            min_text_length=100,
+            chunk_size=250,
+            qa_per_chunk=3,
+            lang="ja",
+        ),
         "japanese_text": DatasetInfo(
             name="日本語Webテキスト（CC100）",
             icon="📰",

@@ -463,6 +463,16 @@ def main():
             # 先頭のいくつかを表示
             show_paragraphs(final_result[:10], title="First 5 Chunks")
 
+            print("final save to =: ./OUTPUT/wikipedia_ja_5per_chunks.txt")
+            if final_result:
+                output_path = "./OUTPUT/wikipedia_ja_5per_chunks.txt"
+                with open(output_path, "w", encoding="utf-8") as f:
+                    for i, chunk in enumerate(final_result):
+                        f.write(f"--- Chunk {i + 1} ---\n")
+                        f.write(chunk)
+                        f.write("\n")
+                print(f"Results saved to: {output_path}")
+
         except Exception as e:
             print(f"Error processing file: {e}")
     else:

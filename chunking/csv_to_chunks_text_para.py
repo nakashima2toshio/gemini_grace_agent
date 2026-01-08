@@ -316,12 +316,10 @@ async def chunk_overlap_para(
     
     連続性判定(check_continuity)は独立して並列実行可能。
     結果の適用は元の順序を維持する。
-    
     Args:
         paragraphs: チャンクのリスト
         api_client: AsyncAPIClientインスタンス
         model: Geminiモデル名
-    
     Returns:
         オーバーラップ処理後のチャンクリスト
     """
@@ -428,13 +426,11 @@ def chunks_all(
 ) -> List[str]:
     """
     テキスト処理パイプラインを一気通貫で実行（同期版ラッパー）
-    
     Args:
         text: 入力テキスト
         model: Geminiモデル名
         max_workers: 並列数
         block_size: バッチサイズ
-    
     Returns:
         チャンク化されたテキストのリスト
     """
@@ -613,9 +609,9 @@ async def async_main():
     # 出力
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
-            for i, chunk in enumerate(results):
-                f.write(f"--- Chunk {i + 1} ---\n")
-                f.write(chunk)
+            for chunk in results:
+                # チャンク本体を書き込み
+                f.write(chunk.rstrip('\n'))
                 f.write("\n")
         logger.info(f"Results saved to: {args.output}")
     else:

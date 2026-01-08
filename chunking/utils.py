@@ -19,20 +19,21 @@ def show_paragraphs(paragraphs: List[str], title: Optional[str] = None) -> None:
         paragraphs: パラグラフのリスト
         title: 表示タイトル（オプション）
     """
-    if title:
-        print(f"--- {title} ---")
-
-    if paragraphs:
-        for i, p_text in enumerate(paragraphs):
-            # 表示が見やすいように改行を除去
-            display_text = p_text.replace('\n', ' ').strip()
-            # 長すぎる場合はカット
-            if len(display_text) > 100:
-                display_text = display_text[:100] + "..."
-            print(f"Chunk [ID:{i + 1}]: {display_text}")
-    else:
-        print("No paragraphs to display.")
-    print("")
+    # if title:
+    #     print(f"--- {title} ---")
+    #
+    # if paragraphs:
+    #     for i, p_text in enumerate(paragraphs):
+    #         # 表示が見やすいように改行を除去
+    #         display_text = p_text.replace('\n', ' ').strip()
+    #         # 長すぎる場合はカット
+    #         if len(display_text) > 100:
+    #             display_text = display_text[:100] + "..."
+    #         print(f"Chunk [ID:{i + 1}]: {display_text}")
+    # else:
+    #     print("No paragraphs to display.")
+    # print("")
+    pass
 
 
 def setup_logging(

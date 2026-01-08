@@ -1,10 +1,23 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-"""
 """
-make_qa_register_qdrant.py - Q/A生成からQdrant登録までを完結する統合ツール
+make_qa_register_qdrant.py - Q/A生成からQdrant登録までを完結する統合ツール：
+
+python make_qa_register_qdrant.py \
+  --dataset wikipedia_ja_5per \
+  --collection qa_wikipedia_ja_5per \
+  --use-celery \
+  --celery-workers 16 \
+  --model gemini-2.0-flash \
+  --batch-chunks 3 \
+  --merge-chunks \
+  --recreate
+
 ========================================================================
 新しいアーキテクチャに基づき、ドキュメントのチャンク化、Q/Aペアの生成、
 そしてQdrantベクトルデータベースへの登録を一貫して行います。
+# Flower起動
+celery -A celery_config flower --port=5555
 
 [Usage: ]
 ・celery起動：

@@ -1,7 +1,8 @@
 """
 LLMクライアント抽象化レイヤー
 
-OpenAI API と Gemini 3 API の両方に対応する統一インターフェースを提供。
+OpenAI API と Gemini API の両方に対応する統一インターフェースを提供。
+google.genai (新パッケージ) に対応。
 """
 
 from abc import ABC, abstractmethod
@@ -20,10 +21,11 @@ except ImportError:
     OpenAI = None
 
 try:
-    import google.generativeai as genai
-    from google.api_core import exceptions
+    from google import genai
+    from google.genai import types
 except ImportError:
     genai = None
+    types = None
 
 import tiktoken
 
@@ -42,21 +44,21 @@ LLM_MODELS = [
 ]
 
 LLM_PRICING = {
-    "gemini-2.5-flash": {"input": 0.0001, "output": 0.0004}, # Estimated
-    "gemini-3-pro-preview": {"input": 0.00125, "output": 0.010},
+    "gemini-2.5-flash"        : {"input": 0.0001, "output": 0.0004},  # Estimated
+    "gemini-3-pro-preview"    : {"input": 0.00125, "output": 0.010},
     "gemini-2.5-flash-preview": {"input": 0.00015, "output": 0.0035},
-    "gemini-2.0-flash": {"input": 0.0001, "output": 0.0004},
-    "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
-    "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
+    "gemini-2.0-flash"        : {"input": 0.0001, "output": 0.0004},
+    "gemini-1.5-pro"          : {"input": 0.00125, "output": 0.005},
+    "gemini-1.5-flash"        : {"input": 0.000075, "output": 0.0003},
 }
 
 LLM_LIMITS = {
-    "gemini-2.5-flash": {"max_tokens": 1000000, "max_output": 8192},
-    "gemini-3-pro-preview": {"max_tokens": 1000000, "max_output": 64000},
+    "gemini-2.5-flash"        : {"max_tokens": 1000000, "max_output": 8192},
+    "gemini-3-pro-preview"    : {"max_tokens": 1000000, "max_output": 64000},
     "gemini-2.5-flash-preview": {"max_tokens": 1000000, "max_output": 64000},
-    "gemini-2.0-flash": {"max_tokens": 1000000, "max_output": 8192},
-    "gemini-1.5-pro": {"max_tokens": 1000000, "max_output": 8192},
-    "gemini-1.5-flash": {"max_tokens": 1000000, "max_output": 8192},
+    "gemini-2.0-flash"        : {"max_tokens": 1000000, "max_output": 8192},
+    "gemini-1.5-pro"          : {"max_tokens": 1000000, "max_output": 8192},
+    "gemini-1.5-flash"        : {"max_tokens": 1000000, "max_output": 8192},
 }
 
 # --- Embedding モデル設定 --- #
@@ -67,13 +69,13 @@ EMBEDDING_MODELS = [
 ]
 
 EMBEDDING_PRICING = {
-    "gemini-embedding-001": 0.0001,
+    "gemini-embedding-001"  : 0.0001,
     "text-embedding-3-small": 0.00002,
     "text-embedding-3-large": 0.00013,
 }
 
 EMBEDDING_DIMS = {
-    "gemini-embedding-001": 768,
+    "gemini-embedding-001"  : 768,
     "text-embedding-3-small": 1536,
     "text-embedding-3-large": 3072,
 }
@@ -87,7 +89,8 @@ class LLMClient(ABC):
         pass
 
     @abstractmethod
-    def generate_structured(self, prompt: str, response_schema: Type[BaseModel], model: Optional[str] = None, **kwargs) -> BaseModel:
+    def generate_structured(self, prompt: str, response_schema: Type[BaseModel], model: Optional[str] = None,
+                            **kwargs) -> BaseModel:
         pass
 
     @abstractmethod
@@ -111,7 +114,8 @@ class OpenAIClient(LLMClient):
         response = self.client.chat.completions.create(model=model, messages=messages, **kwargs)
         return response.choices[0].message.content
 
-    def generate_structured(self, prompt: str, response_schema: Type[BaseModel], model: Optional[str] = None, **kwargs) -> BaseModel:
+    def generate_structured(self, prompt: str, response_schema: Type[BaseModel], model: Optional[str] = None,
+                            **kwargs) -> BaseModel:
         model = model or self.default_model
         messages = [{"role": "user", "content": prompt}]
         response = self.client.beta.chat.completions.parse(
@@ -134,36 +138,57 @@ class OpenAIClient(LLMClient):
 class GeminiClient(LLMClient):
     def __init__(self, api_key: Optional[str] = None, default_model: str = "gemini-2.0-flash"):
         if not genai:
-            raise ImportError("google-generativeai package is not installed.")
+            raise ImportError("google-genai package is not installed. Install with: pip install google-genai")
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY is not set")
-        genai.configure(api_key=self.api_key)
+
+        # 新しいクライアントの初期化方法
+        self.client = genai.Client(api_key=self.api_key)
         self.default_model = default_model
 
     def generate_content(self, prompt: str, model: Optional[str] = None, **kwargs) -> str:
         model_name = model or self.default_model
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(prompt, **kwargs)
+
+        # 新しいAPIでのコンテンツ生成
+        config = {}
+        if "temperature" in kwargs:
+            config["temperature"] = kwargs.pop("temperature")
+        if "max_output_tokens" in kwargs:
+            config["max_output_tokens"] = kwargs.pop("max_output_tokens")
+
+        response = self.client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(**config) if config else None
+        )
+
         return response.text
 
-    def generate_structured(self, prompt: str, response_schema: Type[BaseModel], model: Optional[str] = None, **kwargs) -> BaseModel:
+    def generate_structured(self, prompt: str, response_schema: Type[BaseModel], model: Optional[str] = None,
+                            **kwargs) -> BaseModel:
         model_name = model or self.default_model
-        model = genai.GenerativeModel(model_name)
-        
-        # Gemini JSON mode
-        generation_config = {"response_mime_type": "application/json"}
-        
-        # kwargsからgeneration_configに移動
-        if "max_output_tokens" in kwargs:
-            generation_config["max_output_tokens"] = kwargs.pop("max_output_tokens")
-        if "temperature" in kwargs:
-            generation_config["temperature"] = kwargs.pop("temperature")
 
-        # スキーマをプロンプトに追加する簡易実装（SDKの進化に合わせて変更可能）
+        # JSON スキーマの設定
+        config = {
+            "response_mime_type": "application/json",
+            "response_schema"   : response_schema.model_json_schema()
+        }
+
+        if "temperature" in kwargs:
+            config["temperature"] = kwargs.pop("temperature")
+        if "max_output_tokens" in kwargs:
+            config["max_output_tokens"] = kwargs.pop("max_output_tokens")
+
+        # スキーマをプロンプトに追加
         schema_prompt = f"{prompt}\n\nOutput in JSON format following this schema: {response_schema.model_json_schema()}"
-        
-        response = model.generate_content(schema_prompt, generation_config=generation_config, **kwargs)
+
+        response = self.client.models.generate_content(
+            model=model_name,
+            contents=schema_prompt,
+            config=types.GenerateContentConfig(**config)
+        )
+
         try:
             return response_schema.model_validate_json(response.text)
         except Exception as e:
@@ -173,29 +198,42 @@ class GeminiClient(LLMClient):
 
     def count_tokens(self, text: str, model: Optional[str] = None) -> int:
         model_name = model or self.default_model
-        model = genai.GenerativeModel(model_name)
-        return model.count_tokens(text).total_tokens
+
+        # 新しいAPIでのトークンカウント
+        response = self.client.models.count_tokens(
+            model=model_name,
+            contents=text
+        )
+
+        return response.total_tokens
+
 
 def create_llm_client(provider: str = "gemini", **kwargs) -> LLMClient:
     if provider == "openai":
         return OpenAIClient(**kwargs)
     return GeminiClient(**kwargs)
 
+
 # Helper functions
 def get_available_llm_models() -> List[str]:
     return LLM_MODELS
 
+
 def get_llm_model_pricing(model_name: str) -> Dict[str, float]:
     return LLM_PRICING.get(model_name, {"input": 0.0, "output": 0.0})
+
 
 def get_llm_model_limits(model_name: str) -> Dict[str, int]:
     return LLM_LIMITS.get(model_name, {"max_tokens": 0, "max_output": 0})
 
+
 def get_available_embedding_models() -> List[str]:
     return EMBEDDING_MODELS
 
+
 def get_embedding_model_pricing(model_name: str) -> float:
     return EMBEDDING_PRICING.get(model_name, 0.0)
+
 
 def get_embedding_model_dimensions(model_name: str) -> int:
     return EMBEDDING_DIMS.get(model_name, 0)

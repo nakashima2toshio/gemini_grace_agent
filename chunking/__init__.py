@@ -19,7 +19,6 @@ from .prompts import (
 )
 from .async_api_client import (
     AsyncAPIClient,
-    AdaptiveSemaphore
 )
 from .checkpoint_manager import CheckpointManager
 from .csv_to_chunks_text_para import (
@@ -50,7 +49,6 @@ __all__ = [
     "CONTINUITY_CHECK_PROMPT",
     # API Client
     "AsyncAPIClient",
-    "AdaptiveSemaphore",
     # Checkpoint
     "CheckpointManager",
     # Main Processor
