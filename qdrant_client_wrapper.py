@@ -596,7 +596,8 @@ def embed_query_unified(
     """
     provider = provider or DEFAULT_EMBEDDING_PROVIDER
     embedding_client = create_embedding_client(provider=provider)
-    return embedding_client.embed_text(text)
+    # return embedding_client.embed_text(text)
+    return embedding_client.embed_text(text, task_type="retrieval_query")
 
 
 def embed_sparse_texts_unified(

@@ -1,14 +1,35 @@
 # csv_to_chunks_text_para.py
 """
-テキストチャンキング処理（並列版）
+（1）「チャンク」テキストチャンキング処理（並列版） - output.csv
+    　csv_to_chunks_text_para.py
+（2）「Q/Aペア」& Qdrant登
+    　make_qa_register_qdrant.py　
+    （make_qa.py + register_csv_to_qdrant.py）
 
-テキストを意味的なチャンクに分割するパイプライン。
+テキストまたはCSVファイルを意味的なチャンクに分割するパイプライン。
 非同期・並列処理により高速化。
 
 Usage:
+    # テキストファイルの処理
     python -m chunking.csv_to_chunks_text_para -i input.txt -o output.txt
+
+    # CSVファイルの処理（text または Combined_Text カラムを使用）
+    python -m chunking.csv_to_chunks_text_para -i input.csv -o output.txt
+
+    # 並列数の指定
     python -m chunking.csv_to_chunks_text_para -i input.txt -o output.txt -w 16
+
+    # 中断からの再開
     python -m chunking.csv_to_chunks_text_para --resume JOB_ID -i input.txt -o output.txt
+
+python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/wikipedia_ja_20251130_041304.txt -o ./OUTPUT/wikipedia_ja_chunked.txt -w 10
+
+python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/cc_news_5per.csv -o ./OUTPUT/cc_news_5per_chunked.csv -w 10
+python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/fineweb_edu_ja_5per.csv -o ./OUTPUT/fineweb_edu_ja_5per_chunked.csv -w 10
+python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/japanese_text_5per.csv -o ./OUTPUT/japanese_text_5per_chunked.csv -w 10
+python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/livedoor_5per.csv -o ./OUTPUT/livedoor_5per_chunked.csv -w 10
+python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/wikipedia_ja_5per.csv -o ./OUTPUT/wikipedia_ja_5per_chunked.csv -w 10
+
 """
 
 import argparse
@@ -19,6 +40,7 @@ import time
 from datetime import datetime
 from typing import List, Optional
 import logging
+import pandas as pd
 
 from tqdm.asyncio import tqdm_asyncio
 
@@ -38,7 +60,7 @@ logger = logging.getLogger(__name__)
 class LargeTextProcessorPara:
     """
     並列処理対応の大規模テキストプロセッサ
-    
+
     Features:
         - 非同期・並列API呼び出し
         - 動的並列数調整
@@ -47,13 +69,13 @@ class LargeTextProcessorPara:
     """
 
     def __init__(
-        self,
-        block_size: int = 2000,
-        max_workers: int = 8,
-        max_retries: int = 3,
-        max_output_tokens: int = 4096,
-        checkpoint_dir: str = "./checkpoints",
-        resume_job_id: Optional[str] = None
+            self,
+            block_size: int = 2000,
+            max_workers: int = 8,
+            max_retries: int = 3,
+            max_output_tokens: int = 4096,
+            checkpoint_dir: str = "./checkpoints",
+            resume_job_id: Optional[str] = None
     ):
         """
         Args:
@@ -74,13 +96,15 @@ class LargeTextProcessorPara:
             job_id=resume_job_id
         )
 
+    """ 前処理 """
+
     def split_into_batches(self, text: str) -> List[str]:
         """
         テキストを block_size 以下に分割
-        
+
         Args:
             text: 入力テキスト
-        
+
         Returns:
             バッチのリスト
         """
@@ -101,7 +125,7 @@ class LargeTextProcessorPara:
                     current_batch = []
                     current_length = 0
 
-                # 長い行を block_size ずつスライス
+                # 長い行を step: block_size ずつスライス
                 for i in range(0, len(raw_line), self.block_size):
                     chunk = raw_line[i: i + self.block_size]
                     batches.append(chunk)
@@ -125,19 +149,19 @@ class LargeTextProcessorPara:
         return batches
 
     async def process(
-        self,
-        text: str,
-        model: str = "gemini-2.0-flash",
-        api_key: Optional[str] = None
+            self,
+            text: str,
+            model: str = "gemini-2.0-flash",
+            api_key: Optional[str] = None
     ) -> List[str]:
         """
         メイン処理（非同期版）
-        
+
         Args:
             text: 処理対象テキスト
             model: Geminiモデル名
             api_key: APIキー（省略時は環境変数から取得）
-        
+
         Returns:
             チャンク化されたテキストのリスト
         """
@@ -162,7 +186,7 @@ class LargeTextProcessorPara:
         if resume_data:
             logger.info(f"Resuming from checkpoint. Next step: {resume_step}")
 
-        # Step1: 階層分割
+        # Step1: 階層分割　ここ
         if resume_step == "step1" or resume_step is None:
             batches = self.split_into_batches(text)
             logger.info(f"Total batches: {len(batches)}")
@@ -307,13 +331,13 @@ class LargeTextProcessorPara:
 
 
 async def chunk_overlap_para(
-    paragraphs: List[str],
-    api_client: AsyncAPIClient,
-    model: str = "gemini-2.0-flash"
+        paragraphs: List[str],
+        api_client: AsyncAPIClient,
+        model: str = "gemini-2.0-flash"
 ) -> List[str]:
     """
     並列版オーバーラップ処理
-    
+
     連続性判定(check_continuity)は独立して並列実行可能。
     結果の適用は元の順序を維持する。
     Args:
@@ -380,7 +404,7 @@ async def chunk_overlap_para(
 
         # オーバーラップ処理: 前のチャンクの最後の1文を追加
         prev_text = paragraphs[i - 1]
-        sentences = re.split(r'(?<=[。．！!？?])', prev_text)
+        sentences = re.split(r'(?<=[。．！!？?])', prev_text)  # ← 修正箇所
         sentences = [s for s in sentences if s.strip()]
 
         overlap_part = sentences[-1] if sentences else prev_text
@@ -394,20 +418,20 @@ async def chunk_overlap_para(
 # === 一気通貫処理関数 (Wrapper) ===
 
 async def chunks_all_async(
-    text: str,
-    model: str = "gemini-2.0-flash",
-    max_workers: int = 8,
-    block_size: int = 2000
+        text: str,
+        model: str = "gemini-2.0-flash",
+        max_workers: int = 8,
+        block_size: int = 2000
 ) -> List[str]:
     """
     テキスト処理パイプラインを一気通貫で実行（非同期版）
-    
+
     Args:
         text: 入力テキスト
         model: Geminiモデル名
         max_workers: 並列数
         block_size: バッチサイズ
-    
+
     Returns:
         チャンク化されたテキストのリスト
     """
@@ -419,10 +443,10 @@ async def chunks_all_async(
 
 
 def chunks_all(
-    text: str,
-    model: str = "gemini-2.0-flash",
-    max_workers: int = 8,
-    block_size: int = 2000
+        text: str,
+        model: str = "gemini-2.0-flash",
+        max_workers: int = 8,
+        block_size: int = 2000
 ) -> List[str]:
     """
     テキスト処理パイプラインを一気通貫で実行（同期版ラッパー）
@@ -442,28 +466,36 @@ def chunks_all(
 def parse_args():
     """コマンドライン引数をパース"""
     parser = argparse.ArgumentParser(
-        description="テキストチャンキング処理（並列版）",
+        description="テキストチャンキング処理（並列版） - CSVとテキストファイルに対応",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用例:
-  # 基本的な使用方法
+  # テキストファイルの処理
   python -m chunking.csv_to_chunks_text_para -i input.txt -o output.txt
-  
+
+  # CSVファイルの処理（text または Combined_Text カラムを自動検出）
+  python -m chunking.csv_to_chunks_text_para -i input.csv -o output.txt
+
   # 並列数を16に指定
   python -m chunking.csv_to_chunks_text_para -i input.txt -o output.txt -w 16
-  
+
   # 中断したジョブを再開
   python -m chunking.csv_to_chunks_text_para -i input.txt -o output.txt --resume 20250108_143022
-  
+
   # 保存済みジョブの一覧表示
   python -m chunking.csv_to_chunks_text_para --list-jobs
+
+CSVファイルの場合:
+  - 'Combined_Text' カラムがあればそれを優先的に使用
+  - なければ 'text' カラムを使用
+  - どちらもなければ最初のカラムを使用
         """
     )
 
     parser.add_argument(
         "-i", "--input",
         type=str,
-        help="入力ファイルパス"
+        help="入力ファイルパス（.txt または .csv）"
     )
     parser.add_argument(
         "-o", "--output",
@@ -583,9 +615,46 @@ async def async_main():
     logger.info(f"Max output tokens: {args.max_output_tokens}")
     logger.info(f"Resume job: {args.resume or 'None'}")
 
-    # ファイル読み込み
-    with open(args.input, "r", encoding="utf-8") as f:
-        text = f.read()
+    # ファイル読み込み（CSVまたはテキスト）
+    file_extension = os.path.splitext(args.input)[1].lower()
+
+    if file_extension == '.csv':
+        # CSVファイルの場合
+        logger.info("Input format: CSV")
+        try:
+            df = pd.read_csv(args.input, encoding='utf-8')
+            logger.info(f"CSV columns: {list(df.columns)}")
+
+            # テキストカラムを探す（優先順位: Combined_Text > text > 最初のカラム）
+            if 'Combined_Text' in df.columns:
+                text_column = 'Combined_Text'
+            elif 'text' in df.columns:
+                text_column = 'text'
+            else:
+                text_column = df.columns[0]
+                logger.warning(f"Using first column '{text_column}' as text source")
+
+            logger.info(f"Using column: {text_column}")
+
+            # テキストを結合（各行を改行で区切る）
+            text = '\n'.join(df[text_column].astype(str).tolist())
+            logger.info(f"Loaded {len(df)} rows from CSV")
+
+        except Exception as e:
+            logger.error(f"Failed to read CSV file: {e}")
+            print(f"Error: Failed to read CSV file: {e}")
+            return
+    else:
+        # テキストファイルの場合
+        logger.info("Input format: Text")
+        try:
+            with open(args.input, "r", encoding="utf-8") as f:
+                text = f.read()
+        except Exception as e:
+            logger.error(f"Failed to read text file: {e}")
+            print(f"Error: Failed to read text file: {e}")
+            return
+
     logger.info(f"Text length: {len(text)} chars")
 
     # プロセッサ初期化

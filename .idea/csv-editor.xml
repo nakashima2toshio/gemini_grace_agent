@@ -3,7 +3,42 @@
   <component name="CsvFileAttributes">
     <option name="attributeMap">
       <map>
+        <entry key="/OUTPUT/cc_news_5per.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/OUTPUT/cc_news_5per_chunked.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/OUTPUT/japanese_text_5per.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/OUTPUT/preprocessed_cc_news_20251130_041450.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="/OUTPUT/preprocessed_fineweb_edu_ja.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/OUTPUT/qa_pairs_fineweb_edu_ja.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />
@@ -17,7 +52,21 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="/qa_output/a02_qa_pairs_cc_news.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="/qa_output/a02_qa_pairs_japanese_text.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/qa_output/a02_qa_pairs_livedoor.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />

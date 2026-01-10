@@ -697,7 +697,8 @@ def build_points_for_qdrant(
     vectors: List[List[float]], 
     domain: str, 
     source_file: str,
-    sparse_vectors: Optional[List[models.SparseVector]] = None
+    sparse_vectors: Optional[List[models.SparseVector]] = None,
+    start_index: int = 0  # 追加
 ) -> List[models.PointStruct]:
     """
     Qdrantポイントを構築
@@ -732,7 +733,8 @@ def build_points_for_qdrant(
             "schema": "qa:v1",
         }
 
-        pid = abs(hash(f"{domain}-{source_file}-{i}")) & 0x7FFFFFFFFFFFFFFF
+        global_index = start_index + i
+        pid = abs(hash(f"{domain}-{source_file}-{global_index}")) & 0x7FFFFFFFFFFFFFFF
         
         # ベクトル構造の構築
         if sparse_vectors:
