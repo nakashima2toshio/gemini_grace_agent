@@ -24,6 +24,13 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="/OUTPUT/japanese_text_5per_chunked.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="/OUTPUT/preprocessed_cc_news_20251130_041450.csv">
           <value>
             <Attribute>

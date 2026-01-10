@@ -2,7 +2,7 @@
 """
 （1）「チャンク」テキストチャンキング処理（並列版） - output.csv
     　csv_to_chunks_text_para.py
-（2）「Q/Aペア」& Qdrant登
+（2）「Q/Aペア」& Qdrant登録
     　make_qa_register_qdrant.py　
     （make_qa.py + register_csv_to_qdrant.py）
 
@@ -57,10 +57,35 @@ from .utils import setup_logging, show_paragraphs, format_time, print_stats
 logger = logging.getLogger(__name__)
 
 
+def split_sentences(text: str) -> List[str]:
+    """
+    言語に依存しない文分割（英語・日本語両対応）
+    Args:
+        text: 分割対象のテキスト
+    Returns:
+        文のリスト
+    """
+    if not text:
+        return []
+
+    # 日本語の句点: 。．！？
+    # 英語の句点: .!? (後ろに空白+大文字が続く場合、または文末)
+    # 省略語（Dr., Mr., U.S.等）を考慮して、空白+大文字の後続を条件に追加
+    pattern = r'(?<=[。．！？])|(?<=[.!?])(?=\s+[A-Z])|(?<=[.!?])(?=\s*$)'
+
+    sentences = re.split(pattern, text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    # 分割できなかった場合は元のテキストを返す
+    if not sentences:
+        return [text]
+
+    return sentences
+
+
 class LargeTextProcessorPara:
     """
     並列処理対応の大規模テキストプロセッサ
-
     Features:
         - 非同期・並列API呼び出し
         - 動的並列数調整
@@ -404,8 +429,7 @@ async def chunk_overlap_para(
 
         # オーバーラップ処理: 前のチャンクの最後の1文を追加
         prev_text = paragraphs[i - 1]
-        sentences = re.split(r'(?<=[。．！!？?])', prev_text)  # ← 修正箇所
-        sentences = [s for s in sentences if s.strip()]
+        sentences = split_sentences(prev_text)  # ← 修正箇所: 新しい文分割関数を使用
 
         overlap_part = sentences[-1] if sentences else prev_text
         combined_text = overlap_part + current_text
