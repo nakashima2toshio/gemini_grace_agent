@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 qa_generation/structure.py - チャンク作成・統合モジュール
+これは、old_module --> chunking に移行（3段階を実装）
 """
 
 import logging

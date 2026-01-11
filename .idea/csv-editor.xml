@@ -17,6 +17,13 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="/OUTPUT/fineweb_edu_ja_5per_chunked.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="/OUTPUT/japanese_text_5per.csv">
           <value>
             <Attribute>
