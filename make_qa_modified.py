@@ -19,11 +19,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="make_qa.py - Q/Aペア自動生成システム (チャンクCSV対応)"
     )
-    
+
     # ================================================================
     # 入力ソース（排他的）
     # ================================================================
@@ -44,7 +45,7 @@ def main():
         type=str,
         help="事前作成されたチャンクCSVファイルのパス"
     )
-    
+
     # ================================================================
     # 共通パラメータ
     # ================================================================
@@ -71,7 +72,7 @@ def main():
         action="store_true",
         help="カバレージ分析を実行"
     )
-    
+
     # ================================================================
     # Q/A生成パラメータ
     # ================================================================
@@ -106,7 +107,7 @@ def main():
         default=400,
         help="統合後の最大トークン数"
     )
-    
+
     # ================================================================
     # Celery並列処理
     # ================================================================
@@ -121,7 +122,7 @@ def main():
         default=8,
         help="Celeryワーカー数"
     )
-    
+
     # ================================================================
     # チャンク作成パラメータ（--input-chunksの場合は無視される）
     # ================================================================
@@ -161,12 +162,12 @@ def main():
     # ================================================================
     if args.input_chunks:
         logger.info("")
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info("モード: チャンクCSV読み込み")
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info(f"チャンクCSV: {args.input_chunks}")
         logger.info("注意: チャンク作成パラメータ(--overlap-tokens等)は無視されます")
-        logger.info("="*60)
+        logger.info("=" * 60)
 
     try:
         # ================================================================
@@ -197,25 +198,26 @@ def main():
             use_similarity=args.use_similarity,
             similarity_threshold=args.similarity_threshold
         )
-        
+
         # ================================================================
         # 結果表示
         # ================================================================
         logger.info("")
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info("✅ Make QA 完了")
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info(f"サマリーファイル: {result['saved_files']['summary']}")
         logger.info(f"生成Q/A数: {result['qa_count']}")
         if args.analyze_coverage:
             logger.info(f"カバレージ率: {result['coverage_results'].get('coverage_rate', 0):.1%}")
-        logger.info("="*60)
+        logger.info("=" * 60)
 
     except Exception as e:
         logger.error(f"実行中にエラーが発生しました: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

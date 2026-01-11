@@ -43,7 +43,7 @@ def normalize_source_filename(filename: str) -> str:
     return normalized
 
 
-def run_registration(csv_path: str, collection_name: str, recreate: bool, 
+def run_registration(csv_path: str, collection_name: str, recreate: bool,
                      batch_size: int, provider: str):
     """
     Qdrant登録ロジックの実行
@@ -230,7 +230,7 @@ def main():
         # ✅ チャンクCSVが指定された場合
         if args.input_chunks:
             logger.info(f"📁 チャンクCSVを使用: {args.input_chunks}")
-            
+
             # パイプライン初期化
             pipeline = QAPipeline(
                 input_chunks=args.input_chunks,  # ✅ 新規
@@ -246,7 +246,7 @@ def main():
                 merge_chunks=args.merge_chunks,
                 analyze_coverage=True
             )
-            
+
             generated_csv = result['saved_files'].get('qa_csv')
             if not generated_csv or not os.path.exists(generated_csv):
                 logger.error("Q/A生成フェーズでCSVファイルが作成されませんでした。")
@@ -254,7 +254,7 @@ def main():
 
             qa_count = result['qa_count']
             logger.info(f"✅ Q/A生成完了: {qa_count} ペア")
-        
+
         # input-csvが指定された場合（既存ロジック）
         elif args.input_csv:
             if not os.path.exists(args.input_csv):
@@ -262,7 +262,7 @@ def main():
                 sys.exit(1)
 
             logger.info(f"📁 既存のCSVファイルを使用: {args.input_csv}")
-            
+
             try:
                 df_check = pd.read_csv(args.input_csv)
                 logger.info(f"✅ CSVファイル確認: {len(df_check)} 行")
@@ -270,18 +270,18 @@ def main():
             except Exception as e:
                 logger.error(f"CSVファイルの読み込みエラー: {e}")
                 sys.exit(1)
-            
+
             has_qa_columns = 'question' in df_check.columns and 'answer' in df_check.columns
             has_text_columns = 'text' in df_check.columns or 'Combined_Text' in df_check.columns
-            
+
             if has_qa_columns:
                 logger.info("✅ Q/Aカラムが存在します - Q/A生成をスキップして登録へ")
                 generated_csv = args.input_csv
                 qa_count = len(df_check)
-                
+
             elif has_text_columns:
                 logger.info("📝 テキストカラムのみ検出 - Q/A生成を実行します")
-                
+
                 pipeline = QAPipeline(
                     input_file=args.input_csv,
                     model=args.model,
@@ -298,7 +298,7 @@ def main():
                     use_similarity=args.use_similarity,
                     similarity_threshold=args.similarity_threshold
                 )
-                
+
                 generated_csv = result['saved_files'].get('qa_csv')
                 if not generated_csv or not os.path.exists(generated_csv):
                     logger.error("Q/A生成フェーズでCSVファイルが作成されませんでした。")
@@ -306,12 +306,12 @@ def main():
 
                 qa_count = result['qa_count']
                 logger.info(f"✅ Q/A生成完了: {qa_count} ペア")
-                
+
             else:
                 logger.error("❌ CSVファイルに必要なカラムが見つかりません")
                 logger.error("   必要なカラム: (question + answer) または (text または Combined_Text)")
                 sys.exit(1)
-        
+
         # datasetが指定された場合（既存ロジック）
         else:
             pipeline = QAPipeline(
