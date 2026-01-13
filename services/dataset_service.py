@@ -21,7 +21,7 @@ from typing import Dict, Any, Optional, Callable
 
 import pandas as pd
 
-from helper_text import clean_text  # helper_ragではなくhelper_textから直接インポート（循環参照回避）
+from helper.helper_text import clean_text  # helper_ragではなくhelper_textから直接インポート（循環参照回避）
 
 logger = logging.getLogger(__name__)
 

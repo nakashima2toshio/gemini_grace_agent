@@ -87,7 +87,6 @@ def load_qa_output_history() -> pd.DataFrame:
 def load_preprocessed_history() -> pd.DataFrame:
     """
     OUTPUT/フォルダから前処理済みCSVファイル一覧を取得
-
     Returns:
         ファイル情報のDataFrame
     """

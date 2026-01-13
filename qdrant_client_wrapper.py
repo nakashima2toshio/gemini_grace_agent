@@ -26,14 +26,14 @@ from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 
 # Gemini 3 Migration: Embedding抽象化レイヤー
-from helper_embedding import (
+from helper.helper_embedding import (
     create_embedding_client,
     get_embedding_dimensions,
     EmbeddingClient,
     DEFAULT_GEMINI_EMBEDDING_DIMS,
     DEFAULT_OPENAI_EMBEDDING_DIMS,
 )
-from helper_embedding_sparse import get_sparse_embedding_client
+from helper.helper_embedding_sparse import get_sparse_embedding_client
 
 # 共通モジュール
 try:

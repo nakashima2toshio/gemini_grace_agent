@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 import pandas as pd
-from helper_llm import create_llm_client
+from helper.helper_llm import create_llm_client
 
 # モデルからインポート
 from models import QAPair, QAPairsResponse

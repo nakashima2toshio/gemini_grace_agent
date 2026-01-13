@@ -24,7 +24,7 @@ from typing import Dict, List, Any, Optional, Tuple, Iterable
 
 import pandas as pd
 import tiktoken
-from helper_embedding import create_embedding_client, get_embedding_dimensions
+from helper.helper_embedding import create_embedding_client, get_embedding_dimensions
 from qdrant_client_wrapper import (
     embed_sparse_texts_unified, 
     create_or_recreate_collection
