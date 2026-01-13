@@ -31,7 +31,7 @@ from services.qdrant_service import (
 )
 # Wrapperから直接インポート (Sparse用)
 from qdrant_client_wrapper import embed_sparse_texts_unified
-from helper_embedding import get_embedding_dimensions, DEFAULT_EMBEDDING_PROVIDER
+from helper.helper_embedding import get_embedding_dimensions, DEFAULT_EMBEDDING_PROVIDER
 
 logger = logging.getLogger(__name__)
 

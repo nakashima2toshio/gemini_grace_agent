@@ -21,7 +21,7 @@ from helper_llm import (
     get_available_embedding_models,
     get_embedding_model_pricing,
 )
-from helper_rag import RAGConfig, TokenManager
+from helper.helper_rag import RAGConfig, TokenManager
 
 logger = logging.getLogger(__name__)
 
