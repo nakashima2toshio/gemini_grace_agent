@@ -9,6 +9,7 @@ Qdrantベクトルデータベースを使用した意味検索
 - コレクション検索
 - 埋め込みベクトル生成
 - AI応答生成
+- スコア詳細表示（Original + Rerank）
 """
 
 import warnings
@@ -25,7 +26,9 @@ from services.qdrant_service import (
     get_collection_embedding_params,
 )
 from services.file_service import load_source_qa_data
-from qdrant_client_wrapper import search_collection, embed_sparse_query_unified # Import search_collection and embed_sparse_query_unified
+from qdrant_client_wrapper import search_collection, \
+    embed_sparse_query_unified  # Import search_collection and embed_sparse_query_unified
+
 
 def show_qdrant_search_page():
     """画面5: Qdrant検索"""
@@ -51,18 +54,18 @@ def show_qdrant_search_page():
 
     # コレクションとCSVファイルの対応表を表示（動的取得）
     st.subheader("📊 コレクションとCSVファイルの対応")
-    
+
     # 動的マッピングの取得
     dynamic_mapping = get_dynamic_collection_mapping(client)
-    
+
     if dynamic_mapping:
         mapping_data = []
         for collection, csv_file in dynamic_mapping.items():
             mapping_data.append(
                 {
                     "コレクション名": collection,
-                    "CSVファイル": csv_file,
-                    "ファイルパス": f"qa_output/{csv_file}",
+                    "CSVファイル"   : csv_file,
+                    "ファイルパス"  : f"qa_output/{csv_file}",
                 }
             )
         mapping_df = pd.DataFrame(mapping_data)
@@ -97,12 +100,15 @@ def show_qdrant_search_page():
         topk = st.slider(
             "検索結果数（Top-K）", min_value=1, max_value=20, value=5, step=1
         )
-        
+
         # ハイブリッド検索の有効化トグル
         use_hybrid_search = st.checkbox("⚙️ ハイブリッド検索を有効にする (Sparse + Dense)", value=False)
 
         # デバッグモード
         debug_mode = st.checkbox("🐛 デバッグモード", value=False)
+
+        # スコア詳細表示モード
+        show_score_details = st.checkbox("📊 スコア詳細表示", value=True, help="Original/Rerankスコアを表示")
 
     # メインエリア
     # セッション状態の初期化
@@ -183,7 +189,8 @@ def show_qdrant_search_page():
                     # コレクション設定のデバッグ表示
                     col_info_debug = client.get_collection(collection)
                     st.markdown("**📋 コレクション設定 (Debug):**")
-                    st.json(col_info_debug.model_dump() if hasattr(col_info_debug, 'model_dump') else col_info_debug.dict())
+                    st.json(
+                        col_info_debug.model_dump() if hasattr(col_info_debug, 'model_dump') else col_info_debug.dict())
                 except Exception as e:
                     st.error(f"コレクション設定の取得に失敗: {e}")
 
@@ -202,26 +209,26 @@ def show_qdrant_search_page():
                         sparse_vector = embed_sparse_query_unified(query)
                         if debug_mode:
                             st.success("✅ Sparseベクトルを生成しました")
-                
+
                 # search_collection関数を呼び出し
-                hits_dict_list = search_collection( # search_collection returns List[Dict[str, Any]]
+                hits_dict_list = search_collection(  # search_collection returns List[Dict[str, Any]]
                     client=client,
                     collection_name=collection,
                     query_vector=qvec,
-                    sparse_vector=sparse_vector if use_hybrid_search else None, # ハイブリッド検索が有効な場合のみSparseベクトルを渡す
+                    sparse_vector=sparse_vector if use_hybrid_search else None,  # ハイブリッド検索が有効な場合のみSparseベクトルを渡す
                     limit=topk
                 )
-            
+
             # search_collectionの戻り値はDictのリストなので、QdrantのPointStructに変換 (UI表示のため)
-            class MockHit: # 既存のUI表示ロジックに合わせるため
+            class MockHit:  # 既存のUI表示ロジックに合わせるため
                 def __init__(self, hit_dict):
                     self.score = hit_dict.get("score", 0.0)
+                    self.original_score = hit_dict.get("original_score", 0.0)
+                    self.rerank_score = hit_dict.get("rerank_score", 0.0)
                     self.id = hit_dict.get("id")
                     self.payload = hit_dict.get("payload")
-            
-            hits = [MockHit(h) for h in hits_dict_list]
 
-            
+            hits = [MockHit(h) for h in hits_dict_list]
 
             # 検索結果を表示
             st.divider()
@@ -231,76 +238,170 @@ def show_qdrant_search_page():
                 st.warning("検索結果が見つかりませんでした")
                 return
 
-            # 結果をDataFrameに変換
-            rows = []
-            for h in hits:
-                row_data = {
-                    "スコア": f"{h.score:.4f}",
-                    "質問": h.payload.get("question", "N/A") if h.payload else "N/A",
-                    "回答": h.payload.get("answer", "N/A") if h.payload else "N/A",
-                    "ソース": h.payload.get("source", "N/A") if h.payload else "N/A",
-                }
-                rows.append(row_data)
+            # ===================================================================
+            # スコア分布の可視化（追加）
+            # ===================================================================
+            if show_score_details and hits:
+                with st.expander("📈 スコア分布", expanded=True):
+                    # スコアデータを準備
+                    score_data = []
+                    for i, h in enumerate(hits, 1):
+                        if h.original_score > 0:
+                            score_data.append({
+                                "Result"        : f"Result {i}",
+                                "Original Score": h.original_score,
+                                "Rerank Score"  : h.rerank_score,
+                            })
+                        else:
+                            score_data.append({
+                                "Result": f"Result {i}",
+                                "Score" : h.score,
+                            })
 
-            df_results = pd.DataFrame(rows)
-            st.dataframe(df_results, width='stretch', hide_index=True)
+                    df_scores = pd.DataFrame(score_data)
 
-            # 最高スコアの結果を詳細表示
-            if hits:
-                best_hit = hits[0]
-                st.divider()
-                st.subheader("🏆 最高スコアの結果")
+                    # 棒グラフで表示
+                    if "Original Score" in df_scores.columns:
+                        st.bar_chart(df_scores.set_index("Result")[["Original Score", "Rerank Score"]])
+                    else:
+                        st.bar_chart(df_scores.set_index("Result")["Score"])
 
-                col1, col2 = st.columns([1, 3])
-                with col1:
-                    st.metric("スコア", f"{best_hit.score:.4f}")
-                with col2:
-                    if best_hit.payload:
-                        source = best_hit.payload.get("source", "N/A")
-                        st.caption(f"ソース: {source}")
+            # ===================================================================
+            # 結果をカード形式で表示（改善版）
+            # ===================================================================
+            for i, h in enumerate(hits, 1):
+                # スコア情報の準備
+                score = h.score
+                original_score = h.original_score
+                rerank_score = h.rerank_score
 
-                if best_hit.payload:
-                    question = best_hit.payload.get("question", "")
-                    answer = best_hit.payload.get("answer", "")
+                # スコア表示テキストと色の決定
+                if original_score > 0 and show_score_details:
+                    # スコアの変化を計算
+                    diff = rerank_score - original_score
 
+                    # 変化の程度に応じてアイコンを選択
+                    if diff > 0.1:
+                        score_icon = "🟢"  # 大幅向上
+                        change_text = f"+{diff:.3f}"
+                    elif diff < -0.1:
+                        score_icon = "🔴"  # 大幅低下
+                        change_text = f"{diff:.3f}"
+                    else:
+                        score_icon = "🟡"  # 変化なし
+                        change_text = "変化なし"
+
+                    score_display = f"{score_icon} **Rerank: {rerank_score:.4f}** (Original: {original_score:.4f})"
+                    score_change = change_text
+                else:
+                    score_display = f"**Score: {score:.4f}**"
+                    score_change = None
+
+                # ペイロード情報
+                payload = h.payload or {}
+                question = payload.get("question", "N/A")
+                answer = payload.get("answer", "N/A")
+                source = payload.get("source", "N/A")
+
+                # カード表示
+                with st.container():
+                    st.markdown(f"### Result {i} - {score_display}")
+
+                    # メトリクス行
+                    if show_score_details:
+                        col_metrics = st.columns([1, 1, 1, 2])
+                        with col_metrics[0]:
+                            st.metric("表示スコア", f"{score:.3f}")
+                        with col_metrics[1]:
+                            if original_score > 0:
+                                st.metric("元のスコア", f"{original_score:.3f}")
+                        with col_metrics[2]:
+                            if score_change:
+                                st.metric("変化", score_change)
+                        with col_metrics[3]:
+                            st.caption(f"ソース: {source}")
+                    else:
+                        col_simple = st.columns([1, 3])
+                        with col_simple[0]:
+                            st.metric("スコア", f"{score:.3f}")
+                        with col_simple[1]:
+                            st.caption(f"ソース: {source}")
+
+                    # 質問と回答
                     st.markdown("**質問:**")
                     st.info(question)
 
                     st.markdown("**回答:**")
                     st.success(answer)
 
-                    # Geminiによる日本語応答生成
+                    # デバッグ情報（オプション）
+                    if debug_mode:
+                        with st.expander("🐛 デバッグ情報", expanded=False):
+                            st.json({
+                                "id"            : h.id,
+                                "score"         : score,
+                                "original_score": original_score,
+                                "rerank_score"  : rerank_score,
+                                "payload_keys"  : list(payload.keys()) if payload else []
+                            })
+
                     st.divider()
-                    st.subheader("🧠 AI応答（Gemini）")
 
-                    qa_prompt = (
-                        "以下の検索結果とユーザーの質問を踏まえて、日本語で簡潔かつ正確に回答してください。\n\n"
-                        f"ユーザーの質問:\n{query}\n\n"
-                        f"検索結果のスコア: {best_hit.score:.4f}\n"
-                        f"検索結果の質問: {question}\n"
-                        f"検索結果の回答: {answer}\n"
-                    )
+            # ===================================================================
+            # 最高スコアの結果でAI応答生成
+            # ===================================================================
+            if hits:
+                best_hit = hits[0]
+                st.divider()
+                st.subheader("🧠 AI応答（Gemini）")
 
-                    with st.expander("📝 プロンプト詳細", expanded=False):
-                        st.code(qa_prompt)
+                best_payload = best_hit.payload or {}
+                best_question = best_payload.get("question", "")
+                best_answer = best_payload.get("answer", "")
+                best_score = best_hit.score
 
-                    try:
-                        with st.spinner("Gemini AIが回答を生成中..."):
-                            llm_client = create_llm_client(provider="gemini")
-                            generated_answer = llm_client.generate_content(
-                                prompt=qa_prompt,
-                                model="gemini-2.0-flash"
-                            )
+                # スコア情報を含めたプロンプト
+                score_info = ""
+                if best_hit.original_score > 0:
+                    score_info = f"""
+検索スコア詳細:
+- 最終スコア (Rerank): {best_hit.rerank_score:.4f}
+- 元のスコア (Original): {best_hit.original_score:.4f}
+"""
+                else:
+                    score_info = f"検索スコア: {best_score:.4f}"
 
-                        if generated_answer and generated_answer.strip():
-                            st.markdown("**AI応答:**")
-                            st.write(generated_answer)
-                        else:
-                            st.info("応答テキストを取得できませんでした")
-                    except Exception as gen_err:
-                        st.error(f"AI応答生成に失敗しました: {str(gen_err)}")
-                        if debug_mode:
-                            st.exception(gen_err)
+                qa_prompt = f"""以下の検索結果とユーザーの質問を踏まえて、日本語で簡潔かつ正確に回答してください。
+
+ユーザーの質問:
+{query}
+
+{score_info}
+
+検索結果の質問: {best_question}
+検索結果の回答: {best_answer}
+"""
+
+                with st.expander("📝 プロンプト詳細", expanded=False):
+                    st.code(qa_prompt)
+
+                try:
+                    with st.spinner("Gemini AIが回答を生成中..."):
+                        llm_client = create_llm_client(provider="gemini")
+                        generated_answer = llm_client.generate_content(
+                            prompt=qa_prompt,
+                            model="gemini-2.0-flash"
+                        )
+
+                    if generated_answer and generated_answer.strip():
+                        st.markdown("**AI応答:**")
+                        st.write(generated_answer)
+                    else:
+                        st.info("応答テキストを取得できませんでした")
+                except Exception as gen_err:
+                    st.error(f"AI応答生成に失敗しました: {str(gen_err)}")
+                    if debug_mode:
+                        st.exception(gen_err)
 
         except Exception as e:
             st.error(f"❌ エラーが発生しました: {str(e)}")

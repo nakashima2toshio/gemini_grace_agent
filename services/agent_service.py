@@ -1,17 +1,27 @@
 # agent_services.py
 import os
+import uuid
 import google.generativeai as genai
 from google.generativeai import ChatSession, GenerativeModel
 from typing import Dict, List, Any, Optional, Union, Tuple, Generator
 import logging
-from qdrant_client import QdrantClient # Added QdrantClient import
+from qdrant_client import QdrantClient  # Added QdrantClient import
 
 # Configuration and Tools
 from config import AgentConfig, GeminiConfig
-from agent_tools import search_rag_knowledge_base, list_rag_collections, RAGToolError
+from agent_tools import (
+    search_rag_knowledge_base,
+    list_rag_collections,
+    RAGToolError,
+    search_rag_knowledge_base_cached  # 新戦略をインポート
+)
 from services.qdrant_service import get_all_collections
 from services.log_service import log_unanswered_question
 from regex_mecab import KeywordExtractor
+
+# キャッシュと並列検索をインポート
+from agent_cache import collection_cache
+from agent_parallel_search import parallel_search_engine
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +39,11 @@ SYSTEM_INSTRUCTION_TEMPLATE = """
 
 ### 1. ツールを使用する場合（検索が必要な場合）
 必ず以下の形式で思考を出力してから、ツールを呼び出してください。
-**Thought: [なぜ検索が必要か、どのコレクションを、どんなクエリで検索するか]**
+**Thought: [なぜ検索が必要か、どんなクエリで検索するか]**
 (この後にツール呼び出しが行われます)
-**重要: 検索クエリを作成する際は、提供された「重要キーワード」を必ず含めてください。**
+**重要: 
+- 検索クエリを作成する際は、提供された「重要キーワード」を必ず含めてください。
+- `collection_name` パラメータは絶対に指定しないでください。システムが自動的に全コレクションから最適なものを選択します。**
 
 ### 2. 最終回答を行う場合（検索が完了した、または検索不要な場合）
 必ず以下の形式で出力してください。
@@ -56,28 +68,29 @@ SYSTEM_INSTRUCTION_TEMPLATE = """
     *   **現在利用可能なコレクションは以下の通りです:**
         {available_collections}
 
-2.  **コレクション選択のヒント (言語と内容のマッチング)**:
-    *   質問の言語と内容に応じて、最適なコレクションを選択してください。
-    *   **`cc_news`**: **英語 (English)** のニュース記事。 **英語の質問にはまずこれを使用してください。検索クエリも英語のままにしてください。**
-    *   **`wikipedia_ja`**: 日本語 (Japanese) の百科事典。一般的な知識や定義。
-    *   **`livedoor`**: 日本語 (Japanese) のニュース・ブログ。**日本のニュース、エンタメ、映画などの話題にはまずこれを使用してください。**
-    *   **`japanese_text`**: 日本語 (Japanese) のWebテキスト。**他の日本語コレクションで結果が出ない場合の予備として使用してください。**
+2.  **スマート検索システム（自動コレクション選択）**:
+    *   **重要: `search_rag_knowledge_base` ツールを呼び出す際、`collection_name` パラメータは絶対に指定しないでください。**
+    *   システムが自動的に以下の戦略で最適なコレクションを選択します：
+        *   **キャッシュ優先**: 前回成功したコレクションを優先的に検索
+        *   **並列検索**: キャッシュミス時は全コレクションを同時並列検索
+        *   **スコアベース選択**: 最もスコアが高い結果を自動的に返す
+    *   あなたは `query` パラメータのみを指定してください。例: `search_rag_knowledge_base(query="カリン・フォン・アロルディンゲン")`
+    *   
+    *   **参考: 利用可能なコレクション（自動選択されます）**
+        *   `cc_news`: 英語のニュース記事
+        *   `wikipedia_ja`: 日本語の百科事典
+        *   `livedoor`: 日本語のニュース・ブログ
+        *   `japanese_text`: 日本語のWebテキスト
+        *   `qa_pairs_custom_upload`, `custom_upload`: ユーザーアップロードの専門Q&A
 
-3.  **再試行戦略 (Multi-turn Strategy)**:
-    *   **Step 1 (初回検索):** 質問内容に最も適したコレクションを選びます。(英語なら `cc_news`、日本のニュース・エンタメなら `livedoor`、一般知識なら `wikipedia`)
-    *   **Step 2 (結果の評価):** もし検索結果が `[[NO_RAG_RESULT]]` (結果なし) だった場合、**すぐに諦めずに以下の戦略をとってください。**
-        *   **コレクション変更:** 別のコレクションを試してください。例えば `livedoor` で見つからなければ `wikipedia_ja` を、それでもなければ `japanese_text` を検索してください。
-        *   **クエリ変更:** キーワードを少し広げる、または同義語に変えて再検索する。英語コレクションには英語で、日本語コレクションには日本語で検索するよう注意してください。
-    *   **Step 3 (諦め):** 複数のコレクションを試行しても情報が見つからない場合のみ、「情報が見つかりませんでした」と回答してください。
-
-4.  **一般的な会話**:
+3.  **一般的な会話**:
     *   挨拶、雑談、単純な計算など、専門知識が不要な場合は、ツールを使わずに `Answer:` で直接回答してください。
 
-5.  **正直さと不足情報の処理 (Critical)**:
+4.  **正直さと不足情報の処理 (Critical)**:
     *   ツール検索の結果、情報が得られなかった場合は、**絶対に**あなたの事前学習知識で捏造してはいけません。
     *   「提供された社内ナレッジには関連情報がありませんでした」と正直に伝えてください。
 
-6.  **回答のスタイル**:
+5.  **回答のスタイル**:
     *   丁寧な日本語（です・ます調）で回答してください。
     *   検索結果に基づく回答の場合、「社内ナレッジによると...」や「ソース [ファイル名] によると...」と出典を明示してください。
 """
@@ -104,46 +117,50 @@ Final Answer: [最終的な回答]
 
 TOOLS_MAP: Dict[str, Any] = {
     'search_rag_knowledge_base': search_rag_knowledge_base,
-    'list_rag_collections': list_rag_collections
+    'list_rag_collections'     : list_rag_collections
 }
+
 
 # -----------------------------------------------------------------------------
 # ReActAgent Class
 # -----------------------------------------------------------------------------
 
 class ReActAgent:
-    def __init__(self, selected_collections: List[str], model_name: str):
+    def __init__(self, selected_collections: List[str], model_name: str, session_id: Optional[str] = None):
         self.selected_collections = selected_collections
         self.model_name = model_name
+        self.session_id = session_id or str(uuid.uuid4())  # セッションIDを生成または使用
         self.chat_session = self._setup_session()
-        self.thought_log: List[str] = [] # Initialize thought_log here
+        self.thought_log: List[str] = []  # Initialize thought_log here
         # キーワード抽出器の初期化
         try:
             self.keyword_extractor = KeywordExtractor(prefer_mecab=True)
-            logger.info("KeywordExtractor initialized successfully.")
+            logger.info(f"KeywordExtractor initialized successfully. Session: {self.session_id}")
         except Exception as e:
             logger.error(f"Failed to initialize KeywordExtractor: {e}")
             self.keyword_extractor = None
+
+        logger.info(f"ReActAgent initialized with session_id: {self.session_id}")
 
     def _setup_session(self) -> ChatSession:
         """Geminiエージェントのセットアップ"""
         api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not api_key:
             raise ValueError("API Key missing: GEMINI_API_KEY or GOOGLE_API_KEY not set.")
-        
+
         genai.configure(api_key=api_key)
-        
+
         tools_list = [search_rag_knowledge_base, list_rag_collections]
-        
+
         collections_str = ", ".join(self.selected_collections) if self.selected_collections else "(コレクションが見つかりません)"
         system_instruction = SYSTEM_INSTRUCTION_TEMPLATE.format(available_collections=collections_str)
-        
+
         model = genai.GenerativeModel(
             model_name=self.model_name,
             tools=tools_list,
             system_instruction=system_instruction
         )
-        
+
         chat = model.start_chat(enable_automatic_function_calling=False)
         return chat
 
@@ -152,21 +169,21 @@ class ReActAgent:
         ReAct → Reflection の順にエージェントのターンを実行し、
         進捗状況をイベントとしてyieldするジェネレータ。
         """
-        self.thought_log = [] # Clear log for new turn
-        
+        self.thought_log = []  # Clear log for new turn
+
         # --- Phase 1: ReAct Loop ---
         yield {"type": "log", "content": "🤖 **ReAct Phase Start**"}
         draft_answer: Optional[str] = None
         for event in self._execute_react_loop(user_input):
             yield event
-            if event["type"] == "final_text": # This event carries the draft answer from ReAct
+            if event["type"] == "final_text":  # This event carries the draft answer from ReAct
                 draft_answer = event["content"]
-        
+
         # --- Phase 2: Reflection ---
         if draft_answer:
             yield {"type": "log", "content": "🔄 **Reflection Phase (推敲)**"}
             final_answer_after_reflection = yield from self._execute_reflection_phase(draft_answer)
-            draft_answer = final_answer_after_reflection # Update draft with reflected answer
+            draft_answer = final_answer_after_reflection  # Update draft with reflected answer
 
         yield {"type": "final_answer", "content": self._format_final_answer(draft_answer)}
 
@@ -192,7 +209,7 @@ class ReActAgent:
         max_turns = 10
         turn_count = 0
         final_text_from_react = ""
-        
+
         while turn_count < max_turns:
             turn_count += 1
             function_call_found = False
@@ -207,21 +224,29 @@ class ReActAgent:
                         current_turn_text_from_model = text
                     else:
                         current_turn_text_from_model = text
-                
+
                 if part.function_call:
                     function_call_found = True
                     fn = part.function_call
                     tool_name = fn.name
                     tool_args = dict(fn.args)
-                    
+
                     logger.info(f"Agent Tool Call: {tool_name}({tool_args})")
                     self.thought_log.append(f"🛠️ **Tool Call:** `{tool_name}`\nArgs: `{tool_args}`")
                     yield {"type": "tool_call", "name": tool_name, "args": tool_args}
-                    
+
                     tool_result = ""
                     try:
                         if tool_name in TOOLS_MAP:
-                            tool_result = TOOLS_MAP[tool_name](**tool_args) 
+                            # search_rag_knowledge_base の場合はキャッシュ版を使用
+                            if tool_name == 'search_rag_knowledge_base':
+                                tool_result = search_rag_knowledge_base_cached(
+                                    query=tool_args.get('query', ''),
+                                    session_id=self.session_id,
+                                    collection_name=tool_args.get('collection_name')
+                                )
+                            else:
+                                tool_result = TOOLS_MAP[tool_name](**tool_args)
                         else:
                             tool_result = f"Error: Tool '{tool_name}' not found."
                     except RAGToolError as e:
@@ -231,11 +256,12 @@ class ReActAgent:
                         tool_result = f"予期せぬエラー: {str(e)}"
                         logger.error(f"Unexpected error during tool '{tool_name}': {e}", exc_info=True)
 
-                    log_tool_result = str(tool_result)[:500] + "..." if len(str(tool_result)) > 500 else str(tool_result)
+                    log_tool_result = str(tool_result)[:500] + "..." if len(str(tool_result)) > 500 else str(
+                        tool_result)
                     self.thought_log.append(f"📝 **Tool Result:**\n{log_tool_result}")
                     yield {"type": "tool_result", "content": log_tool_result}
                     logger.info(f"Tool Result: {log_tool_result}")
-                    
+
                     if isinstance(tool_result, str) and tool_result.startswith("[[NO_RAG_RESULT"):
                         reason = "NO_RESULT"
                         if "LOW_SCORE" in tool_result:
@@ -251,20 +277,20 @@ class ReActAgent:
                     current_response_obj = self.chat_session.send_message(
                         [genai.protos.Part(
                             function_response={
-                                "name": tool_name,
+                                "name"    : tool_name,
                                 "response": {'result': tool_result}
                             }
                         )]
                     )
-                    break 
-            
+                    break
+
             if not function_call_found:
                 # ツール呼び出しがない場合、現在のテキストを回答案とする
                 # 明示的な "Answer:" タグがなくても、最後のテキスト出力を採用する (Fallback)
                 final_text_from_react = current_turn_text_from_model
                 break
-        
-        yield {"type": "final_text", "content": final_text_from_react} # Yield the draft answer from ReAct
+
+        yield {"type": "final_text", "content": final_text_from_react}  # Yield the draft answer from ReAct
 
     def _execute_reflection_phase(self, draft_answer: str) -> Generator[Dict[str, Any], None, str]:
         """
@@ -274,16 +300,16 @@ class ReActAgent:
         final_response_text = draft_answer
         try:
             reflection_msg = f"{REFLECTION_INSTRUCTION}\n\n**あなたの回答案:**\n{draft_answer}"
-            
+
             # Reflectionフェーズではツールを使用させないため、tools設定を空にするか
             # テキスト生成のみを強制する設定が必要だが、ChatSessionの途中での設定変更は複雑。
             # そのため、応答からFunctionCallが含まれていないかチェックし、
             # 含まれていた場合はそのFunctionCallを無視してテキスト部分を探すか、ドラフトを返す。
-            
+
             reflection_response = self.chat_session.send_message(reflection_msg)
-            
+
             reflection_text = ""
-            
+
             # partsを確認してテキストを抽出
             if reflection_response.parts:
                 for part in reflection_response.parts:
@@ -291,12 +317,12 @@ class ReActAgent:
                         reflection_text += part.text
                     elif part.function_call:
                         logger.warning("Reflection phase generated a function call, ignoring.")
-            
+
             if not reflection_text:
                 # テキストが生成されなかった場合（FunctionCallのみなど）
                 logger.warning("Reflection phase did not generate text.")
                 return draft_answer
-            
+
             reflection_thought = ""
             reflection_answer = ""
 
@@ -312,7 +338,8 @@ class ReActAgent:
                 clean_thought = reflection_thought.replace("Thought:", "").strip()
                 self.thought_log.append(f"🤔 **Reflection Thought:**\n{clean_thought}")
                 logger.info(f"Reflection Thought: {clean_thought}")
-                yield {"type": "log", "content": f"🤔 **Reflection Thought:**\n{clean_thought}"} # Yield reflection thought
+                yield {"type"   : "log",
+                       "content": f"🤔 **Reflection Thought:**\n{clean_thought}"}  # Yield reflection thought
 
             if reflection_answer:
                 final_response_text = reflection_answer
@@ -321,9 +348,9 @@ class ReActAgent:
         except Exception as e:
             logger.error(f"Error during reflection phase: {e}")
             self.thought_log.append(f"⚠️ **Reflection Error:** {str(e)}")
-            yield {"type": "log", "content": f"⚠️ **Reflection Error:** {str(e)}"} # Yield reflection error
+            yield {"type": "log", "content": f"⚠️ **Reflection Error:** {str(e)}"}  # Yield reflection error
             final_response_text = draft_answer
-        
+
         return final_response_text
 
     def _format_final_answer(self, raw_answer: str) -> str:
@@ -338,6 +365,7 @@ class ReActAgent:
         elif raw_answer.startswith("考え:"):
             return raw_answer.replace("考え:", "").strip()
         return raw_answer
+
 
 # Helper function (Moved from agent_chat_page.py)
 def get_available_collections_from_qdrant_helper() -> List[str]:

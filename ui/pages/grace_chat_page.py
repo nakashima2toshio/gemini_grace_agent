@@ -117,7 +117,8 @@ def render_qa_reference():
                         df_preview = pd.DataFrame(data_list)
                         st.dataframe(
                             df_preview,
-                            use_container_width=True,
+                            # use_container_width=True,
+                            width='stretch',
                             hide_index=True,
                             column_config={
                                 "Question": st.column_config.TextColumn("質問 (Question)", width="medium"),

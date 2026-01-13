@@ -4,6 +4,12 @@
 make_qa_register_qdrant.py - Q/A生成からQdrant登録までを完結する統合ツール：
 make_qa.py + register_csv_to_qdrant.py の両方の処理。
 
+python qa_qdrant/make_qa_register_qdrant.py --input-csv OUTPUT/cc_news_5per_chunked.csv --collection cc_news_5per --use-celery --celery-workers 16 --recreate
+python qa_qdrant.mmake_qa_register_qdrant.py --input-csv OUTPUT/fineweb_edu_ja_5per_chunked.csv --collection fineweb_edu_ja_5per --use-celery --celery-workers 16 --recreate
+python qa_qdrant.mmake_qa_register_qdrant.py --input-csv OUTPUT/japanese_text_5per_chunked.csv --collection japanese_text_5per --use-celery --celery-workers 16 --recreate
+python qa_qdrant.mmake_qa_register_qdrant.py --input-csv OUTPUT/livedoor_5per_chunked.csv --collection livedoor_5per --use-celery --celery-workers 16 --recreate
+python qa_qdrant.mmake_qa_register_qdrant.py --input-csv OUTPUT/fineweb_edu_ja_5per_chunked.csv--collection cc_news_5per --use-celery --celery-workers 16 --recreate
+
 使用方法:
 1. 事前定義されたデータセットから生成 & 登録:
 python make_qa_register_qdrant.py \
@@ -12,6 +18,7 @@ python make_qa_register_qdrant.py \
  --use-celery \
  --celery-workers 16 \
  --recreate
+
 
 2. テキストCSVファイルからQ/A生成 & 登録（NEW!）:
 python make_qa_register_qdrant.py \
@@ -77,6 +84,9 @@ python make_qa_register_qdrant.py \
 
 import sys
 import os
+# 🔧 プロジェクトルートをPythonパスに追加
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import argparse
 import logging
 import re

@@ -12,7 +12,7 @@ import logging
 import streamlit as st
 import pandas as pd
 from typing import Dict, List, Any, Optional, Union, Tuple
-from qdrant_client import QdrantClient # Added QdrantClient import
+from qdrant_client import QdrantClient  # Added QdrantClient import
 
 # Configuration and Tools
 from config import AgentConfig, GeminiConfig
@@ -20,10 +20,10 @@ from services.agent_service import ReActAgent, get_available_collections_from_qd
 
 logger = logging.getLogger(__name__)
 
+
 # -----------------------------------------------------------------------------
 # 定数・設定
 # -----------------------------------------------------------------------------
-
 
 
 # ツールのマッピング
@@ -32,11 +32,6 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # ヘルパー関数
 # -----------------------------------------------------------------------------
-
-
-
-
-
 
 
 # -----------------------------------------------------------------------------
@@ -52,15 +47,15 @@ def show_agent_chat_page():
     # -------------------------------------------------------------------------
     with st.expander("📄 元ドキュメントの表示", expanded=False):
         st.markdown("ダウンロードしたドキュメントの選択：")
-        
+
         output_dir = "OUTPUT"
         target_patterns = {
-            "cc_news": "cc_news*.txt",
+            "cc_news"      : "cc_news*.txt",
             "japanese_text": "japanese_text*.txt",
-            "livedoor": "livedoor*.txt",
-            "wikipedia_ja": "wikipedia_ja*.txt"
+            "livedoor"     : "livedoor*.txt",
+            "wikipedia_ja" : "wikipedia_ja*.txt"
         }
-        
+
         file_options = {}
         if os.path.exists(output_dir):
             import glob
@@ -70,14 +65,14 @@ def show_agent_chat_page():
                     # 更新日時順にソートして最新を取得
                     latest_file = max(files, key=os.path.getctime)
                     file_options[label] = latest_file
-        
+
         if file_options:
             selected_doc_label = st.selectbox(
-                "ドキュメントを選択:", 
+                "ドキュメントを選択:",
                 options=list(file_options.keys()),
                 key="original_doc_selector"
             )
-            
+
             if selected_doc_label:
                 file_path = file_options[selected_doc_label]
                 st.caption(f"参照ファイル: {file_path}")
@@ -97,27 +92,29 @@ def show_agent_chat_page():
     # -------------------------------------------------------------------------
     # 入力クエリの参考用 Q&A表示エリア (Added)
     # -------------------------------------------------------------------------
-    with st.expander("📚 登録済みQ&Aの参照 (生成AI：Geminiが元ドキュメントの意味を解析しドキュメント内の重要箇所に基づいて「質問」と「回答」のペアを自動抽出しRAGシステムで利用可能なCSV形式のナレッジデータとして生成）入力クエリのヒント", expanded=False):
+    with st.expander(
+            "📚 登録済みQ&Aの参照 (生成AI：Geminiが元ドキュメントの意味を解析しドキュメント内の重要箇所に基づいて「質問」と「回答」のペアを自動抽出しRAGシステムで利用可能なCSV形式のナレッジデータとして生成）入力クエリのヒント",
+            expanded=False):
         st.markdown("登録されているコレクションから、質問と回答のサンプルを100件表示します。質問の参考にしてください。")
-        
+
         # プレビュー用のコレクション取得
         preview_collections = get_available_collections_from_qdrant_helper()
-        
+
         if preview_collections:
             col1, col2 = st.columns([1, 3])
             with col1:
                 target_collection = st.selectbox(
-                    "コレクションを選択:", 
+                    "コレクションを選択:",
                     preview_collections,
                     index=0,
                     key="preview_collection_selector"
                 )
-            
+
             if target_collection:
                 try:
                     # Qdrantクライアント接続
                     client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
-                    
+
                     # 上位100件を取得
                     points, _ = client.scroll(
                         collection_name=target_collection,
@@ -125,16 +122,16 @@ def show_agent_chat_page():
                         with_payload=True,
                         with_vectors=False
                     )
-                    
+
                     if points:
                         data_list = []
                         for point in points:
                             payload = point.payload or {}
                             data_list.append({
                                 "Question": payload.get("question", "N/A"),
-                                "Answer": payload.get("answer", "N/A")
+                                "Answer"  : payload.get("answer", "N/A")
                             })
-                        
+
                         df_preview = pd.DataFrame(data_list)
                         st.dataframe(
                             df_preview,
@@ -142,12 +139,12 @@ def show_agent_chat_page():
                             hide_index=True,
                             column_config={
                                 "Question": st.column_config.TextColumn("質問 (Question)", width="medium"),
-                                "Answer": st.column_config.TextColumn("回答 (Answer)", width="large"),
+                                "Answer"  : st.column_config.TextColumn("回答 (Answer)", width="large"),
                             }
                         )
                     else:
                         st.info(f"コレクション '{target_collection}' にデータが見つかりませんでした。")
-                        
+
                 except Exception as e:
                     st.error(f"データ取得エラー: {e}")
         else:
@@ -156,30 +153,30 @@ def show_agent_chat_page():
     # 1. サイドバー設定
     with st.sidebar:
         st.header("⚙️ エージェント設定")
-        
+
         # モデル選択の追加
         selected_model = st.selectbox(
             "使用モデル (Model)",
             options=GeminiConfig.AVAILABLE_MODELS,
-            index=GeminiConfig.AVAILABLE_MODELS.index(AgentConfig.MODEL_NAME) 
-                  if AgentConfig.MODEL_NAME in GeminiConfig.AVAILABLE_MODELS else 0
+            index=GeminiConfig.AVAILABLE_MODELS.index(AgentConfig.MODEL_NAME)
+            if AgentConfig.MODEL_NAME in GeminiConfig.AVAILABLE_MODELS else 0
         )
-        
+
         # コレクション一覧の取得
         all_collections = get_available_collections_from_qdrant_helper()
-        
+
         if not all_collections:
             st.warning("利用可能なコレクションが見つかりません。Qdrantサーバーを確認してください。")
             all_collections = ["(None)"]
-        
+
         # 検索対象コレクションの選択（マルチセレクトに変更）
         selected_collections = st.multiselect(
             "検索対象コレクション (Target Collections)",
             options=all_collections,
-            default=all_collections if all_collections != ["(None)"] else [], # デフォルトは全て選択
+            default=all_collections if all_collections != ["(None)"] else [],  # デフォルトは全て選択
             help="エージェントが検索ツールを使用する際に、候補として提示されるコレクションです。"
         )
-        
+
         if st.button("🗑️ 会話履歴をクリア"):
             st.session_state.chat_history = []
             st.session_state.chat_session = None
@@ -191,15 +188,44 @@ def show_agent_chat_page():
                 del st.session_state["current_model"]
             st.rerun()
 
+        # キャッシュリセットボタン
+        if st.button("🔄 キャッシュをリセット"):
+            from agent_cache import collection_cache
+            if "agent_session_id" in st.session_state:
+                collection_cache.clear(st.session_state.agent_session_id)
+                st.toast("✅ キャッシュをクリアしました")
+
+        # キャッシュ統計表示
+        with st.expander("📊 キャッシュ統計", expanded=False):
+            from agent_cache import collection_cache
+            if "agent_session_id" in st.session_state:
+                stats = collection_cache.get_stats(st.session_state.agent_session_id)
+                if stats.get("cached"):
+                    st.metric("キャッシュ状態", "🟢 ヒット")
+                    st.metric("コレクション", stats.get("collection", "N/A"))
+                    st.metric("前回スコア", f"{stats.get('last_score', 0):.3f}")
+                    st.metric("ヒット回数", stats.get("hit_count", 0))
+                    st.metric("経過時間", f"{stats.get('age_seconds', 0):.1f}秒")
+                else:
+                    st.metric("キャッシュ状態", "⚪ なし")
+            else:
+                st.info("セッションIDが見つかりません")
+
     # 2. セッション状態の初期化と更新チェック
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
-    
+
+    # エージェント用のセッションIDを初期化
+    if "agent_session_id" not in st.session_state:
+        import uuid
+        st.session_state.agent_session_id = str(uuid.uuid4())
+        logger.info(f"New agent session ID created: {st.session_state.agent_session_id}")
+
     # 前回のコレクション選択状態・モデルと比較
     current_collections_key = "current_collections"
     current_model_key = "current_model"
     should_reinitialize = False
-    
+
     # selected_collections はリストなのでソートして比較
     if current_collections_key not in st.session_state:
         should_reinitialize = True
@@ -207,7 +233,7 @@ def show_agent_chat_page():
         should_reinitialize = True
         # 設定が変わったので履歴クリアするか確認（今回はしないが、メッセージ出すなどあり）
         st.toast("検索対象コレクションが変更されたため、エージェントを再設定します。")
-        
+
     # モデルの変更チェック
     if current_model_key not in st.session_state:
         should_reinitialize = True
@@ -217,10 +243,14 @@ def show_agent_chat_page():
 
     if should_reinitialize or "agent" not in st.session_state or st.session_state.agent is None:
         try:
-            st.session_state.agent = ReActAgent(selected_collections, selected_model)
+            st.session_state.agent = ReActAgent(
+                selected_collections,
+                selected_model,
+                session_id=st.session_state.agent_session_id  # セッションIDを渡す
+            )
             st.session_state[current_collections_key] = selected_collections
             st.session_state[current_model_key] = selected_model
-            st.toast("エージェントの準備が完了しました。")
+            st.toast("エージェントの準備が完了しました（キャッシュ+並列検索）。")
         except Exception as e:
             st.error(f"エージェントの初期化に失敗しました: {e}")
             return
@@ -236,12 +266,12 @@ def show_agent_chat_page():
         st.session_state.chat_history.append({"role": "user", "content": prompt})
 
         with st.chat_message("assistant"):
-            st_expander_placeholder = st.empty() # Placeholder for the expander
-            
+            st_expander_placeholder = st.empty()  # Placeholder for the expander
+
             # Use a list to accumulate thought log for the expander
             current_thought_log_content: List[str] = []
-            
-            response_text_placeholder = st.empty() # Placeholder for the final response
+
+            response_text_placeholder = st.empty()  # Placeholder for the final response
 
             final_response_content = ""
 
@@ -255,7 +285,8 @@ def show_agent_chat_page():
                                 st.markdown(log_entry)
                                 st.divider()
                     elif event["type"] == "tool_call":
-                        current_thought_log_content.append(f"🛠️ **Tool Call:** `{event['name']}`\nArgs: `{event['args']}`")
+                        current_thought_log_content.append(
+                            f"🛠️ **Tool Call:** `{event['name']}`\nArgs: `{event['args']}`")
                         with st_expander_placeholder.expander("🤔 エージェントの思考プロセス", expanded=True):
                             with st.spinner(f"ツールを実行中: {event['name']}..."):
                                 for log_entry in current_thought_log_content:
@@ -269,13 +300,13 @@ def show_agent_chat_page():
                                 st.divider()
                     elif event["type"] == "final_answer":
                         final_response_content = event["content"]
-                        response_text_placeholder.markdown(final_response_content) # Display final answer
-                        
+                        response_text_placeholder.markdown(final_response_content)  # Display final answer
+
                 if final_response_content:
                     st.session_state.chat_history.append({"role": "assistant", "content": final_response_content})
                 else:
                     st.warning("エージェントからの応答がありませんでした。")
-                    
+
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
                 logger.error(f"Chat Error: {e}", exc_info=True)

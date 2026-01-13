@@ -1,4 +1,4 @@
-# csv-text_to_chunks_text_csv.py
+# csv_text_to_chunks_text_csv.py
 """
 主要機能:
 - chunks_all_async(): テキストからチャンクを作成（LLMベース、asyncio並列処理）
@@ -11,14 +11,14 @@
 Usage:
 python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/wikipedia_ja_20251130_041304.txt -o ./OUTPUT/wikipedia_ja_chunked.txt -w 10
 
-python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/cc_news_5per.csv -o ./OUTPUT/cc_news_5per_chunked.csv -w 4 -m gemini-2.0-flash
-python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/fineweb_edu_ja_5per.csv -o ./OUTPUT/fineweb_edu_ja_5per_chunked.csv -w 10
-python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/japanese_text_5per.csv -o ./OUTPUT/japanese_text_5per_chunked.csv -w 10
-python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/livedoor_5per.csv -o ./OUTPUT/livedoor_5per_chunked.csv -w 10
-python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/wikipedia_ja_5per.csv -o ./OUTPUT/wikipedia_ja_5per_chunked.csv -w 10
+python -m chunking.csv_text_to_chunks_text_csv -i ./OUTPUT/cc_news_5per.csv -o ./OUTPUT/cc_news_5per_chunked.csv -w 8 -b 1500 -m gemini-2.0-flash
+python -m chunking.csv_text_to_chunks_text_csv -i ./OUTPUT/fineweb_edu_ja_5per.csv -o ./OUTPUT/fineweb_edu_ja_5per_chunked.csv -w 8 -b 1500 -m gemini-2.0-flash
+python -m chunking.csv_text_to_chunks_text_csv -i ./OUTPUT/japanese_text_5per.csv -o ./OUTPUT/japanese_text_5per_chunked.csv -w 8 -b 1500 -m gemini-2.0-flash
+python -m chunking.csv_text_to_chunks_text_csv -i ./OUTPUT/livedoor_5per.csv -o ./OUTPUT/livedoor_5per_chunked.csv -w 8 -b 1500 -m gemini-2.0-flash
+python -m chunking.csv_text_to_chunks_text_csv -i ./OUTPUT/wikipedia_ja_5per.csv -o ./OUTPUT/wikipedia_ja_5per_chunked.csv -w 8 -b 1500 -m gemini-2.0-flash
 
 """
-# csv-text_to_chunks_text_csv.py - 改行削除版
+# csv_text_to_chunks_text_csv.py - 改行削除版
 """
 CSV出力時に改行を削除してクリーンなCSVを作成
 """
@@ -31,6 +31,7 @@ from typing import List, Dict, Optional
 import pandas as pd
 import tiktoken
 import re
+from tqdm.asyncio import tqdm as async_tqdm
 
 # 既存のインポート
 from chunking.async_api_client import AsyncAPIClient
@@ -354,7 +355,12 @@ async def _step1_hierarchical_split(
         )
         tasks.append(task)
 
-    results = await asyncio.gather(*tasks)
+    # results = await asyncio.gather(*tasks)
+    results = await async_tqdm.gather(
+        *tasks,
+        desc="Step1: 階層構造化",  # 各ステップで説明を変更
+        total=len(tasks)
+    )
 
     paragraphs = []
     for result_json in results:
@@ -397,7 +403,12 @@ async def _step2_semantic_chunking(
         )
         tasks.append(task)
 
-    results = await asyncio.gather(*tasks)
+    # results = await asyncio.gather(*tasks)
+    results = await async_tqdm.gather(
+        *tasks,
+        desc="Step2: 意味的分割",  # 各ステップで説明を変更
+        total=len(tasks)
+    )
 
     chunks = []
     for result_json in results:
@@ -444,7 +455,12 @@ async def _step3_continuity_check(
         )
         tasks.append(task)
 
-    results = await asyncio.gather(*tasks)
+    # results = await asyncio.gather(*tasks)
+    results = await async_tqdm.gather(
+        *tasks,
+        desc="Step2: 連続性チェック",  # 各ステップで説明を変更
+        total=len(tasks)
+    )
 
     final_chunks = [chunks[0]]
     for i, result_json in enumerate(results):

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # 🔧 プロジェクトルートの絶対パスを取得
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-print('========================== PROJECT_ROOT=', PROJECT_ROOT)
+
 
 def main():
     parser = argparse.ArgumentParser(

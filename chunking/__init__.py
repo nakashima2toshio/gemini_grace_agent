@@ -51,7 +51,7 @@ from .checkpoint_manager import CheckpointManager
 # ===================================================================
 # Main Processor (✅ v1.2.0 更新)
 # ===================================================================
-from .csv_to_chunks_text_para import (
+from .csv_text_to_chunks_text_csv import (
     chunks_all_async,        # ✅ 既存（シグネチャ拡張）
     load_text_from_csv,      # ✅ v1.2.0 新規追加
     save_chunks_as_csv,      # ✅ v1.2.0 新規追加

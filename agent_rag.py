@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Agent RAG Q&A生成・Qdrant管理 Streamlit アプリケーション
+sudo systemctl restart streamlit-app
 
 実行コマンド：
 streamlit run agent_rag.py --server.port 8501
