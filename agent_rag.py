@@ -80,8 +80,8 @@ def main():
             ],
             format_func=lambda x: {
                 "explanation": "📖 説明", # <-- Label for explanation
-                "agent_chat": "🤖 エージェント対話 (Legacy)",
-                "grace_chat": "🧠 GRACE エージェント (New)",
+                "agent_chat": "🤖 エージェント対話 (ReAct+Reflection)",
+                "grace_chat": "🧠 GRACE エージェント (Agent)",
                 "log_viewer": "📊 未回答ログ",
                 "rag_download": "📥 RAGデータダウンロード",
                 "qa_generation": "🤖 Q/A生成",
