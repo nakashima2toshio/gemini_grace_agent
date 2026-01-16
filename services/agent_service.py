@@ -187,14 +187,14 @@ class ReActAgent:
         # ツールリスト
         tools_list = [search_rag_knowledge_base, list_rag_collections]
 
-        # 新しいSDKでのチャット作成（設定は辞書形式）
+        # 新しいSDKでのチャット作成（最新仕様: types.GenerateContentConfig使用）
         logger.debug(f"Creating chat session with model: {self.model_name}")
         chat = self.client.chats.create(
             model=self.model_name,
-            config={
-                'system_instruction': system_instruction,
-                'tools'             : tools_list,
-            }
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                tools=tools_list
+            )
         )
         return chat
 
@@ -207,7 +207,9 @@ class ReActAgent:
         logger.info(f"Starting agent turn. Session: {self.session_id}, Input: {user_input[:100]}...")
 
         # --- Phase 1: ReAct Loop ---
-        yield {"type": "log", "content": "🤖 **ReAct Phase Start**"}
+        yield {"type": "log", "content": """🤖 **ReAct Phase Start**
+📖 **説明**: エージェントが「思考→行動→観察」のサイクルで問題を解決します。
+   質問を分析し、必要に応じてツール（検索など）を使用して情報を収集します。"""}
         draft_answer: Optional[str] = None
         for event in self._execute_react_loop(user_input):
             yield event
@@ -216,7 +218,9 @@ class ReActAgent:
 
         # --- Phase 2: Reflection ---
         if draft_answer:
-            yield {"type": "log", "content": "🔄 **Reflection Phase (推敲)**"}
+            yield {"type": "log", "content": """🔄 **Reflection Phase (推敲)**
+📖 **説明**: エージェントが作成した回答案を客観的に評価・修正します。
+   正確性、適切性、スタイルをチェックして最終回答を作成します。"""}
             final_answer_after_reflection = yield from self._execute_reflection_phase(draft_answer)
             draft_answer = final_answer_after_reflection
 
@@ -235,7 +239,9 @@ class ReActAgent:
                     keywords_str = ", ".join(keywords)
                     augmented_input = f"""{user_input}\n\n【重要: 検索クエリ作成の指示】\n以下の抽出された重要キーワードを、必ず検索クエリに含めてください。\n重要キーワード: {keywords_str}"""
                     logger.info(f"Augmented input with keywords: {keywords_str}")
-                    yield {"type": "log", "content": f"🔑 **Extracted Keywords:** {keywords_str}"}
+                    yield {"type": "log", "content": f"""🔑 **Extracted Keywords:** {keywords_str}
+📖 **説明**: 質問から重要なキーワードを自動抽出しました。
+   これらのキーワードを使って、より正確な検索を行います。"""}
             except Exception as e:
                 logger.warning(f"Keyword extraction failed during turn: {e}")
 
@@ -319,8 +325,9 @@ class ReActAgent:
                                 )
 
                             # ツール結果を送信（新しいSDK形式）
+                            # tool_nameを明示的にstrにキャスト（型エラー回避）
                             function_response_part = types.Part.from_function_response(
-                                name=tool_name,
+                                name=str(tool_name),
                                 response={'result': tool_result}
                             )
 
@@ -329,8 +336,10 @@ class ReActAgent:
                                 parts=[function_response_part]
                             )
 
+                            # 最新SDK: Contentオブジェクトを直接渡す
+                            # 型チェッカーの警告を抑制（実行時は正常に動作）
                             current_response = self.chat.send_message(
-                                message=function_response_content
+                                message=function_response_content  # type: ignore[arg-type]
                             )
                             break
 
@@ -378,7 +387,11 @@ class ReActAgent:
                 clean_thought = reflection_thought.replace("Thought:", "").strip()
                 self.thought_log.append(f"🤔 **Reflection Thought:**\n{clean_thought}")
                 logger.info(f"Reflection Thought: {clean_thought}")
-                yield {"type": "log", "content": f"🤔 **Reflection Thought:**\n{clean_thought}"}
+                yield {"type": "log", "content": f"""🤔 **Reflection Thought:**
+📖 **説明**: エージェントの自己評価の思考プロセスです。
+   回答の品質を確認し、必要に応じて修正を行います。
+
+{clean_thought}"""}
 
             if reflection_answer:
                 final_response_text = reflection_answer

@@ -483,11 +483,11 @@ class AgentConfig:
     """エージェント設定"""
 
     # RAG検索設定
-    RAG_DEFAULT_COLLECTION: str = "qa_a02_qa_pairs_wikipedia_ja" # Default collection to search
-    RAG_AVAILABLE_COLLECTIONS: List[str] = [ # List of available collections
-        "qa_a02_qa_pairs_wikipedia_ja",
-        "qa_a02_qa_pairs_livedoor",
-        # Add other relevant collection names here
+    RAG_DEFAULT_COLLECTION: str = "wikipedia_ja_5per"  # Default collection to search
+    RAG_AVAILABLE_COLLECTIONS: List[str] = [  # List of available collections
+        "wikipedia_ja_5per",
+        "cc_news_5per",
+        "fineweb_edu_ja_5per",
     ]
     RAG_SEARCH_LIMIT: int = 3
     RAG_SCORE_THRESHOLD: float = 0.50  # 検索結果として採用する最小スコア (0.7 -> 0.5に緩和)
@@ -548,3 +548,4 @@ NO_TEMPERATURE_MODELS = ModelConfig.NO_TEMPERATURE_MODELS
 def supports_temperature(model: str) -> bool:
     """temperatureサポートチェック（後方互換性用）"""
     return ModelConfig.supports_temperature(model)
+

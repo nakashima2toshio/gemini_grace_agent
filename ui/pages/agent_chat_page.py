@@ -5,7 +5,7 @@
 agent_chat_page.py - ハイブリッド・ナレッジ・エージェント チャット画面
 ================================================================
 Gemini 2.0 Flash を使用した ReAct 型エージェントとの対話インターフェース。
-Qdrant 上のナレッジベース（コレクション）を動的に選択し、RAG 検索を行いながら回答します。
+Qdrant 上のナレッジベース(コレクション)を動的に選択し、RAG 検索を行いながら回答します。
 """
 
 import os
@@ -13,7 +13,7 @@ import logging
 import streamlit as st
 import pandas as pd
 from typing import Dict, List, Any, Optional, Union, Tuple
-from qdrant_client import QdrantClient  # Added QdrantClient import
+from qdrant_client import QdrantClient
 
 # Configuration and Tools
 from config import AgentConfig, GeminiConfig
@@ -27,68 +27,10 @@ def show_agent_chat_page():
     st.caption("Gemini 2.0 Flash + ReAct + Qdrant Hybrid RAG (Dense + Sparse)")
 
     # -------------------------------------------------------------------------
-    # 元ドキュメント表示エリア (Modified to support OUTPUT/*.csv)
+    # コレクションデータの表示エリア (Modified)
     # -------------------------------------------------------------------------
-    with st.expander("📄 元ドキュメントの表示", expanded=False):
-        st.markdown("OUTPUTディレクトリのCSVファイルを選択：")
-
-        output_dir = "OUTPUT"
-
-        file_options = {}
-        if os.path.exists(output_dir):
-            import glob
-
-            # OUTPUT/*.csv を全て取得
-            csv_files = glob.glob(os.path.join(output_dir, "*.csv"))
-            if csv_files:
-                # 更新日時順にソート（最新順）
-                csv_files.sort(key=os.path.getctime, reverse=True)
-
-                for file_path in csv_files:
-                    # ファイル名（拡張子なし）をラベルとして使用
-                    file_name = os.path.basename(file_path)
-                    label = os.path.splitext(file_name)[0]
-                    file_options[label] = file_path
-
-        if file_options:
-            selected_doc_label = st.selectbox(
-                "CSVファイルを選択:",
-                options=list(file_options.keys()),
-                key="original_doc_selector"
-            )
-
-            if selected_doc_label:
-                file_path = file_options[selected_doc_label]
-                st.caption(f"📁 参照ファイル: `{file_path}`")
-
-                try:
-                    # CSVファイルをDataFrameとして読み込み（先頭100行）
-                    df = pd.read_csv(file_path, nrows=100)
-
-                    # ファイル全体の行数を取得（効率的な方法）
-                    total_rows = sum(1 for _ in open(file_path, 'r', encoding='utf-8')) - 1  # ヘッダー除く
-
-                    st.caption(f"📊 表示: 先頭100行 / 全{total_rows:,}行 | カラム数: {len(df.columns)}")
-
-                    st.dataframe(
-                        df,
-                        width='stretch',
-                        hide_index=False,
-                        height=400
-                    )
-
-                except Exception as e:
-                    st.error(f"❌ 読み込みエラー: {e}")
-        else:
-            st.info("📂 OUTPUTディレクトリにCSVファイルが見つかりません。")
-
-    # -------------------------------------------------------------------------
-    # 入力クエリの参考用 Q&A表示エリア (Added)
-    # -------------------------------------------------------------------------
-    with st.expander(
-            "📚 登録済みQ&Aの参照 (生成AI：Geminiが元ドキュメントの意味を解析しドキュメント内の重要箇所に基づいて「質問」と「回答」のペアを自動抽出しRAGシステムで利用可能なCSV形式のナレッジデータとして生成）入力クエリのヒント",
-            expanded=False):
-        st.markdown("登録されているコレクションから、質問と回答のサンプルを100件表示します。質問の参考にしてください。")
+    with st.expander("📊 コレクションデータの表示", expanded=False):
+        st.markdown("登録されているコレクションから、質問と回答のデータを100件表示します。")
 
         # プレビュー用のコレクション取得
         preview_collections = get_available_collections_from_qdrant_helper()
@@ -108,8 +50,10 @@ def show_agent_chat_page():
                     # Qdrantクライアント接続
                     client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
 
-                    # 上位100件を取得
-                    points, _ = client.scroll(
+                    st.caption(f"📊 コレクション: **{target_collection}** から100件を表示")
+
+                    # Qdrantから直接データを取得（scrollを使用）
+                    points, next_page_offset = client.scroll(
                         collection_name=target_collection,
                         limit=100,
                         with_payload=True,
@@ -117,22 +61,37 @@ def show_agent_chat_page():
                     )
 
                     if points:
+                        # DataFrameに変換
                         data_list = []
                         for point in points:
                             payload = point.payload or {}
                             data_list.append({
+                                "ID"      : point.id,
                                 "Question": payload.get("question", "N/A"),
                                 "Answer"  : payload.get("answer", "N/A")
                             })
 
                         df_preview = pd.DataFrame(data_list)
+
+                        # コレクションの総ポイント数を取得
+                        try:
+                            col_info = client.get_collection(target_collection)
+                            total_points = col_info.points_count if hasattr(col_info, 'points_count') else "N/A"
+                        except:
+                            total_points = "N/A"
+
+                        st.caption(f"📈 表示: {len(data_list)} 件 / 総ポイント数: {total_points}")
+
+                        # データフレーム表示（スクロール可能）
                         st.dataframe(
                             df_preview,
-                            width='stretch',  # use_container_width=True から変更（2025-12-31以降非推奨）
+                            width='stretch',
                             hide_index=True,
+                            height=600,  # スクロール可能な高さ
                             column_config={
+                                "ID"      : st.column_config.NumberColumn("ID", width="small"),
                                 "Question": st.column_config.TextColumn("質問 (Question)", width="medium"),
-                                "Answer"  : st.column_config.TextColumn("回答 (Answer)", width="large"),
+                                "Answer"  : st.column_config.TextColumn("回答 (Answer)", width="large")
                             }
                         )
                     else:
@@ -303,3 +262,4 @@ def show_agent_chat_page():
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
                 logger.error(f"Chat Error: {e}", exc_info=True)
+
