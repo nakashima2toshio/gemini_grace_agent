@@ -186,7 +186,8 @@ def show_rag_download_page():
     pink_message_html = """
     <div style="background-color:#FFC0CB; padding:10px; border-radius:5px; border:1px solid #FF69B4;">
         <p style="color:#8B0000; font-weight:bold; margin-bottom:0px;">
-            すでに、HuggingFaceから下記のファイルをダウンロードして配置、<br>
+            すでに、HuggingFaceから下記のファイルをダウンロードして<br>
+            OUTPUT/preprocessed_*.csvに配置しています。<br>
             Q/Aペアを作成済み、Qdrantにembeddingベクトルデータを登録済みです。<br>
             ・Wikipedia日本語版<br>
             ・日本語Webテキスト（CC100）<br>
@@ -240,7 +241,7 @@ def show_rag_download_page():
 
         # ローカルファイルの場合はファイルチェック
         if data_source == "local_file" and not uploaded_file:
-            st.error("ファイルを選択してください")
+            st.error("左ペインでローカル・ファイルを選択してください")
             st.stop()
 
         try:
