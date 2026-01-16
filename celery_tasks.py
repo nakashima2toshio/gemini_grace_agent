@@ -33,7 +33,7 @@ from qa_generation.generation import QAGenerator
 # =====================================================
 # Gemini 3 Migration: 抽象化レイヤー
 # =====================================================
-from helper_llm import create_llm_client
+from helper.helper_llm import create_llm_client
 
 # デフォルトプロバイダー（環境変数で設定可能）
 DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")  # "gemini" or "openai"

@@ -9,8 +9,8 @@ import logging
 from typing import List, Dict, Any, Optional
 import numpy as np
 import tiktoken
-from helper_llm import create_llm_client
-from helper_embedding import create_embedding_client, get_embedding_dimensions
+from helper.helper_llm import create_llm_client
+from helper.helper_embedding import create_embedding_client, get_embedding_dimensions
 
 logger = logging.getLogger(__name__)
 

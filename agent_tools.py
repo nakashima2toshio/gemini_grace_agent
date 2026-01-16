@@ -378,18 +378,46 @@ def search_rag_knowledge_base_structured(
         query_vector: List[float] = embed_query(query)
         if query_vector is None:
             raise EmbeddingError("クエリの埋め込み生成に失敗しました。")
-        sparse_vector = embed_sparse_query_unified(query)
+
+        # スパースベクトルの使用をオプショナルに
+        sparse_vector = None
+        try:
+            sparse_vector = embed_sparse_query_unified(query)
+            logger.debug(f"スパースベクトル取得成功: {collection_name}")
+        except Exception as e:
+            logger.debug(f"スパースベクトル取得スキップ ({collection_name}): {e}")
+            # スパースベクトルが利用できない場合は None のまま続行
 
         # 1. Retrieval (Broad Search)
         # Re-rankingの効果を高めるため、最終的に欲しい数より多く取得する
-        # Hybrid Search (RRF) を使用
-        candidates: List[Dict[str, Any]] = search_collection(
-            client=client,
-            collection_name=collection_name,
-            query_vector=query_vector,
-            sparse_vector=sparse_vector,
-            limit=20  # 候補を広げる
-        )
+        # Hybrid Search (RRF) を使用（スパースベクトルがある場合のみ）
+        candidates: List[Dict[str, Any]] = []  # 初期化
+        try:
+            candidates = search_collection(
+                client=client,
+                collection_name=collection_name,
+                query_vector=query_vector,
+                sparse_vector=sparse_vector,
+                limit=20  # 候補を広げる
+            )
+        except Exception as e:
+            # スパースベクトルエラーの場合、スパースベクトルなしで再試行
+            if "text-sparse" in str(e) or "sparse" in str(e).lower():
+                logger.warning(f"スパースベクトルエラー検出 ({collection_name}): スパースベクトルなしで再試行")
+                try:
+                    candidates = search_collection(
+                        client=client,
+                        collection_name=collection_name,
+                        query_vector=query_vector,
+                        sparse_vector=None,  # スパースベクトルなし
+                        limit=20
+                    )
+                except Exception as retry_error:
+                    logger.error(f"再試行も失敗 ({collection_name}): {retry_error}")
+                    candidates = []
+            else:
+                logger.error(f"検索エラー ({collection_name}): {e}")
+                candidates = []
 
         metrics.total_results = len(candidates) if candidates else 0
 

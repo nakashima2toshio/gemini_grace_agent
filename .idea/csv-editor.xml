@@ -66,27 +66,6 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="/qa_output/a02_qa_pairs_cc_news.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
-        <entry key="/qa_output/a02_qa_pairs_japanese_text.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
-        <entry key="/qa_output/a02_qa_pairs_livedoor.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
         <entry key="/qa_output/pipeline/qa_pairs_fineweb_edu_ja_20251230_232641.csv">
           <value>
             <Attribute>

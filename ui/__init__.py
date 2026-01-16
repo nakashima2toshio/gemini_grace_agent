@@ -32,6 +32,7 @@ __all__ = [
     "show_qdrant_registration_page",
     "show_qdrant_page",
     "show_qdrant_search_page",
+    "get_all_collections_simple",  # ← 追加
 ]
 
 

@@ -8,7 +8,7 @@ import logging
 import time
 import json
 from typing import List, Dict, Optional
-from helper_llm import LLMClient, create_llm_client
+from helper.helper_llm import LLMClient, create_llm_client
 from models import QAPairsResponse
 from config import DATASET_CONFIGS
 from qa_generation.structure import merge_small_chunks

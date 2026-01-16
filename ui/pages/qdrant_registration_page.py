@@ -116,8 +116,8 @@ def show_qdrant_registration_page():
         )
 
         include_answer = st.checkbox(
-            "answerを含める（推奨）", 
-            value=True, 
+            "answerを含める（推奨）",
+            value=True,
             help="埋め込み生成時に質問だけでなく回答も含めることで、検索精度が向上する場合があります"
         )
 
@@ -129,7 +129,7 @@ def show_qdrant_registration_page():
             step=100,
             help="テスト用に登録件数を制限する場合に使用します",
         )
-        
+
         use_hybrid_search = st.checkbox(
             "Hybrid Search (Sparse Vector) を有効にする",
             value=True,
@@ -173,14 +173,14 @@ def show_qdrant_registration_page():
     </div>
     """
     st.markdown(pink_message_html, unsafe_allow_html=True)
-    st.write("") # 1行空ける
+    st.write("")  # 1行空ける
 
     # 登録ボタン
     run_registration = st.button(
         "🚀 Qdrantに登録を実行",
         type="primary",
         width='stretch',
-        disabled=True, # not (qdrant_connected and is_valid_collection_name),
+        disabled=not (qdrant_connected and is_valid_collection_name),
     )
 
     # ログ表示エリア
@@ -210,13 +210,13 @@ def show_qdrant_registration_page():
             # ステップ2: コレクション作成
             with st.spinner("🗄️ コレクション準備中..."):
                 add_log(f"🗄️ コレクション準備: {collection_name}")
-                
+
                 # 次元数をプロバイダーから取得
                 vector_size = get_embedding_dimensions(DEFAULT_EMBEDDING_PROVIDER)
-                
+
                 create_or_recreate_collection_for_qdrant(
-                    client, 
-                    collection_name, 
+                    client,
+                    collection_name,
                     recreate_collection,
                     vector_size=vector_size,
                     use_sparse=use_hybrid_search
@@ -228,31 +228,31 @@ def show_qdrant_registration_page():
                 add_log("🔢 Dense埋め込み生成開始")
                 texts = build_inputs_for_embedding(df, include_answer)
                 vectors = embed_texts_for_qdrant(
-                    texts, model="gemini-embedding-001" # model引数は互換性のため残るが内部でprovider使用
+                    texts, model="gemini-embedding-001"  # model引数は互換性のため残るが内部でprovider使用
                 )
                 add_log(f"✅ {len(vectors)} 件のDense埋め込みを生成しました")
-            
+
             # ステップ3.5: Sparse埋め込み生成
             sparse_vectors = None
             if use_hybrid_search:
                 with st.spinner("🔠 Sparse埋め込み生成中 (FastEmbed)..."):
                     add_log("🔠 Sparse埋め込み生成開始 (FastEmbed)")
-                    
+
                     # プログレスバーの作成
                     progress_bar = st.progress(0, text="Sparse Embedding 生成中...")
-                    
+
                     def update_progress(current, total):
                         percent = int((current / total) * 100)
                         progress_bar.progress(percent, text=f"Sparse Embedding 生成中... ({current}/{total})")
-                    
+
                     try:
                         sparse_vectors = embed_sparse_texts_unified(
-                            texts, 
+                            texts,
                             progress_callback=update_progress
                         )
                     finally:
                         progress_bar.empty()
-                        
+
                     add_log(f"✅ {len(sparse_vectors)} 件のSparse埋め込みを生成しました")
 
             # ステップ4: ポイント構築
@@ -267,9 +267,9 @@ def show_qdrant_registration_page():
                     domain = "custom"
 
                 points = build_points_for_qdrant(
-                    df, 
-                    vectors, 
-                    domain, 
+                    df,
+                    vectors,
+                    domain,
                     selected_csv,
                     sparse_vectors=sparse_vectors
                 )

@@ -12,7 +12,7 @@ import pandas as pd
 from pathlib import Path
 
 from config import DATASET_CONFIGS
-from helper_llm import LLMClient
+from helper.helper_llm import LLMClient
 from qa_generation.config import LOCAL_DATASET_EXTENSIONS
 from qa_generation.structure import create_document_chunks, merge_small_chunks
 from qa_generation.generation import QAGenerator, generate_qa_dataset

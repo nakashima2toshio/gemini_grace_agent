@@ -11,6 +11,7 @@ Qdrantベクトルデータベースの操作を担当
 - コレクション管理（CRUD）
 - 埋め込み生成・登録
 - 検索機能
+
 """
 
 import os
@@ -26,7 +27,7 @@ import pandas as pd
 import tiktoken
 from helper.helper_embedding import create_embedding_client, get_embedding_dimensions
 from qdrant_client_wrapper import (
-    embed_sparse_texts_unified, 
+    embed_sparse_texts_unified,
     create_or_recreate_collection
 )
 from qdrant_client import QdrantClient
@@ -35,19 +36,18 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 
 logger = logging.getLogger(__name__)
 
-
 # ===================================================================
 # Qdrant設定
 # ===================================================================
 
 QDRANT_CONFIG = {
-    "name": "Qdrant",
-    "host": "localhost",
-    "port": 6333,
-    "icon": "🎯",
-    "url": "http://localhost:6333",
+    "name"                 : "Qdrant",
+    "host"                 : "localhost",
+    "port"                 : 6333,
+    "icon"                 : "🎯",
+    "url"                  : "http://localhost:6333",
     "health_check_endpoint": "/collections",
-    "docker_image": "qdrant/qdrant",
+    "docker_image"         : "qdrant/qdrant",
 }
 
 # コレクション固有の埋め込み設定 (Deprecated: Use get_collection_embedding_params instead)
@@ -59,7 +59,14 @@ COLLECTION_CSV_MAPPING = {}
 
 def map_collection_to_csv(collection_name: str, qa_output_dir: str = "qa_output") -> Optional[str]:
     """
-    コレクション名から対応するCSVファイル名を推測して返す
+    コレクション名から対応するCSVファイル名を取得
+
+    ✅ 変更点（命名規則依存廃止）:
+    - パターン2（'qa_' プレフィックス除外）を削除
+    - 完全一致のみをサポート
+    - より明確で予測可能な動作
+
+    ⚠️ 非推奨: この関数よりも、ペイロードの'source'フィールドを使用することを推奨
 
     Args:
         collection_name: コレクション名
@@ -68,28 +75,34 @@ def map_collection_to_csv(collection_name: str, qa_output_dir: str = "qa_output"
     Returns:
         ファイル名（パスなし）、見つからない場合はNone
     """
-    # パターン1: 完全一致 (qa_output/{collection_name}.csv)
+    # ✅ 完全一致のみをチェック
     exact_match = os.path.join(qa_output_dir, f"{collection_name}.csv")
     if os.path.exists(exact_match):
+        logger.debug(f"✅ CSVファイル発見: {exact_match}")
         return os.path.basename(exact_match)
 
-    # パターン2: 接頭辞 'qa_' を除外 (qa_{name} -> {name}.csv)
-    if collection_name.startswith("qa_"):
-        stripped_name = collection_name[3:]
-        stripped_match = os.path.join(qa_output_dir, f"{stripped_name}.csv")
-        if os.path.exists(stripped_match):
-            return os.path.basename(stripped_match)
+    logger.debug(f"⚠️ CSVファイル未発見: {exact_match}")
+
+    # ❌ パターン2を削除: 'qa_' 接頭辞除外ロジックを廃止
+    # 以前のコード:
+    # if collection_name.startswith("qa_"):
+    #     stripped_name = collection_name[3:]
+    #     ...
 
     return None
 
 
 def get_dynamic_collection_mapping(
-    client: QdrantClient, qa_output_dir: str = "qa_output"
+        client: QdrantClient, qa_output_dir: str = "qa_output"
 ) -> Dict[str, str]:
     """
     Qdrantのコレクション一覧とローカルのCSVファイルを動的にマッピング
-    
-    改善版: ペイロードの'source'フィールドを優先的に参照する
+
+    ✅ 改善点（命名規則依存廃止）:
+    1. ペイロードの'source'フィールドを優先（最も信頼性が高い）
+    2. フォールバックとして完全一致のみを使用
+    3. 命名規則への依存を完全廃止
+    4. 詳細なログ出力
 
     Args:
         client: QdrantClientインスタンス
@@ -99,15 +112,21 @@ def get_dynamic_collection_mapping(
         {コレクション名: CSVファイル名} の辞書
     """
     mapping = {}
+    unmapped_collections = []
+
     try:
-        # コレクション一覧取得
+        # ✅ Qdrantから全コレクション取得（フィルタリングなし）
         collections_resp = client.get_collections()
+        logger.info(f"📚 Qdrant全コレクション取得: {len(collections_resp.collections)}個")
+
         for collection in collections_resp.collections:
             col_name = collection.name
             csv_file = None
-            
-            # 方法1: ペイロードからソース情報を取得（確実）
+
+            # 方法1: ペイロードからソース情報を取得（最優先）
             try:
+                logger.debug(f"🔍 コレクション '{col_name}': ペイロードをチェック中...")
+
                 # 1件だけ取得してsourceを確認
                 points, _ = client.scroll(
                     collection_name=col_name,
@@ -115,28 +134,54 @@ def get_dynamic_collection_mapping(
                     with_payload=["source"],
                     with_vectors=False
                 )
+
                 if points and points[0].payload:
                     source_val = points[0].payload.get("source")
                     if source_val:
                         csv_file = source_val
-            except Exception:
-                pass # ペイロード取得失敗時は次の方法へ
+                        logger.debug(f"   ✅ ペイロードから取得: {csv_file}")
+            except Exception as e:
+                logger.debug(f"   ⚠️ ペイロード取得失敗: {e}")
+                # 失敗しても次の方法へ進む
 
-            # 方法2: 名前から推測（フォールバック）
+            # 方法2: 完全一致のみ（フォールバック）
             if not csv_file:
+                logger.debug(f"   🔄 完全一致チェック中...")
                 csv_file = map_collection_to_csv(col_name, qa_output_dir)
-            
+
+                if csv_file:
+                    logger.debug(f"   ✅ 完全一致で発見: {csv_file}")
+                else:
+                    logger.debug(f"   ❌ マッピング不可")
+
+            # マッピング結果の記録
             if csv_file:
                 mapping[col_name] = csv_file
-                
+                logger.info(f"   ✅ マッピング成功: '{col_name}' -> '{csv_file}'")
+            else:
+                unmapped_collections.append(col_name)
+                logger.warning(f"   ⚠️ マッピング失敗: '{col_name}' -> CSVファイルが見つかりません")
+
+        # サマリーログ
+        logger.info(f"\n{'=' * 60}")
+        logger.info(f"📊 コレクションマッピングサマリー")
+        logger.info(f"   総コレクション数: {len(collections_resp.collections)}")
+        logger.info(f"   マッピング成功: {len(mapping)}")
+        logger.info(f"   マッピング失敗: {len(unmapped_collections)}")
+
+        if unmapped_collections:
+            logger.warning(f"   未マッピング: {unmapped_collections}")
+
+        logger.info(f"{'=' * 60}\n")
+
     except Exception as e:
-        logger.error(f"動的マッピング生成エラー: {e}")
+        logger.error(f"❌ 動的マッピング生成エラー: {e}", exc_info=True)
 
     return mapping
 
 
 def get_collection_embedding_params(
-    client: QdrantClient, collection_name: str
+        client: QdrantClient, collection_name: str
 ) -> Dict[str, Any]:
     """
     コレクションの設定（ベクトル次元数）から埋め込みモデル設定を推論
@@ -238,7 +283,7 @@ class QdrantHealthChecker:
 
             metrics = {
                 "collection_count": len(collections.collections),
-                "collections": [c.name for c in collections.collections],
+                "collections"     : [c.name for c in collections.collections],
                 "response_time_ms": round((time.time() - start_time) * 1000, 2),
             }
 
@@ -265,30 +310,30 @@ class QdrantDataFetcher:
         """コレクション一覧を取得"""
         try:
             collections_response = self.client.get_collections()
-            collections = collections_response.collections # Actual list of collections
-            
+            collections = collections_response.collections  # Actual list of collections
+
             data = []
-            for collection in collections: # Iterate through each collection object
+            for collection in collections:  # Iterate through each collection object
                 try:
-                    info = self.client.get_collection(collection.name) # Try to get detailed info
+                    info = self.client.get_collection(collection.name)  # Try to get detailed info
                     data.append(
                         {
-                            "Collection": collection.name,
-                            "Vectors Count": info.vectors_count,
-                            "Points Count": info.points_count,
+                            "Collection"     : collection.name,
+                            "Vectors Count"  : info.vectors_count,
+                            "Points Count"   : info.points_count,
                             "Indexed Vectors": info.indexed_vectors_count,
-                            "Status": info.status,
+                            "Status"         : info.status,
                         }
                     )
                 except Exception as inner_e:
                     logger.warning(f"Failed to fetch details for collection '{collection.name}': {inner_e}")
                     data.append(
                         {
-                            "Collection": collection.name,
-                            "Vectors Count": "N/A",
-                            "Points Count": "N/A",
+                            "Collection"     : collection.name,
+                            "Vectors Count"  : "N/A",
+                            "Points Count"   : "N/A",
                             "Indexed Vectors": "N/A",
-                            "Status": "Error",
+                            "Status"         : "Error",
                         }
                     )
 
@@ -303,7 +348,7 @@ class QdrantDataFetcher:
             return pd.DataFrame({"Error": [str(outer_e)]})
 
     def fetch_collection_points(
-        self, collection_name: str, limit: int = 50
+            self, collection_name: str, limit: int = 50
     ) -> pd.DataFrame:
         """コレクションの詳細データを取得"""
         try:
@@ -365,7 +410,7 @@ class QdrantDataFetcher:
                 vector_sizes = {}
                 distances = {}
                 for name, config in (
-                    vector_config.items() if isinstance(vector_config, dict) else []
+                        vector_config.items() if isinstance(vector_config, dict) else []
                 ):
                     vector_sizes[name] = (
                         config.size if hasattr(config, "size") else "N/A"
@@ -380,20 +425,20 @@ class QdrantDataFetcher:
                 distance = "N/A"
 
             return {
-                "vectors_count": collection_info.vectors_count,
-                "points_count": collection_info.points_count,
+                "vectors_count"  : collection_info.vectors_count,
+                "points_count"   : collection_info.points_count,
                 "indexed_vectors": collection_info.indexed_vectors_count,
-                "status": collection_info.status,
-                "config": {
+                "status"         : collection_info.status,
+                "config"         : {
                     "vector_size": vector_size,
-                    "distance": distance,
+                    "distance"   : distance,
                 },
             }
         except Exception as e:
             return {"error": str(e)}
 
     def fetch_collection_source_info(
-        self, collection_name: str, sample_size: int = 200
+            self, collection_name: str, sample_size: int = 200
     ) -> Dict[str, Any]:
         """コレクションのデータソース情報を取得"""
         try:
@@ -424,8 +469,8 @@ class QdrantDataFetcher:
                     if source not in source_stats:
                         source_stats[source] = {
                             "sample_count": 0,
-                            "method": method,
-                            "domain": domain,
+                            "method"      : method,
+                            "domain"      : domain,
                         }
                     source_stats[source]["sample_count"] += 1
 
@@ -438,8 +483,8 @@ class QdrantDataFetcher:
 
             return {
                 "total_points": total_points,
-                "sources": source_stats,
-                "sample_size": sample_total,
+                "sources"     : source_stats,
+                "sample_size" : sample_total,
             }
 
         except Exception as e:
@@ -451,7 +496,7 @@ class QdrantDataFetcher:
 # ===================================================================
 
 def get_collection_stats(
-    client: QdrantClient, collection_name: str
+        client: QdrantClient, collection_name: str
 ) -> Optional[Dict[str, Any]]:
     """コレクションの統計情報を取得"""
     try:
@@ -466,20 +511,20 @@ def get_collection_stats(
             # Named Vectors
             for name, config in vectors_config.items():
                 vector_info[name] = {
-                    "size": config.size,
+                    "size"    : config.size,
                     "distance": str(config.distance),
                 }
         elif hasattr(vectors_config, "size"):
             # Single Vector
             vector_info["default"] = {
-                "size": vectors_config.size,
+                "size"    : vectors_config.size,
                 "distance": str(vectors_config.distance),
             }
 
         return {
-            "total_points": total_points,
+            "total_points" : total_points,
             "vector_config": vector_info,
-            "status": collection_info.status,
+            "status"       : collection_info.status,
         }
 
     except UnexpectedResponse as e:
@@ -503,9 +548,9 @@ def get_all_collections(client: QdrantClient) -> List[Dict[str, Any]]:
                 info = client.get_collection(collection.name)
                 collection_list.append(
                     {
-                        "name": collection.name,
+                        "name"        : collection.name,
                         "points_count": info.points_count,
-                        "status": info.status,
+                        "status"      : info.status,
                     }
                 )
             except Exception as inner_e:
@@ -551,7 +596,7 @@ def delete_all_collections(client: QdrantClient, excluded: List[str] = None) -> 
 # ===================================================================
 
 def load_csv_for_qdrant(
-    path: str, required=("question", "answer"), limit: int = 0
+        path: str, required=("question", "answer"), limit: int = 0
 ) -> pd.DataFrame:
     """CSVをロード（Qdrant登録用）"""
     if not os.path.exists(path):
@@ -560,9 +605,9 @@ def load_csv_for_qdrant(
 
     # 列名マッピング
     column_mappings = {
-        "Question": "question",
-        "Response": "answer",
-        "Answer": "answer",
+        "Question"      : "question",
+        "Response"      : "answer",
+        "Answer"        : "answer",
         "correct_answer": "answer",
     }
     df = df.rename(columns=column_mappings)
@@ -589,7 +634,7 @@ def build_inputs_for_embedding(df: pd.DataFrame, include_answer: bool) -> List[s
 
 
 def embed_texts_for_qdrant(
-    texts: List[str], model: str = "gemini-embedding-001", batch_size: int = 100
+        texts: List[str], model: str = "gemini-embedding-001", batch_size: int = 100
 ) -> List[List[float]]:
     """テキストをバッチ処理でEmbeddingに変換（Gemini API使用）"""
     # Gemini Embeddingクライアントを使用
@@ -625,11 +670,11 @@ def embed_texts_for_qdrant(
 
 
 def create_or_recreate_collection_for_qdrant(
-    client: QdrantClient, name: str, recreate: bool, vector_size: int = 3072, use_sparse: bool = False
+        client: QdrantClient, name: str, recreate: bool, vector_size: int = 3072, use_sparse: bool = False
 ):
     """
     コレクション作成または再作成
-    
+
     Args:
         client: QdrantClient
         name: コレクション名
@@ -641,24 +686,24 @@ def create_or_recreate_collection_for_qdrant(
     vectors_config = models.VectorParams(
         size=vector_size, distance=models.Distance.COSINE
     )
-    
+
     # Hybrid Search (Named Vectors) の場合、"default" という名前でDenseを設定するのがベストプラクティスだが
     # 既存との互換性のため、vectors_configを辞書にする
     if use_sparse:
         vectors_config = {
             "default": models.VectorParams(
-                size=vector_size, 
+                size=vector_size,
                 distance=models.Distance.COSINE
             )
         }
-    
+
     # Sparse Vector設定
     sparse_vectors_config = None
     if use_sparse:
         sparse_vectors_config = {
             "text-sparse": models.SparseVectorParams(
                 index=models.SparseIndexParams(
-                    on_disk=False, 
+                    on_disk=False,
                 )
             )
         }
@@ -669,7 +714,7 @@ def create_or_recreate_collection_for_qdrant(
         except Exception:
             pass
         client.create_collection(
-            collection_name=name, 
+            collection_name=name,
             vectors_config=vectors_config,
             sparse_vectors_config=sparse_vectors_config
         )
@@ -678,7 +723,7 @@ def create_or_recreate_collection_for_qdrant(
             client.get_collection(name)
         except Exception:
             client.create_collection(
-                collection_name=name, 
+                collection_name=name,
                 vectors_config=vectors_config,
                 sparse_vectors_config=sparse_vectors_config
             )
@@ -693,12 +738,12 @@ def create_or_recreate_collection_for_qdrant(
 
 
 def build_points_for_qdrant(
-    df: pd.DataFrame, 
-    vectors: List[List[float]], 
-    domain: str, 
-    source_file: str,
-    sparse_vectors: Optional[List[models.SparseVector]] = None,
-    start_index: int = 0  # 追加
+        df: pd.DataFrame,
+        vectors: List[List[float]],
+        domain: str,
+        source_file: str,
+        sparse_vectors: Optional[List[models.SparseVector]] = None,
+        start_index: int = 0  # 追加
 ) -> List[models.PointStruct]:
     """
     Qdrantポイントを構築
@@ -716,7 +761,7 @@ def build_points_for_qdrant(
     n = len(df)
     if len(vectors) != n:
         raise ValueError(f"vectors length mismatch: df={n}, vecs={len(vectors)}")
-    
+
     if sparse_vectors and len(sparse_vectors) != n:
         raise ValueError(f"sparse_vectors length mismatch: df={n}, sparse_vecs={len(sparse_vectors)}")
 
@@ -725,24 +770,24 @@ def build_points_for_qdrant(
 
     for i, row in enumerate(df.itertuples(index=False)):
         payload = {
-            "domain": domain,
-            "question": getattr(row, "question"),
-            "answer": getattr(row, "answer"),
-            "source": os.path.basename(source_file),
+            "domain"    : domain,
+            "question"  : getattr(row, "question"),
+            "answer"    : getattr(row, "answer"),
+            "source"    : os.path.basename(source_file),
             "created_at": now_iso,
-            "schema": "qa:v1",
+            "schema"    : "qa:v1",
         }
 
         global_index = start_index + i
         pid = abs(hash(f"{domain}-{source_file}-{global_index}")) & 0x7FFFFFFFFFFFFFFF
-        
+
         # ベクトル構造の構築
         if sparse_vectors:
             # Hybrid Search用 Named Vectors
             # "default": Dense Vector (Gemini/OpenAI)
             # "text-sparse": Sparse Vector (Splade)
             vector_struct = {
-                "default": vectors[i],
+                "default"    : vectors[i],
                 "text-sparse": sparse_vectors[i]
             }
         else:
@@ -755,10 +800,10 @@ def build_points_for_qdrant(
 
 
 def upsert_points_to_qdrant(
-    client: QdrantClient,
-    collection: str,
-    points: List[models.PointStruct],
-    batch_size: int = 128,
+        client: QdrantClient,
+        collection: str,
+        points: List[models.PointStruct],
+        batch_size: int = 128,
 ) -> int:
     """ポイントをQdrantにアップサート"""
     count = 0
@@ -773,38 +818,38 @@ def upsert_points_to_qdrant(
 # ===================================================================
 
 def embed_query_for_search(
-    query: str, model: str = "gemini-embedding-001", dims: Optional[int] = None
+        query: str, model: str = "gemini-embedding-001", dims: Optional[int] = None
 ) -> List[float]:
     """
     検索クエリをベクトル化
-    
+
     次元数(dims)またはモデル名(model)に基づいてプロバイダーを自動選択します。
     """
     # デフォルトはGemini
     provider = "gemini"
-    
+
     # 次元数による判定
     if dims == 1536:
         provider = "openai"
     elif dims == 3072 or dims == 768:
         provider = "gemini"
-    
+
     # モデル名による判定 (次元数が指定されていない場合のフォールバック)
     elif model:
         if "text-embedding-3" in model or "text-embedding-ada" in model:
             provider = "openai"
         elif "gemini" in model:
             provider = "gemini"
-            
+
     logger.info(f"embed_query_for_search: query='{query}', model='{model}', dims={dims} -> provider='{provider}'")
-    
+
     # Embeddingクライアントを作成。次元数も明示的に渡す。
     embedding_client = create_embedding_client(provider=provider, dims=dims)
-    
+
     # Geminiの場合は検索用途 (retrieval_query) を明示
     task_type = "retrieval_query" if provider == "gemini" else None
     vector = embedding_client.embed_text(query, task_type=task_type)
-    
+
     logger.info(f"embed_query_for_search: generated vector dim={len(vector)}")
     return vector
 
@@ -814,10 +859,10 @@ def embed_query_for_search(
 # ===================================================================
 
 def scroll_all_points_with_vectors(
-    client: QdrantClient,
-    collection_name: str,
-    batch_size: int = 100,
-    progress_callback: Optional[callable] = None,
+        client: QdrantClient,
+        collection_name: str,
+        batch_size: int = 100,
+        progress_callback: Optional[callable] = None,
 ) -> List[models.Record]:
     """コレクションから全ポイント（ベクトル含む）を取得
 
@@ -863,12 +908,12 @@ def scroll_all_points_with_vectors(
 
 
 def merge_collections(
-    client: QdrantClient,
-    source_collections: List[str],
-    target_collection: str,
-    recreate: bool = True,
-    vector_size: int = 3072,
-    progress_callback: Optional[callable] = None,
+        client: QdrantClient,
+        source_collections: List[str],
+        target_collection: str,
+        recreate: bool = True,
+        vector_size: int = 3072,
+        progress_callback: Optional[callable] = None,
 ) -> Dict[str, Any]:
     """複数コレクションを統合して新コレクションに登録
 
@@ -884,12 +929,12 @@ def merge_collections(
         統合結果の辞書
     """
     result = {
-        "source_collections": source_collections,
-        "target_collection": target_collection,
+        "source_collections"   : source_collections,
+        "target_collection"    : target_collection,
         "points_per_collection": {},
-        "total_points": 0,
-        "success": False,
-        "error": None,
+        "total_points"         : 0,
+        "success"              : False,
+        "error"                : None,
     }
 
     try:
@@ -967,3 +1012,60 @@ def merge_collections(
         logger.error(f"コレクション統合エラー: {e}")
 
     return result
+
+
+def get_all_collections_simple(client: QdrantClient) -> List[Dict[str, Any]]:
+    """
+    Qdrantの全コレクション一覧を取得（シンプル版）
+
+    ✅ 命名規則依存廃止対応:
+    - CSVファイルとのマッピングなし
+    - コレクションの基本情報のみ取得
+
+    Args:
+        client: QdrantClientインスタンス
+
+    Returns:
+        コレクション情報のリスト
+        [
+            {
+                "name": "collection_name",
+                "vectors_count": 1000,
+                "points_count": 1000,
+                "status": "green"
+            },
+            ...
+        ]
+    """
+    try:
+        collections_resp = client.get_collections()
+        collection_list = []
+
+        logger.info(f"📚 Qdrant全コレクション取得: {len(collections_resp.collections)}個")
+
+        for col in collections_resp.collections:
+            try:
+                # コレクション情報を取得
+                col_info = client.get_collection(col.name)
+
+                collection_list.append({
+                    "name"         : col.name,
+                    "vectors_count": col_info.vectors_count or 0,
+                    "points_count" : col_info.points_count or 0,
+                    "status"       : col_info.status.value if hasattr(col_info, 'status') else "unknown"
+                })
+            except Exception as e:
+                logger.warning(f"コレクション情報取得エラー ({col.name}): {e}")
+                collection_list.append({
+                    "name"         : col.name,
+                    "vectors_count": 0,
+                    "points_count" : 0,
+                    "status"       : "error"
+                })
+
+        return collection_list
+
+    except Exception as e:
+        logger.error(f"コレクション一覧取得エラー: {e}")
+        return []
+

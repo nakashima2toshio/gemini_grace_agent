@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+# agent_chat_page.py
+# !/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 agent_chat_page.py - ハイブリッド・ナレッジ・エージェント チャット画面
@@ -26,51 +27,60 @@ def show_agent_chat_page():
     st.caption("Gemini 2.0 Flash + ReAct + Qdrant Hybrid RAG (Dense + Sparse)")
 
     # -------------------------------------------------------------------------
-    # 元ドキュメント表示エリア (Added)
+    # 元ドキュメント表示エリア (Modified to support OUTPUT/*.csv)
     # -------------------------------------------------------------------------
     with st.expander("📄 元ドキュメントの表示", expanded=False):
-        st.markdown("ダウンロードしたドキュメントの選択：")
+        st.markdown("OUTPUTディレクトリのCSVファイルを選択：")
 
         output_dir = "OUTPUT"
-        target_patterns = {
-            "cc_news"      : "cc_news*.txt",
-            "japanese_text": "japanese_text*.txt",
-            "livedoor"     : "livedoor*.txt",
-            "wikipedia_ja" : "wikipedia_ja*.txt"
-        }
 
         file_options = {}
         if os.path.exists(output_dir):
             import glob
-            for label, pattern in target_patterns.items():
-                files = glob.glob(os.path.join(output_dir, pattern))
-                if files:
-                    # 更新日時順にソートして最新を取得
-                    latest_file = max(files, key=os.path.getctime)
-                    file_options[label] = latest_file
+
+            # OUTPUT/*.csv を全て取得
+            csv_files = glob.glob(os.path.join(output_dir, "*.csv"))
+            if csv_files:
+                # 更新日時順にソート（最新順）
+                csv_files.sort(key=os.path.getctime, reverse=True)
+
+                for file_path in csv_files:
+                    # ファイル名（拡張子なし）をラベルとして使用
+                    file_name = os.path.basename(file_path)
+                    label = os.path.splitext(file_name)[0]
+                    file_options[label] = file_path
 
         if file_options:
             selected_doc_label = st.selectbox(
-                "ドキュメントを選択:",
+                "CSVファイルを選択:",
                 options=list(file_options.keys()),
                 key="original_doc_selector"
             )
 
             if selected_doc_label:
                 file_path = file_options[selected_doc_label]
-                st.caption(f"参照ファイル: {file_path}")
+                st.caption(f"📁 参照ファイル: `{file_path}`")
+
                 try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        lines = []
-                        for _ in range(100):
-                            line = f.readline()
-                            if not line: break
-                            lines.append(line)
-                        st.text_area("ファイル内容 (先頭100行):", value="".join(lines), height=300)
+                    # CSVファイルをDataFrameとして読み込み（先頭100行）
+                    df = pd.read_csv(file_path, nrows=100)
+
+                    # ファイル全体の行数を取得（効率的な方法）
+                    total_rows = sum(1 for _ in open(file_path, 'r', encoding='utf-8')) - 1  # ヘッダー除く
+
+                    st.caption(f"📊 表示: 先頭100行 / 全{total_rows:,}行 | カラム数: {len(df.columns)}")
+
+                    st.dataframe(
+                        df,
+                        width='stretch',
+                        hide_index=False,
+                        height=400
+                    )
+
                 except Exception as e:
-                    st.error(f"読み込みエラー: {e}")
+                    st.error(f"❌ 読み込みエラー: {e}")
         else:
-            st.info("OUTPUTディレクトリにテキストファイルが見つかりません。")
+            st.info("📂 OUTPUTディレクトリにCSVファイルが見つかりません。")
 
     # -------------------------------------------------------------------------
     # 入力クエリの参考用 Q&A表示エリア (Added)

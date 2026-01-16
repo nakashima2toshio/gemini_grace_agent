@@ -2,7 +2,18 @@
 # start_celery.sh - Celeryワーカー起動スクリプト
 # =============================================
 # Q/A生成のCeleryワーカーを起動・管理
-
+# ---------------------------------------------
+# ./start_celery.sh stop
+# ./start_celery.sh restart -w 16
+# ---------------------------------------------
+#!/bin/bash
+# start_celery.sh - Celeryワーカー起動スクリプト
+# =============================================
+# Q/A生成のCeleryワーカーを起動・管理
+# ---------------------------------------------
+# ./start_celery.sh stop
+# ./start_celery.sh restart -w 16
+# ---------------------------------------------
 # 色付き出力
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -72,9 +83,32 @@ start_workers() {
         cleanup_workers
     fi
 
+    # プロジェクトルートディレクトリを取得
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+    PROJECT_ROOT="${SCRIPT_DIR}"
+
+    # PYTHONPATHにプロジェクトルートとhelperディレクトリを追加
+    export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/helper:${PYTHONPATH}"
+
     # gRPC DNS解決の環境変数を設定
     export GRPC_DNS_RESOLVER=native
     export GRPC_ENABLE_FORK_SUPPORT=1
+
+    echo -e "${GREEN}プロジェクトルート: ${PROJECT_ROOT}${NC}"
+    echo -e "${GREEN}PYTHONPATH: ${PYTHONPATH}${NC}"
+
+    # helper_llmモジュールの存在確認
+    if [ -f "${PROJECT_ROOT}/helper/helper_llm.py" ]; then
+        echo -e "${GREEN}✓ helper/helper_llm.py が見つかりました${NC}"
+    else
+        echo -e "${RED}✗ helper/helper_llm.py が見つかりません${NC}"
+        echo -e "${YELLOW}プロジェクトに helper/helper_llm.py が必要です${NC}"
+
+        # デバッグ情報
+        echo -e "${YELLOW}現在のディレクトリ構造を確認中...${NC}"
+        ls -la "${PROJECT_ROOT}/helper/" 2>/dev/null || echo "helperディレクトリが存在しません"
+        return 1
+    fi
 
     # Celeryワーカーを起動（celery_configを使用）
     celery -A celery_config worker \
@@ -151,7 +185,7 @@ check_status() {
     fi
 
     # ログファイルの最新行
-    if [ -f logs/celery_qa_*.log ]; then
+    if ls logs/celery_qa_*.log 1>/dev/null 2>&1; then
         echo -e "\n${YELLOW}=== 最新のログ ===${NC}"
         tail -5 logs/celery_qa_*.log 2>/dev/null || true
     fi

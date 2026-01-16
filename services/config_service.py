@@ -47,7 +47,7 @@ class ConfigManager:
 
     def _setup_logger(self) -> logging.Logger:
         """ロガーの設定"""
-        logger = logging.getLogger('openai_helper')
+        logger = logging.getLogger('Gemini_helper')
 
         # 既に設定済みの場合はスキップ
         if logger.handlers:
@@ -100,9 +100,9 @@ class ConfigManager:
 
     def _apply_env_overrides(self, config: Dict[str, Any]) -> None:
         """環境変数による設定オーバーライド"""
-        # OpenAI API Key
-        if os.getenv("OPENAI_API_KEY"):
-            config.setdefault("api", {})["openai_api_key"] = os.getenv("OPENAI_API_KEY")
+        # GOOGLE Gemini API Key
+        if os.getenv("GOOGLE_API_KEY"):
+            config.setdefault("api", {})["google_api_key"] = os.getenv("GOOGLE_API_KEY")
 
         # Google API Key
         if os.getenv("GOOGLE_API_KEY"):

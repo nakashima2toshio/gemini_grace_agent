@@ -4,8 +4,8 @@ pip install -r chunking/requirements.txt
 ## 基本的な実行
 python -m chunking.csv_to_chunks_text_para -i input.txt -o output.txt
 
-## 並列数を4に変更
-python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/wikipedia_ja_5per.txt -o ./OUTPUT/wikipedia_ja_5per_chunks.txt -w 4
+## 基本的な実行、並列数を3に変更
+python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/wikipedia_ja_5per.csv -o ./OUTPUT/wikipedia_ja_5per_chunked.csv -w 3
 
 ## 詳細ログ出力
 python -m chunking.csv_to_chunks_text_para -i input.txt -o output.txt -v

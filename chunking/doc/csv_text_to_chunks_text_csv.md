@@ -1,5 +1,8 @@
 # csv_text_to_chunks_text_csv.py 詳細設計書
-
+## [Usage:] 基本的な実行、並列数を3に変更
+```python
+python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/wikipedia_ja_5per.csv -o ./OUTPUT/wikipedia_ja_5per_chunked.csv -w 3
+```
 **バージョン:** v1.2.0
 **作成日:** 2026-01-15
 **ファイル名の意味:** `csv_text` (CSV/テキスト入力) → `to_chunks` (チャンク化) → `text_csv` (テキスト/CSV出力)
@@ -612,40 +615,53 @@ graph TB
 
 ```mermaid
 graph TB
-    Start([Step3 開始]) --> Check{チェックポイント}
-    Check -->|あり| Load[step3.json読込]
-    Check -->|なし| Input[Step2のチャンクリスト受取]
+    Start([Step3開始]) --> Check{CP有?}
+    Check -->|有| Load[step3読込]
+    Check -->|無| Input[チャンクリスト受取]
 
-    Load --> Return([最終チャンクリスト返却])
+    Load --> Return([最終リスト返却])
 
-    Input --> CheckCount{チャンク数<br/>≤ 1?}
-    CheckCount -->|Yes| SaveDirect[チェックポイント保存]
-    CheckCount -->|No| CreateTasks[隣接ペアに対して<br/>タスク生成<br/>CONTINUITY_CHECK_PROMPT]
+    Input --> CheckCount{1個以下?}
+    CheckCount -->|Yes| SaveDirect[CP保存]
+    CheckCount -->|No| CreateTasks[ペア生成]
 
     SaveDirect --> Return
 
-    CreateTasks --> Parallel[並列実行<br/>asyncio.gather + tqdm]
+    CreateTasks --> Parallel[並列実行]
 
-    Parallel --> Parse{全ペア<br/>完了?}
-    Parse -->|Yes| Merge[連続性判定に基づき<br/>チャンクをマージ]
-    Parse -->|No| Retry[リトライ<br/>AsyncAPIClient]
+    Parallel --> Parse{完了?}
+    Parse -->|Yes| Merge[連続性判定]
+    Parse -->|No| Retry[リトライ]
 
     Retry --> Parallel
 
-    Merge --> Logic{is_connected<br/>= True?}
-    Logic -->|Yes| MergeChunk[前のチャンクに<br/>結合]
-    Logic -->|No| KeepSeparate[別チャンクとして保持]
+    Merge --> Logic{is_connected?}
+    Logic -->|Yes| MergeChunk[結合]
+    Logic -->|No| KeepSeparate[分離]
 
-    MergeChunk --> NextPair{次のペア<br/>あり?}
+    MergeChunk --> NextPair{次有?}
     KeepSeparate --> NextPair
     NextPair -->|Yes| Logic
-    NextPair -->|No| Save[チェックポイント保存<br/>step3.json]
+    NextPair -->|No| Save[CP保存]
 
     Save --> Return
 
+    style Start fill:#000,stroke:#fff,color:#fff
+    style Check fill:#000,stroke:#fff,color:#fff
+    style Load fill:#000,stroke:#fff,color:#fff
     style Input fill:#000,stroke:#fff,color:#fff
+    style Return fill:#000,stroke:#fff,color:#fff
+    style CheckCount fill:#000,stroke:#fff,color:#fff
+    style SaveDirect fill:#000,stroke:#fff,color:#fff
+    style CreateTasks fill:#000,stroke:#fff,color:#fff
     style Parallel fill:#000,stroke:#fff,color:#fff
+    style Parse fill:#000,stroke:#fff,color:#fff
     style Merge fill:#000,stroke:#fff,color:#fff
+    style Retry fill:#000,stroke:#fff,color:#fff
+    style Logic fill:#000,stroke:#fff,color:#fff
+    style MergeChunk fill:#000,stroke:#fff,color:#fff
+    style KeepSeparate fill:#000,stroke:#fff,color:#fff
+    style NextPair fill:#000,stroke:#fff,color:#fff
     style Save fill:#000,stroke:#fff,color:#fff
 ```
 
@@ -724,8 +740,14 @@ graph TB
     style A fill:#000,stroke:#fff,color:#fff
     style B fill:#000,stroke:#fff,color:#fff
     style C fill:#000,stroke:#fff,color:#fff
-    style G fill:#ffccbc
-    style H fill:#ffccbc
+    style D fill:#000,stroke:#fff,color:#fff
+    style E fill:#000,stroke:#fff,color:#fff
+    style F fill:#000,stroke:#fff,color:#fff
+    style G fill:#000,stroke:#fff,color:#fff
+    style H fill:#000,stroke:#fff,color:#fff
+    style I fill:#000,stroke:#fff,color:#fff
+    style J fill:#000,stroke:#fff,color:#fff
+    style K fill:#000,stroke:#fff,color:#fff
 ```
 
 ### 5.2 並列制御メカニズム
@@ -840,13 +862,17 @@ gantt
 
 ```mermaid
 graph LR
-    A[入力テキスト] --> B[改行→半角空白]
-    B --> C[タブ→半角空白]
-    C --> D[連続空白→1つに]
-    D --> E[前後空白削除]
+    A[入力テキスト] --> B[改行to空白]
+    B --> C[タブto空白]
+    C --> D[連続空白to1つ]
+    D --> E[前後削除]
     E --> F[正規化完了]
 
     style A fill:#000,stroke:#fff,color:#fff
+    style B fill:#000,stroke:#fff,color:#fff
+    style C fill:#000,stroke:#fff,color:#fff
+    style D fill:#000,stroke:#fff,color:#fff
+    style E fill:#000,stroke:#fff,color:#fff
     style F fill:#000,stroke:#fff,color:#fff
 ```
 
@@ -906,7 +932,19 @@ graph TB
     N --> O
 
     style A fill:#000,stroke:#fff,color:#fff
-    style G fill:#ffcdd2
+    style B fill:#000,stroke:#fff,color:#fff
+    style C fill:#000,stroke:#fff,color:#fff
+    style D fill:#000,stroke:#fff,color:#fff
+    style E fill:#000,stroke:#fff,color:#fff
+    style F fill:#000,stroke:#fff,color:#fff
+    style G fill:#000,stroke:#fff,color:#fff
+    style H fill:#000,stroke:#fff,color:#fff
+    style I fill:#000,stroke:#fff,color:#fff
+    style J fill:#000,stroke:#fff,color:#fff
+    style K fill:#000,stroke:#fff,color:#fff
+    style L fill:#000,stroke:#fff,color:#fff
+    style M fill:#000,stroke:#fff,color:#fff
+    style N fill:#000,stroke:#fff,color:#fff
     style O fill:#000,stroke:#fff,color:#fff
 ```
 
@@ -1080,11 +1118,6 @@ sequenceDiagram
     end
 
     Main-->>Main: final_chunks返却
-    style Step1実行 fill:#000,stroke:#fff,color:#fff
-    style Step2実行 fill:#000,stroke:#fff,color:#fff
-    style Step3実行 fill:#000,stroke:#fff,color:#fff
-    style インスタンス生成 fill:#000,stroke:#fff,color:#fff
-    style 並列API呼び出し fill:#000,stroke:#fff,color:#fff
 ```
 
 #### OUTPUT
@@ -1267,56 +1300,77 @@ graph TB
 
 ```mermaid
 graph TB
-    A[Step3開始] --> B{チェックポイント<br/>step3.json<br/>存在?}
+    A[Step3開始] --> B{CP有?}
     B -->|Yes| C[JSON読込]
-    B -->|No| D[チャンクリスト受取<br/>N個]
+    B -->|No| D[チャンクN個]
 
-    C --> Z[最終チャンク返却]
+    C --> Z[返却]
 
-    D --> E{N ≤ 1?}
-    E -->|Yes| F[チェックポイント保存<br/>そのまま返却]
-    E -->|No| G[隣接ペア生成<br/>N-1個]
+    D --> E{N<=1?}
+    E -->|Yes| F[CP保存]
+    E -->|No| G[ペアN-1個生成]
 
     F --> Z
 
-    G --> H[各ペアに<br/>プロンプト生成]
-    H --> I[タスクリスト作成<br/>tasks = range N-1]
+    G --> H[プロンプト生成]
+    H --> I[タスク作成]
 
-    I --> J[async_tqdm.gather<br/>並列実行]
+    I --> J[並列実行]
 
-    J --> K{全タスク<br/>成功?}
-    K -->|No| L[リトライ<br/>AsyncAPIClient]
+    J --> K{成功?}
+    K -->|No| L[リトライ]
     K -->|Yes| M[results受信]
 
     L --> J
 
-    M --> N[final_chunks = chunks]
-    N --> O[i = 0からループ]
+    M --> N[final_chunks初期化]
+    N --> O[ループ開始]
 
-    O --> P[results受信<br/>ContinuityResult]
-    P --> Q{パース<br/>成功?}
+    O --> P[result取得]
+    P --> Q{パース成功?}
 
-    Q -->|No| R[logger.warning<br/>そのままappend]
-    Q -->|Yes| S{is_connected<br/>= True?}
+    Q -->|No| R[そのままappend]
+    Q -->|Yes| S{is_connected?}
 
-    S -->|Yes| T[前のチャンクに<br/>\\n\\nで結合]
-    S -->|No| U[新しいチャンクとして<br/>append]
+    S -->|Yes| T[結合]
+    S -->|No| U[append]
 
-    R --> V[i++]
+    R --> V[次へ]
     T --> V
     U --> V
 
-    V --> W{i < N-1?}
-    W -->|Yes| O
-    W -->|No| X[CheckpointManager<br/>step3.json保存]
+    V --> W{終了?}
+    W -->|No| O
+    W -->|Yes| X[CP保存]
 
-    X --> Y[logger.info<br/>最終チャンク数出力]
+    X --> Y[ログ出力]
     Y --> Z
 
     style A fill:#000,stroke:#fff,color:#fff
+    style B fill:#000,stroke:#fff,color:#fff
+    style C fill:#000,stroke:#fff,color:#fff
+    style D fill:#000,stroke:#fff,color:#fff
+    style E fill:#000,stroke:#fff,color:#fff
+    style F fill:#000,stroke:#fff,color:#fff
+    style G fill:#000,stroke:#fff,color:#fff
+    style H fill:#000,stroke:#fff,color:#fff
+    style I fill:#000,stroke:#fff,color:#fff
     style J fill:#000,stroke:#fff,color:#fff
+    style K fill:#000,stroke:#fff,color:#fff
+    style L fill:#000,stroke:#fff,color:#fff
+    style M fill:#000,stroke:#fff,color:#fff
+    style N fill:#000,stroke:#fff,color:#fff
+    style O fill:#000,stroke:#fff,color:#fff
+    style P fill:#000,stroke:#fff,color:#fff
+    style Q fill:#000,stroke:#fff,color:#fff
+    style R fill:#000,stroke:#fff,color:#fff
+    style S fill:#000,stroke:#fff,color:#fff
     style T fill:#000,stroke:#fff,color:#fff
+    style U fill:#000,stroke:#fff,color:#fff
+    style V fill:#000,stroke:#fff,color:#fff
+    style W fill:#000,stroke:#fff,color:#fff
     style X fill:#000,stroke:#fff,color:#fff
+    style Y fill:#000,stroke:#fff,color:#fff
     style Z fill:#000,stroke:#fff,color:#fff
 ```
 
@@ -1401,22 +1455,27 @@ def load_text_from_csv(csv_path, text_column, max_rows, combine_rows):
 **エラーフロー:**
 ```mermaid
 graph TB
-    A[CSV読み込み] --> B{成功?}
+    A[CSV読込] --> B{成功?}
     B -->|No| C{エラー種別}
     B -->|Yes| D[カラム確認]
 
-    C -->|FileNotFoundError| E[ログ出力 + raise]
-    C -->|ParserError| F[ログ出力 + raise]
-    C -->|その他| G[ログ出力 + raise]
+    C -->|FileNotFound| E[ログ+raise]
+    C -->|ParserError| F[ログ+raise]
+    C -->|その他| G[ログ+raise]
 
-    D --> H{カラム存在?}
-    H -->|No| I[ValueError raise]
+    D --> H{カラム有?}
+    H -->|No| I[ValueError]
     H -->|Yes| J[処理続行]
 
-    style E fill:#ffcdd2
-    style F fill:#ffcdd2
-    style G fill:#ffcdd2
-    style I fill:#ffcdd2
+    style A fill:#000,stroke:#fff,color:#fff
+    style B fill:#000,stroke:#fff,color:#fff
+    style C fill:#000,stroke:#fff,color:#fff
+    style D fill:#000,stroke:#fff,color:#fff
+    style E fill:#000,stroke:#fff,color:#fff
+    style F fill:#000,stroke:#fff,color:#fff
+    style G fill:#000,stroke:#fff,color:#fff
+    style H fill:#000,stroke:#fff,color:#fff
+    style I fill:#000,stroke:#fff,color:#fff
     style J fill:#000,stroke:#fff,color:#fff
 ```
 
@@ -1465,28 +1524,38 @@ async def _execute_with_retry(self, model, contents, response_schema, task_id):
 **リトライフロー:**
 ```mermaid
 graph TB
-    A[API呼び出し] --> B{成功?}
-    B -->|Yes| C{レスポンス<br/>完全?}
-    C -->|Yes| D{JSON<br/>有効?}
-    D -->|Yes| E[テキスト返却]
+    A[API呼出] --> B{成功?}
+    B -->|Yes| C{完全?}
+    C -->|Yes| D{JSON有効?}
+    D -->|Yes| E[返却]
 
     B -->|No| F{エラー種別}
-    C -->|No| G[ValueError: truncated]
-    D -->|No| H[ValueError: incomplete JSON]
+    C -->|No| G[ValueError]
+    D -->|No| H[ValueError]
 
-    F -->|429 Rate Limit| I[30秒 × attempt待機]
-    F -->|その他| J[2^attempt秒待機]
+    F -->|429| I[30秒待機]
+    F -->|その他| J[2秒待機]
     G --> J
     H --> J
 
-    I --> K{リトライ<br/>残あり?}
+    I --> K{リトライ可?}
     J --> K
 
     K -->|Yes| A
-    K -->|No| L[None返却<br/>フォールバック]
+    K -->|No| L[None返却]
 
+    style A fill:#000,stroke:#fff,color:#fff
+    style B fill:#000,stroke:#fff,color:#fff
+    style C fill:#000,stroke:#fff,color:#fff
+    style D fill:#000,stroke:#fff,color:#fff
     style E fill:#000,stroke:#fff,color:#fff
-    style L fill:#ffcdd2
+    style F fill:#000,stroke:#fff,color:#fff
+    style G fill:#000,stroke:#fff,color:#fff
+    style H fill:#000,stroke:#fff,color:#fff
+    style I fill:#000,stroke:#fff,color:#fff
+    style J fill:#000,stroke:#fff,color:#fff
+    style K fill:#000,stroke:#fff,color:#fff
+    style L fill:#000,stroke:#fff,color:#fff
 ```
 
 #### 7.2.3 `_step1/2/3_*()` のパース処理

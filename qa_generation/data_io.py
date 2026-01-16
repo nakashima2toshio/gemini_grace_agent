@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
 from config import DATASET_CONFIGS
-from helper_rag import clean_text
+from helper.helper_rag import clean_text
 
 logger = logging.getLogger(__name__)
 

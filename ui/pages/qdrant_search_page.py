@@ -15,14 +15,13 @@ Qdrantベクトルデータベースを使用した意味検索
 import warnings
 import pandas as pd
 import streamlit as st
-from helper_llm import create_llm_client
+from helper.helper_llm import create_llm_client
 from qdrant_client import QdrantClient
 
 # サービスモジュールからインポート
 from services.qdrant_service import (
     QdrantDataFetcher,
     embed_query_for_search,
-    get_dynamic_collection_mapping,
     get_collection_embedding_params,
 )
 from services.file_service import load_source_qa_data
@@ -52,26 +51,42 @@ def show_qdrant_search_page():
         st.code("docker run -p 6333:6333 qdrant/qdrant", language="bash")
         return
 
-    # コレクションとCSVファイルの対応表を表示（動的取得）
-    st.subheader("📊 コレクションとCSVファイルの対応")
+    st.subheader("📚 コレクションの一覧")
 
-    # 動的マッピングの取得
-    dynamic_mapping = get_dynamic_collection_mapping(client)
+    # 全コレクション情報を取得（シンプル版）
+    try:
+        collections_response = client.get_collections()
+        collections_info = []
 
-    if dynamic_mapping:
-        mapping_data = []
-        for collection, csv_file in dynamic_mapping.items():
-            mapping_data.append(
-                {
-                    "コレクション名": collection,
-                    "CSVファイル"   : csv_file,
-                    "ファイルパス"  : f"qa_output/{csv_file}",
-                }
-            )
-        mapping_df = pd.DataFrame(mapping_data)
-        st.table(mapping_df)
-    else:
-        st.info("コレクションとCSVファイルの対応情報はありません（コレクションが存在しないか、命名規則が一致しません）")
+        for col in collections_response.collections:
+            # CollectionInfoから直接情報を取得
+            collections_info.append({
+                "コレクション名": col.name,
+            })
+
+        if collections_info:
+            collections_df = pd.DataFrame(collections_info)
+            st.dataframe(collections_df, use_container_width=True, hide_index=True)
+            st.caption(f"✅ 合計 {len(collections_info)} 個のコレクションが見つかりました")
+
+            # 詳細情報を個別に取得して表示
+            with st.expander("📊 詳細情報", expanded=False):
+                for col_name in [c["コレクション名"] for c in collections_info]:
+                    try:
+                        col_detail = client.get_collection(col_name)
+                        st.markdown(f"**{col_name}**")
+                        st.json({
+                            "vectors_count": getattr(col_detail, 'vectors_count', 'N/A'),
+                            "points_count" : getattr(col_detail, 'points_count', 'N/A'),
+                            "status"       : str(getattr(col_detail, 'status', 'N/A'))
+                        })
+                    except Exception as e:
+                        st.error(f"{col_name}: {e}")
+        else:
+            st.info("コレクションが存在しません")
+
+    except Exception as e:
+        st.error(f"コレクション一覧の取得に失敗しました: {e}")
 
     st.divider()
 
@@ -117,43 +132,61 @@ def show_qdrant_search_page():
 
     # コレクションデータプレビューセクション
     with st.expander("📋 コレクションデータプレビュー", expanded=False):
-        # QdrantDataFetcherインスタンスを作成
         try:
-            client = QdrantClient(url=qdrant_url)
-            data_fetcher = QdrantDataFetcher(client)
+            st.caption(f"📊 コレクション: **{collection}** から100件を表示")
 
-            # fetch_collection_source_infoを使用してソース情報を取得
-            source_info = data_fetcher.fetch_collection_source_info(collection)
+            # Qdrantから直接データを取得（scrollを使用）
+            points, next_page_offset = client.scroll(
+                collection_name=collection,
+                limit=100,
+                with_payload=True,
+                with_vectors=False
+            )
 
-            if "error" not in source_info:
-                sources = source_info.get("sources", {})
+            if points:
+                # DataFrameに変換
+                data_list = []
+                for point in points:
+                    payload = point.payload or {}
+                    data_list.append({
+                        "ID"      : point.id,
+                        "Question": payload.get("question", "N/A"),
+                        "Answer"  : payload.get("answer", "N/A"),
+                        "Source"  : payload.get("source", "N/A")
+                    })
 
-                if sources:
-                    st.caption(f"コレクション: **{collection}**")
+                df_preview = pd.DataFrame(data_list)
 
-                    # 各ソースファイルごとにエキスパンダーを作成
-                    for source, stats in sorted(sources.items()):
-                        with st.expander(f"📄 {source}", expanded=False):
-                            st.markdown(
-                                f"- 推定データ数: {stats['estimated_total']:,}件 ({stats['percentage']:.1f}%)"
-                            )
-                            st.markdown(f"- 生成方法: `{stats['method']}`")
-                            st.markdown(f"- ドメイン: `{stats['domain']}`")
+                # コレクションの総ポイント数を取得
+                try:
+                    col_info = client.get_collection(collection)
+                    total_points = col_info.points_count if hasattr(col_info, 'points_count') else "N/A"
+                except:
+                    total_points = "N/A"
 
-                            # question, answerテーブルを表示
-                            df_qa = load_source_qa_data(source, num_rows=20)
-                            if df_qa is not None:
-                                st.dataframe(
-                                    df_qa, width='stretch', hide_index=True
-                                )
-                            else:
-                                st.info(f"データを読み込めません: qa_output/{source}")
-                else:
-                    st.info("データソース情報が見つかりません")
+                st.caption(f"📈 表示: {len(data_list)} 件 / 総ポイント数: {total_points}")
+
+                # データフレーム表示（スクロール可能）
+                st.dataframe(
+                    df_preview,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=600,  # スクロール可能な高さ
+                    column_config={
+                        "ID"      : st.column_config.NumberColumn("ID", width="small"),
+                        "Question": st.column_config.TextColumn("質問", width="medium"),
+                        "Answer"  : st.column_config.TextColumn("回答", width="large"),
+                        "Source"  : st.column_config.TextColumn("ソース", width="small")
+                    }
+                )
             else:
-                st.error(f"エラー: {source_info['error']}")
+                st.info(f"コレクション '{collection}' にデータが見つかりませんでした。")
+
         except Exception as e:
-            st.error(f"データ取得エラー: {str(e)}")
+            st.error(f"データ取得エラー: {e}")
+            if debug_mode:
+                import traceback
+                st.code(traceback.format_exc())
 
     st.divider()
 
