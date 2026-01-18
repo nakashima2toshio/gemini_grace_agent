@@ -1,0 +1,16 @@
+%tree -L 2 qa_generation
+qa_generation
+├── __init__.py
+├── config.py
+├── content.py
+├── data_io.py
+├── directree_tree.txt
+├── doc
+├── evaluation.py
+├── generation.py
+├── keyword_extraction.py
+├── models.py
+├── pipeline.py
+├── pipeline_modified.py
+├── semantic.py
+└── structure.py

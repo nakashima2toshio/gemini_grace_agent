@@ -1,26 +1,42 @@
 # csv_text_to_chunks_text_csv.py
 """
+csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキング（統一版）
+
+改修内容 (v2.0.0):
+- INPUT: `-i, --input` → `--input-file`（短縮形削除）
+- OUTPUT: `-o, --output` → `--output`（ディレクトリ指定、ファイル名自動生成）
+- その他: すべての短縮形削除 (`-m`, `-w`, `-b`, `-v`)
+- デフォルトモデル: `gemini-2.0-flash` に統一
+- テキスト出力廃止（CSV出力のみ）
+
 主要機能:
 - chunks_all_async(): テキストからチャンクを作成（LLMベース、asyncio並列処理）
-- load_text_from_csv(): CSVファイルからテキストを読み込み（✅ v1.2.0追加）
-- save_chunks_as_csv(): チャンクをCSV形式で保存（✅ v1.2.0追加）
-- save_chunks_as_text(): チャンクをテキスト形式で保存（✅ v1.2.0追加）
+- load_text_from_csv(): CSVファイルからテキストを読み込み
+- save_chunks_as_csv(): チャンクをCSV形式で保存（改行正規化対応）
+- generate_output_filename(): 出力ファイル名の自動生成
 
-テキストまたはCSVファイルを意味的なチャンクに分割するパイプライン。非同期・並列処理により高速化。
+テキストまたはCSVファイルを意味的なチャンクに分割するパイプライン。
+非同期・並列処理により高速化。CSV出力時に改行を削除してクリーンなCSVを作成。
 
 Usage:
-python -m chunking.csv_to_chunks_text_para -i ./OUTPUT/wikipedia_ja_20251130_041304.txt -o ./OUTPUT/wikipedia_ja_chunked.txt -w 10
+# テキストファイル → チャンクCSV
+python -m chunking.csv_text_to_chunks_text_csv \
+  --input-file ./data/document.txt \
+  --output chunks_output \
+  --model gemini-2.0-flash \
+  --workers 8
 
-python -m chunking.csv_text_to_chunks_text_csv -i ./OUTPUT/cc_news_5per.csv -o ./OUTPUT/cc_news_5per_chunked.csv -w 8 -b 1500 -m gemini-2.0-flash
-python -m chunking.csv_text_to_chunks_text_csv -i ./OUTPUT/fineweb_edu_ja_5per.csv -o ./OUTPUT/fineweb_edu_ja_5per_chunked.csv -w 8 -b 1500 -m gemini-2.0-flash
-python -m chunking.csv_text_to_chunks_text_csv -i ./OUTPUT/japanese_text_5per.csv -o ./OUTPUT/japanese_text_5per_chunked.csv -w 8 -b 1500 -m gemini-2.0-flash
-python -m chunking.csv_text_to_chunks_text_csv -i ./OUTPUT/livedoor_5per.csv -o ./OUTPUT/livedoor_5per_chunked.csv -w 8 -b 1500 -m gemini-2.0-flash
-python -m chunking.csv_text_to_chunks_text_csv -i ./OUTPUT/wikipedia_ja_5per.csv -o ./OUTPUT/wikipedia_ja_5per_chunked.csv -w 8 -b 1500 -m gemini-2.0-flash
+# CSVファイル → チャンクCSV
+python -m chunking.csv_text_to_chunks_text_csv \
+  --input-file ./data/articles.csv \
+  --output chunks_output \
+  --text-column text \
+  --combine-rows
 
-"""
-# csv_text_to_chunks_text_csv.py - 改行削除版
-"""
-CSV出力時に改行を削除してクリーンなCSVを作成
+# デフォルト出力ディレクトリ使用
+python -m chunking.csv_text_to_chunks_text_csv \
+  --input-file ./data/document.txt
+  # → chunks_output/document_chunks_20250118_123456.csv が生成される
 """
 
 import asyncio
@@ -239,6 +255,54 @@ def save_chunks_as_text(chunks: List[str], output_file: str) -> str:
 
     logger.info(f"テキストファイル保存: {output_file} ({len(chunks)}チャンク)")
     return output_file
+
+
+# ================================================================
+# ✅ 新規追加: 出力ファイル名自動生成機能
+# ================================================================
+
+def generate_output_filename(
+        input_file: str,
+        output_dir: str,
+        dataset_type: str = "custom"
+) -> str:
+    """
+    入力ファイル名から出力ファイル名を自動生成
+
+    Args:
+        input_file: 入力ファイルパス
+        output_dir: 出力ディレクトリ
+        dataset_type: データセット種別（ファイル名に使用）
+
+    Returns:
+        出力ファイルの絶対パス
+
+    Examples:
+        >>> generate_output_filename("data/input.txt", "chunks_output", "custom")
+        'chunks_output/input_chunks_20250118_123456.csv'
+
+        >>> generate_output_filename("data/cc_news.csv", "chunks_output", "cc_news")
+        'chunks_output/cc_news_chunks_20250118_123456.csv'
+    """
+    from datetime import datetime
+    import os
+
+    # 入力ファイル名を取得
+    input_path = Path(input_file)
+    base_name = input_path.stem
+
+    # タイムスタンプを生成
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # 出力ファイル名を生成
+    output_filename = f"{base_name}_chunks_{timestamp}.csv"
+
+    # 出力ディレクトリを作成
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 絶対パスを返す
+    output_path = os.path.join(output_dir, output_filename)
+    return output_path
 
 
 def _split_sentences_simple(text: str) -> List[str]:
@@ -489,46 +553,140 @@ async def _step3_continuity_check(
 
 async def main():
     parser = argparse.ArgumentParser(
-        description="LLMベースのセマンティックチャンキング（CSV/TXT入力対応、改行正規化対応）"
+        description="LLMベースセマンティックチャンキング（統一版 - make_qa形式互換）"
     )
-    parser.add_argument("-i", "--input", required=True, help="入力ファイル (.txt または .csv)")
-    parser.add_argument("-o", "--output", required=True, help="出力ファイル (.csv または .txt)")
-    parser.add_argument("-m", "--model", default="gemini-2.0-flash-exp", help="モデル")
-    parser.add_argument("-w", "--workers", type=int, default=8, help="並列ワーカー数")
-    parser.add_argument("-b", "--block-size", type=int, default=2000, help="バッチサイズ")
-    parser.add_argument("-v", "--verbose", action="store_true", help="詳細ログ")
-    parser.add_argument("--resume", type=str, default=None, help="再開するジョブID")
-    parser.add_argument("--text-column", type=str, default=None, help="CSVのテキストカラム名")
-    parser.add_argument("--max-rows", type=int, default=None, help="最大処理行数（CSV用）")
-    parser.add_argument("--combine-rows", action="store_true", help="CSV全行を結合")
+
+    # ================================================================
+    # INPUT オプション（✅ 統一版）
+    # ================================================================
+    parser.add_argument(
+        "--input-file",
+        type=str,
+        required=True,
+        help="入力ファイル (.txt, .csv)"
+    )
+
+    # ================================================================
+    # OUTPUT オプション（✅ 統一版）
+    # ================================================================
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="chunks_output",
+        help="出力ディレクトリ（デフォルト: chunks_output）"
+    )
+
+    # ================================================================
+    # モデル・処理パラメータ（✅ 短縮形削除）
+    # ================================================================
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gemini-2.0-flash",  # ✅ デフォルト値を統一
+        help="使用するLLMモデル"
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=8,
+        help="並列ワーカー数"
+    )
+    parser.add_argument(
+        "--block-size",
+        type=int,
+        default=2000,
+        help="バッチサイズ（トークン数）"
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="詳細ログ出力"
+    )
+
+    # ================================================================
+    # その他のオプション（変更なし）
+    # ================================================================
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="再開するジョブID"
+    )
+    parser.add_argument(
+        "--text-column",
+        type=str,
+        default=None,
+        help="CSVのテキストカラム名"
+    )
+    parser.add_argument(
+        "--max-rows",
+        type=int,
+        default=None,
+        help="最大処理行数（CSV用）"
+    )
+    parser.add_argument(
+        "--combine-rows",
+        action="store_true",
+        help="CSV全行を結合"
+    )
 
     args = parser.parse_args()
 
+    # ロギング設定
     setup_logging(verbose=args.verbose)
 
-    input_path = Path(args.input)
+    # ================================================================
+    # 入力ファイル読み込み（✅ args.input → args.input_file）
+    # ================================================================
+    input_path = Path(args.input_file)  # ✅ 変更
     if not input_path.exists():
-        logger.error(f"入力ファイルが見つかりません: {args.input}")
+        logger.error(f"入力ファイルが見つかりません: {args.input_file}")
         return
 
     file_extension = input_path.suffix.lower()
 
+    # テキスト読み込み
+    text = ""  # ✅ 初期化（警告回避）
+
     if file_extension == '.csv':
         text = load_text_from_csv(
-            csv_path=args.input,
+            csv_path=args.input_file,  # ✅ 変更
             text_column=args.text_column,
             max_rows=args.max_rows,
             combine_rows=args.combine_rows
         )
     else:
-        with open(args.input, 'r', encoding='utf-8') as f:
+        with open(args.input_file, 'r', encoding='utf-8') as f:  # ✅ 変更
             text = f.read()
 
-    logger.info(f"入力ファイル: {args.input}")
-    logger.info(f"テキストサイズ: {format_size(len(text))}")
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("チャンキング処理開始")
+    logger.info("=" * 60)
+    logger.info(f"📁 入力ファイル: {args.input_file}")
+    logger.info(f"📊 テキストサイズ: {format_size(len(text))}")
+    logger.info(f"🤖 モデル: {args.model}")
+    logger.info(f"👥 並列ワーカー数: {args.workers}")
+    logger.info("=" * 60)
 
-    checkpoint_manager = CheckpointManager(job_id=args.resume) if args.resume else CheckpointManager()
+    # ================================================================
+    # 出力ファイル名の自動生成（✅ 新規機能）
+    # ================================================================
     dataset_type = input_path.stem
+    output_file = generate_output_filename(
+        args.input_file,
+        args.output,
+        dataset_type
+    )
+
+    logger.info(f"📝 出力ファイル: {output_file}")
+    logger.info("=" * 60)
+    logger.info("")
+
+    # ================================================================
+    # チャンク作成（既存処理）
+    # ================================================================
+    checkpoint_manager = CheckpointManager(job_id=args.resume) if args.resume else CheckpointManager()
 
     final_chunks = await chunks_all_async(
         text=text,
@@ -536,15 +694,23 @@ async def main():
         max_workers=args.workers,
         block_size=args.block_size,
         checkpoint_manager=checkpoint_manager,
-        output_file=args.output,
+        output_file=output_file,  # ✅ 自動生成されたファイル名
         dataset_type=dataset_type,
         source_file=input_path.name
     )
 
-    logger.info(f"\n✅ 処理完了: {len(final_chunks)} チャンク")
+    # ================================================================
+    # 完了ログ
+    # ================================================================
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("✅ チャンク作成完了")
+    logger.info("=" * 60)
+    logger.info(f"📊 生成チャンク数: {len(final_chunks)}")
+    logger.info(f"📁 出力ファイル: {output_file}")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 

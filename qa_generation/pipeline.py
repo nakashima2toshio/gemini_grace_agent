@@ -1,8 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-qa_generation/pipeline.py - Q/A生成パイプライン制御モジュール（改修版）
-CSV形式のチャンク読み込み機能を追加
+qa_generation/pipeline.py - Q/A生成パイプライン制御モジュール（リファクタリング版）
+
+改修内容:
+- input_chunksパラメータを削除（チャンク処理の統一）
+- テキストファイル（.txt）対応を追加
+- load_chunks_from_csv()メソッドを削除
+- コードの簡素化（約149行削減）
 """
 
 import sys
@@ -28,7 +33,6 @@ class QAPipeline:
     def __init__(self,
                  dataset_name: Optional[str] = None,
                  input_file: Optional[str] = None,
-                 input_chunks: Optional[str] = None,  # ✅ 新規追加: チャンクCSV
                  model: str = "gemini-2.0-flash",
                  output_dir: str = "qa_output/pipeline",
                  max_docs: Optional[int] = None,
@@ -36,8 +40,7 @@ class QAPipeline:
         """
         Args:
             dataset_name: データセット名 (cc_news, wikipedia_ja, etc.)
-            input_file: ローカル入力ファイルパス
-            input_chunks: 事前作成されたチャンクCSVファイルパス（✅ 新規）
+            input_file: ローカル入力ファイルパス（.txt, .csv）
             model: 使用するモデル
             output_dir: 出力ディレクトリ
             max_docs: 最大処理文書数
@@ -45,7 +48,6 @@ class QAPipeline:
         """
         self.dataset_name = dataset_name
         self.input_file = input_file
-        self.input_chunks = input_chunks  # ✅ 新規
         self.model = model
         self.output_dir = output_dir
         self.max_docs = max_docs
@@ -58,39 +60,23 @@ class QAPipeline:
 
     def _validate_inputs(self):
         """入力パラメータの検証"""
-        inputs = [self.dataset_name, self.input_file, self.input_chunks]
+        inputs = [self.dataset_name, self.input_file]
         non_none_count = sum(1 for x in inputs if x is not None)
 
         if non_none_count == 0:
             raise ValueError(
-                "dataset_name, input_file, input_chunks のいずれか1つを指定してください"
+                "dataset_name, input_file のいずれか1つを指定してください"
             )
 
         if non_none_count > 1:
             raise ValueError(
-                "dataset_name, input_file, input_chunks は同時に指定できません"
+                "dataset_name, input_file は同時に指定できません"
             )
 
     def _load_config(self) -> Dict[str, Any]:
         """設定をロード"""
-        if self.input_chunks:
-            # ✅ 新規: チャンクCSV用の動的設定
-            chunk_path = Path(self.input_chunks)
-            dataset_type = chunk_path.stem.replace('_chunks', '')
-
-            return {
-                "name"        : f"チャンクCSV ({chunk_path.name})",
-                "text_column" : "text",
-                "title_column": None,
-                "lang"        : "ja",  # デフォルト（CSVから推測可能なら変更）
-                "chunk_size"  : 300,
-                "qa_per_chunk": 3,
-                "type"        : dataset_type
-            }
-
-        elif self.input_file:
+        if self.input_file:
             # ローカルファイル用の動的設定
-            from pathlib import Path
             file_basename = Path(self.input_file).stem
             lang = "ja"  # デフォルト
             return {
@@ -100,19 +86,16 @@ class QAPipeline:
                 "lang"        : lang,
                 "chunk_size"  : 300,
                 "qa_per_chunk": 3,
-                "type"        : "custom_upload"
+                "type"        : file_basename
             }
 
         elif self.dataset_name:
+            # 事前定義データセット
             if self.dataset_name not in DATASET_CONFIGS:
-                raise ValueError(f"未対応のデータセット: {self.dataset_name}")
+                raise ValueError(f"未知のデータセット: {self.dataset_name}")
 
             config = DATASET_CONFIGS[self.dataset_name].copy()
-            # a02の拡張設定をマージ
-            if self.dataset_name in LOCAL_DATASET_EXTENSIONS:
-                config.update(LOCAL_DATASET_EXTENSIONS[self.dataset_name])
-
-            config["type"] = self.dataset_name
+            logger.info(f"データセット設定をロード: {self.dataset_name}")
             return config
 
         else:
@@ -125,128 +108,47 @@ class QAPipeline:
         logger.info("\n[1/4] データ読み込み...")
 
         if self.input_file:
-            df = load_uploaded_file(self.input_file)
+            file_path = Path(self.input_file)
+
+            # ✅ テキストファイル対応
+            if file_path.suffix == '.txt':
+                logger.info(f"  📄 テキストファイル: {self.input_file}")
+
+                # テキストファイルを読み込み
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+
+                # DataFrameに変換
+                df = pd.DataFrame([{
+                    'Combined_Text': text,
+                    'title'        : file_path.stem
+                }])
+
+                logger.info(f"  ✅ 読み込み完了: テキスト長 {len(text):,} 文字")
+
+            # ✅ CSVファイル対応
+            elif file_path.suffix == '.csv':
+                logger.info(f"  📊 CSVファイル: {self.input_file}")
+                df = load_uploaded_file(self.input_file)
+
+            else:
+                raise ValueError(f"未対応のファイル形式: {file_path.suffix}\n対応形式: .txt, .csv")
+
+            # 最大文書数制限
             if self.max_docs and len(df) > self.max_docs:
                 df = df.head(self.max_docs)
                 logger.info(f"  📊 最大文書数制限: {len(df)} 件に制限")
+
             return df
         else:
             return load_preprocessed_data(self.dataset_name)
-
-    # ================================================================
-    # ✅ 新規追加: チャンクCSV読み込み機能
-    # ================================================================
-
-    def load_chunks_from_csv(self) -> List[Dict]:
-        """
-        チャンクCSVを読み込んで既存形式に変換
-
-        Returns:
-            チャンクのリスト（既存形式）
-
-        Raises:
-            FileNotFoundError: ファイルが存在しない
-            ValueError: 必須カラムが不足している
-        """
-        logger.info("\n[2/4] チャンクCSV読み込み...")
-
-        # ファイル存在確認
-        chunk_path = Path(self.input_chunks)
-        if not chunk_path.exists():
-            raise FileNotFoundError(f"チャンクファイルが見つかりません: {self.input_chunks}")
-
-        logger.info(f"  📁 ファイル: {self.input_chunks}")
-
-        # CSV読み込み
-        try:
-            df = pd.read_csv(self.input_chunks)
-        except Exception as e:
-            raise ValueError(f"CSV読み込みエラー: {e}")
-
-        logger.info(f"  📊 読み込み: {len(df)} チャンク")
-
-        # 必須カラムのチェック
-        required_cols = ['chunk_id', 'text', 'tokens', 'chunk_idx']
-        missing_cols = [c for c in required_cols if c not in df.columns]
-
-        if missing_cols:
-            logger.error(f"  ❌ 必須カラムが不足: {missing_cols}")
-            logger.error(f"  現在のカラム: {list(df.columns)}")
-            raise ValueError(f"必須カラムが不足しています: {missing_cols}")
-
-        # 既存形式に変換
-        chunks = []
-        for idx, row in df.iterrows():
-            # センテンス情報の再生成（オプション）
-            sentences = self._split_sentences(row['text'])
-
-            chunk = {
-                'id'            : row['chunk_id'],
-                'text'          : row['text'],
-                'tokens'        : int(row['tokens']),
-                'chunk_idx'     : int(row['chunk_idx']),
-                'type'          : row.get('type', 'llm_chunk'),
-                'dataset_type'  : row.get('dataset_type', 'custom'),
-                'sentences'     : sentences,
-                'sentence_count': row.get('sentence_count', len(sentences)),
-                'source_file'   : row.get('source_file', ''),
-                # 追加のメタデータ
-                'doc_id'        : row.get('doc_id', f"doc_{idx}"),
-                'doc_idx'       : row.get('doc_idx', 0),
-            }
-
-            chunks.append(chunk)
-
-        # 統計情報をログ出力
-        total_tokens = sum(c['tokens'] for c in chunks)
-        avg_tokens = total_tokens / len(chunks) if chunks else 0
-
-        logger.info(f"  ✅ 変換完了:")
-        logger.info(f"     - チャンク数: {len(chunks)}")
-        logger.info(f"     - 総トークン数: {total_tokens:,}")
-        logger.info(f"     - 平均トークン数: {avg_tokens:.1f}")
-        logger.info(f"     - データセット種別: {chunks[0]['dataset_type'] if chunks else 'N/A'}")
-
-        return chunks
-
-    def _split_sentences(self, text: str) -> List[str]:
-        """
-        テキストを文に分割（簡易版）
-
-        Args:
-            text: 分割対象テキスト
-
-        Returns:
-            文のリスト
-        """
-        import re
-
-        # 句点・疑問符・感嘆符で分割
-        sentences = re.findall(r'[^。．.！？!?]+[。．.！？!?]\s*', text)
-
-        if not sentences:
-            # 句点がない場合は全体を1文とする
-            sentences = [text.strip()] if text.strip() else []
-        else:
-            # 最後に句点がない残りテキストを追加
-            last_pos = text.rfind(sentences[-1]) + len(sentences[-1])
-            if last_pos < len(text):
-                remaining = text[last_pos:].strip()
-                if remaining:
-                    sentences.append(remaining)
-
-        return [s.strip() for s in sentences if s.strip()]
-
-    # ================================================================
-    # 既存のメソッド（一部変更）
-    # ================================================================
 
     def create_chunks(self, df: pd.DataFrame,
                       overlap_tokens: int = 0,
                       use_similarity: bool = False,
                       similarity_threshold: float = 0.7,
                       max_workers: int = 8) -> List[Dict]:
-        """チャンクを作成する（既存メソッド）"""
+        """チャンクを作成する"""
         logger.info("\n[2/4] チャンク作成...")
         dataset_type = self.config.get("type", "unknown")
         max_docs_for_chunks = None if self.input_file else self.max_docs
@@ -338,10 +240,6 @@ class QAPipeline:
         dataset_type = self.config.get("type", "unknown")
         return save_results(qa_pairs, coverage_results, dataset_type, self.output_dir)
 
-    # ================================================================
-    # ✅ 改修: run メソッド（チャンクCSV対応）
-    # ================================================================
-
     def run(
             self,
             use_celery: bool = False,
@@ -356,43 +254,51 @@ class QAPipeline:
             use_similarity: bool = False,
             similarity_threshold: float = 0.7):
         """
-        パイプライン実行のショートカット
+        パイプライン実行
 
-        ✅ 改修ポイント:
-        - input_chunks が指定されている場合は、CSVからチャンクを読み込む
-        - それ以外は既存のフローと同じ
+        Args:
+            use_celery: Celery並列処理を使用するか
+            celery_workers: Celeryワーカー数
+            batch_chunks: 1回のAPIで処理するチャンク数
+            merge_chunks: 小さいチャンクを統合するか
+            min_tokens: 統合対象の最小トークン数
+            max_tokens: 統合後の最大トークン数
+            analyze_coverage: カバレージ分析を実行するか
+            coverage_threshold: カバレージ判定の類似度閾値
+            overlap_tokens: チャンク間の重複トークン数
+            use_similarity: ベクトル類似度分割を使用するか
+            similarity_threshold: 類似度分割の閾値
+
+        Returns:
+            Dict: 実行結果
+                - saved_files: 保存されたファイルパス
+                - qa_count: 生成されたQ/Aペア数
+                - coverage_results: カバレージ分析結果
+                - success: 成功フラグ
         """
         try:
             # ================================================================
-            # チャンクの取得（3つのパターン）
+            # データ読み込み + チャンク作成
             # ================================================================
+            logger.info("=" * 60)
+            logger.info("モード: チャンク作成 + Q/A生成")
+            logger.info("=" * 60)
 
-            if self.input_chunks:
-                # ✅ パターン1: チャンクCSVから読み込み
-                logger.info("=" * 60)
-                logger.info("モード: チャンクCSV読み込み")
-                logger.info("=" * 60)
-                chunks = self.load_chunks_from_csv()
+            # データ読み込み
+            df = self.load_data()
 
-            else:
-                # パターン2 & 3: 既存のフロー
-                logger.info("=" * 60)
-                logger.info("モード: 通常チャンク作成")
-                logger.info("=" * 60)
-                df = self.load_data()
-                chunks = self.create_chunks(
-                    df,
-                    overlap_tokens=overlap_tokens,
-                    use_similarity=use_similarity,
-                    similarity_threshold=similarity_threshold,
-                    max_workers=celery_workers
-                )
+            # チャンク作成
+            chunks = self.create_chunks(
+                df,
+                overlap_tokens=overlap_tokens,
+                use_similarity=use_similarity,
+                similarity_threshold=similarity_threshold,
+                max_workers=celery_workers
+            )
 
             # ================================================================
-            # 以降は共通処理
-            # ================================================================
-
             # Q/A生成
+            # ================================================================
             qa_pairs = self.generate_qa(
                 chunks, use_celery, celery_workers, batch_chunks,
                 merge_chunks, min_tokens, max_tokens
@@ -401,7 +307,9 @@ class QAPipeline:
             if not qa_pairs:
                 logger.warning("Q/Aペアが生成されませんでした")
 
+            # ================================================================
             # カバレージ分析
+            # ================================================================
             coverage_results = {}
             if analyze_coverage and qa_pairs:
                 coverage_results = self.evaluate_coverage(chunks, qa_pairs, coverage_threshold)
@@ -413,7 +321,9 @@ class QAPipeline:
                     "uncovered_chunks": []
                 }
 
+            # ================================================================
             # 結果保存
+            # ================================================================
             saved_files = self.save(qa_pairs, coverage_results)
 
             # 返り値

@@ -1,101 +1,23 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-"""
+# -*- coding: utf-8 -*-
 """
-./start_celery.sh stop
-./start_celery.sh restart -w 16
+make_qa_register_qdrant.py - Q/A生成からQdrant登録までを完結する統合ツール（リファクタリング版）
 
-make_qa_register_qdrant.py - Q/A生成からQdrant登録までを完結する統合ツール：
-make_qa.py + register_csv_to_qdrant.py の両方の処理。
-
-python qa_qdrant/mmake_qa_register_qdrant.py --input-csv OUTPUT/wikipedia_ja_5per_chunked.csv --collection wikipedia_ja_5per --use-celery --celery-workers 16 --recreate
-python qa_qdrant/make_qa_register_qdrant.py --input-csv OUTPUT/cc_news_5per_chunked.csv --collection cc_news_5per --use-celery --celery-workers 16 --recreate
-python qa_qdrant/mmake_qa_register_qdrant.py --input-csv OUTPUT/fineweb_edu_ja_5per_chunked.csv --collection fineweb_edu_ja_5per --use-celery --celery-workers 16 --recreate
-python qa_qdrant/mmake_qa_register_qdrant.py --input-csv OUTPUT/japanese_text_5per_chunked.csv --collection japanese_text_5per --use-celery --celery-workers 16 --recreate
-python qa_qdrant/mmake_qa_register_qdrant.py --input-csv OUTPUT/livedoor_5per_chunked.csv --collection livedoor_5per --use-celery --celery-workers 16 --recreate
-python qa_qdrant/mmake_qa_register_qdrant.py --input-csv OUTPUT/fineweb_edu_ja_5per_chunked.csv--collection cc_news_5per --use-celery --celery-workers 16 --recreate
-
-使用方法:
-1. 事前定義されたデータセットから生成 & 登録:
-python make_qa_register_qdrant.py \
- --dataset fineweb_edu_ja \
- --collection qa_fineweb_edu_ja \
- --use-celery \
- --celery-workers 16 \
- --recreate
-
-
-2. テキストCSVファイルからQ/A生成 & 登録（NEW!）:
-python make_qa_register_qdrant.py \
- --input-csv OUTPUT/cc_news_5per.csv \
- --collection cc_news_5per \
- --use-celery \
- --celery-workers 16 \
- --recreate
-
-3. Q/AペアCSVから直接登録（Q/A生成スキップ）:
-python make_qa_register_qdrant.py \
- --input-csv qa_output/qa_pairs_fineweb_edu_ja.csv \
- --collection cc_news_5per \
- --batch-size 100 \
- --recreate
-
-処理フロー:
---input-csv の場合:
-  1. CSVファイルを読み込み、カラムを確認
-  2-A. question/answer カラムがある → Q/A生成スキップ → Qdrant登録
-  2-B. text/Combined_Text カラムのみ → Q/A生成実行 → Qdrant登録
-  
---dataset の場合:
-  1. DATASET_CONFIGSから設定を取得
-  2. Q/A生成実行
-  3. Qdrant登録
-
-========================================================================
-新しいアーキテクチャに基づき、ドキュメントのチャンク化、Q/Aペアの生成、
-そしてQdrantベクトルデータベースへの登録を一貫して行います。
-# Flower起動
-celery -A celery_config flower --port=5555
-
-[Usage: ]
-・celery起動：
-redis cashe clear:
-redis-cli -n 0 DEL qa_generation
-
-# ステータス確認
-./start_celery.sh status
-
-# 停止
-./start_celery.sh stop
-
-# 再起動
-./start_celery.sh restart -w 16
-
-python make_qa_register_qdrant.py \
-  --dataset fineweb_edu_ja \
-  --collection qa_fineweb_edu_ja \
-  --use-celery \
-  --celery-workers 24 \
-  --recreate
-
-python make_qa_register_qdrant.py \
---dataset wikipedia_ja \
---collection qa_wikipedia_ja \
---use-celery \
---celery-workers 24 \
---recreate
-
+改修内容:
+- --input-chunksを廃止（チャンク処理の統一）
+- --input-csvを--input-fileに変更（テキスト/CSV両対応）
+- --outputオプションを追加（出力先の柔軟化）
+- --ui-outputオプションを追加（UI用CSV出力先の柔軟化）
 """
 
 import sys
 import os
-# 🔧 プロジェクトルートをPythonパスに追加
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import argparse
 import logging
 import re
 import pandas as pd
 from typing import List, Dict
+from pathlib import Path
 
 # QA生成関連
 from qa_generation.pipeline import QAPipeline
@@ -127,9 +49,27 @@ def normalize_source_filename(filename: str) -> str:
     return normalized
 
 
-def run_registration(csv_path: str, collection_name: str, recreate: bool, batch_size: int, provider: str):
+def run_registration(
+        csv_path: str,
+        collection_name: str,
+        recreate: bool,
+        batch_size: int,
+        provider: str,
+        ui_output_dir: str = "qa_output"  # ✅ 新規追加
+) -> bool:
     """
     Qdrant登録ロジックの実行
+
+    Args:
+        csv_path: Q/AペアCSVのパス
+        collection_name: Qdrantコレクション名
+        recreate: コレクションを再作成するか
+        batch_size: Embeddingバッチサイズ
+        provider: Embeddingプロバイダー
+        ui_output_dir: UI用正規化CSVの出力ディレクトリ（デフォルト: qa_output）
+
+    Returns:
+        bool: 成功時True、失敗時False
     """
     logger.info(f"\n" + "=" * 60)
     logger.info(f"Phase 2: Qdrant Registration")
@@ -147,7 +87,7 @@ def run_registration(csv_path: str, collection_name: str, recreate: bool, batch_
         logger.error(f"ファイル読み込みエラー: {e}")
         return False
 
-    # 2. ベクトル化対象テキストの準備 (question + answer)
+    # ベクトル化対象テキストの準備 (question + answer)
     if 'question' in df.columns and 'answer' in df.columns:
         texts = (df['question'].astype(str) + "\n" + df['answer'].astype(str)).tolist()
         logger.info("📝 ベクトル化対象: 'question' と 'answer' を結合")
@@ -155,7 +95,7 @@ def run_registration(csv_path: str, collection_name: str, recreate: bool, batch_
         logger.error("Q/Aカラムが見つかりません。")
         return False
 
-    # 3. Qdrant準備
+    # Qdrant準備
     try:
         client = create_qdrant_client()
         if recreate:
@@ -167,7 +107,7 @@ def run_registration(csv_path: str, collection_name: str, recreate: bool, batch_
         logger.error(f"Qdrant接続エラー: {e}")
         return False
 
-    # 4. バッチ処理によるEmbedding生成と登録
+    # バッチ処理によるEmbedding生成と登録
     total_processed = 0
     source_filename = os.path.basename(csv_path)
     normalized_filename = normalize_source_filename(source_filename)
@@ -192,7 +132,7 @@ def run_registration(csv_path: str, collection_name: str, recreate: bool, batch_
                 vectors,
                 domain=collection_name,
                 source_file=normalized_filename,
-                start_index=i  # バッチの開始インデックスを渡す
+                start_index=i
             )
 
             # source情報を確実に正規化名で登録
@@ -209,17 +149,14 @@ def run_registration(csv_path: str, collection_name: str, recreate: bool, batch_
         logger.error(f"登録中にエラー発生: {e}")
         return False
 
-    # =================================================================
     # UI用正規化CSVの作成
-    # =================================================================
     try:
-        output_dir = "qa_output"
+        output_dir = ui_output_dir  # ✅ パラメータ使用
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, normalized_filename)
 
         logger.info(f"📋 UI用ファイル作成: {output_path}")
 
-        # カラム存在チェック
         if 'question' in df.columns and 'answer' in df.columns:
             df[['question', 'answer']].to_csv(output_path, index=False, encoding='utf-8')
             logger.info(f"   -> 作成完了")
@@ -234,41 +171,81 @@ def run_registration(csv_path: str, collection_name: str, recreate: bool, batch_
 
 def main():
     parser = argparse.ArgumentParser(
-        description="統合ツール: Q/Aペア自動生成 & Qdrantデータベース登録"
+        description="統合ツール: Q/Aペア自動生成 & Qdrantデータベース登録（リファクタリング版）"
     )
 
-    # 生成パラメータ
+    # ================================================================
+    # 入力ソース（排他的）
+    # ================================================================
+    input_group = parser.add_argument_group("Input Source Options (choose one)")
+    input_group.add_argument(
+        "--dataset",
+        type=str,
+        choices=list(DATASET_CONFIGS.keys()),
+        help="事前定義されたデータセット名"
+    )
+    input_group.add_argument(
+        "--input-file",  # ✅ --input-csvから変更、テキストとCSV両対応
+        type=str,
+        help="入力ファイルのパス（.txt, .csv）"
+    )
+
+    # ================================================================
+    # QA生成パラメータ
+    # ================================================================
     group_gen = parser.add_argument_group("QA Generation Options")
-    group_gen.add_argument("--dataset", type=str, choices=list(DATASET_CONFIGS.keys()),
-                           help="事前定義されたデータセット名（DATASET_CONFIGSから選択）")
-    group_gen.add_argument("--input-csv", type=str,
-                           help="入力CSVファイルのパス（--datasetの代わりに使用可能）")
     group_gen.add_argument("--model", type=str, default="gemini-2.0-flash")
     group_gen.add_argument("--max-docs", type=int, default=None)
     group_gen.add_argument("--use-celery", action="store_true", help="Celery並列処理を使用")
     group_gen.add_argument("--celery-workers", type=int, default=8)
     group_gen.add_argument("--batch-chunks", type=int, default=3)
     group_gen.add_argument("--merge-chunks", action="store_true", default=True)
-    group_gen.add_argument("--overlap-tokens", type=int, default=0, help="チャンク間の重複トークン数")
-    group_gen.add_argument("--use-similarity", action="store_true", help="ベクトル類似度によるセマンティック分割を使用")
-    group_gen.add_argument("--similarity-threshold", type=float, default=0.7, help="セマンティック分割の類似度閾値")
+    group_gen.add_argument("--overlap-tokens", type=int, default=0)
+    group_gen.add_argument("--use-similarity", action="store_true")
+    group_gen.add_argument("--similarity-threshold", type=float, default=0.7)
 
-    # 登録パラメータ
+    # ================================================================
+    # Qdrant登録パラメータ
+    # ================================================================
     group_reg = parser.add_argument_group("Qdrant Registration Options")
     group_reg.add_argument("--collection", type=str, required=True, help="登録先コレクション名")
     group_reg.add_argument("--recreate", action="store_true", help="コレクションを再作成")
     group_reg.add_argument("--batch-size", type=int, default=100, help="Embeddingバッチサイズ")
     group_reg.add_argument("--provider", type=str, default="gemini")
 
+    # ================================================================
+    # 出力パラメータ ✅ 新規追加
+    # ================================================================
+    group_output = parser.add_argument_group("Output Options")
+    group_output.add_argument(
+        "--output",
+        type=str,
+        default="qa_output/pipeline",
+        help="Q/AペアCSVの出力ディレクトリ（デフォルト: qa_output/pipeline）"
+    )
+    group_output.add_argument(
+        "--ui-output",
+        type=str,
+        default="qa_output",
+        help="UI用正規化CSVの出力ディレクトリ（デフォルト: qa_output）"
+    )
+
     args = parser.parse_args()
 
-    # datasetとinput-csvのどちらか一方が必須
-    if not args.dataset and not args.input_csv:
-        logger.error("--dataset または --input-csv のいずれかを指定してください")
+    # ================================================================
+    # 入力検証
+    # ================================================================
+    input_count = sum([
+        args.dataset is not None,
+        args.input_file is not None,  # ✅ input_csvから変更
+    ])
+
+    if input_count == 0:
+        logger.error("--dataset, --input-file のいずれか1つを指定してください")
         sys.exit(1)
 
-    if args.dataset and args.input_csv:
-        logger.error("--dataset と --input-csv は同時に指定できません")
+    if input_count > 1:
+        logger.error("--dataset, --input-file は同時に指定できません")
         sys.exit(1)
 
     # APIキー確認
@@ -277,47 +254,32 @@ def main():
         sys.exit(1)
 
     try:
+        # ================================================================
         # Phase 1: Q/A生成
+        # ================================================================
         logger.info(f"\n" + "=" * 60)
         logger.info(f"Phase 1: QA Generation Pipeline")
         logger.info(f"=" * 60)
 
-        # input-csvが指定された場合は、Q/A生成をスキップして直接登録へ
-        if args.input_csv:
-            if not os.path.exists(args.input_csv):
-                logger.error(f"入力ファイルが見つかりません: {args.input_csv}")
+        # ✅ 入力ファイルが指定された場合
+        if args.input_file:
+            if not os.path.exists(args.input_file):
+                logger.error(f"入力ファイルが見つかりません: {args.input_file}")
                 sys.exit(1)
 
-            logger.info(f"📁 既存のCSVファイルを使用: {args.input_csv}")
-            
-            # CSVファイルの内容を確認
-            try:
-                df_check = pd.read_csv(args.input_csv)
-                logger.info(f"✅ CSVファイル確認: {len(df_check)} 行")
-                logger.info(f"   カラム: {list(df_check.columns)}")
-            except Exception as e:
-                logger.error(f"CSVファイルの読み込みエラー: {e}")
-                sys.exit(1)
-            
-            # question/answerカラムの有無を確認
-            has_qa_columns = 'question' in df_check.columns and 'answer' in df_check.columns
-            has_text_columns = 'text' in df_check.columns or 'Combined_Text' in df_check.columns
-            
-            if has_qa_columns:
-                # 既にQ/Aペアが存在する場合は生成をスキップ
-                logger.info("✅ Q/Aカラムが存在します - Q/A生成をスキップして登録へ")
-                generated_csv = args.input_csv
-                qa_count = len(df_check)
-                
-            elif has_text_columns:
-                # テキストカラムしかない場合はQ/A生成を実行
-                logger.info("📝 テキストカラムのみ検出 - Q/A生成を実行します")
-                logger.info(f"   use_celery: {args.use_celery}, workers: {args.celery_workers}")
-                
+            logger.info(f"📁 入力ファイル: {args.input_file}")
+
+            file_path = Path(args.input_file)
+
+            # ✅ ファイル種別判定
+            if file_path.suffix == '.txt':
+                # テキストファイル → 常にチャンク作成 + Q/A生成
+                logger.info("📝 テキストファイル検出 - チャンク作成 + Q/A生成を実行します")
+
                 pipeline = QAPipeline(
-                    dataset_name=None,
-                    input_file=args.input_csv,
+                    input_file=args.input_file,
                     model=args.model,
+                    output_dir=args.output,  # ✅ 出力先を指定
                     max_docs=args.max_docs
                 )
 
@@ -331,7 +293,7 @@ def main():
                     use_similarity=args.use_similarity,
                     similarity_threshold=args.similarity_threshold
                 )
-                
+
                 generated_csv = result['saved_files'].get('qa_csv')
                 if not generated_csv or not os.path.exists(generated_csv):
                     logger.error("Q/A生成フェーズでCSVファイルが作成されませんでした。")
@@ -339,16 +301,72 @@ def main():
 
                 qa_count = result['qa_count']
                 logger.info(f"✅ Q/A生成完了: {qa_count} ペア")
-                
+
+            elif file_path.suffix == '.csv':
+                # CSV → カラムで判定
+                try:
+                    df_check = pd.read_csv(args.input_file)
+                    logger.info(f"✅ CSVファイル確認: {len(df_check)} 行")
+                    logger.info(f"   カラム: {list(df_check.columns)}")
+                except Exception as e:
+                    logger.error(f"CSVファイルの読み込みエラー: {e}")
+                    sys.exit(1)
+
+                has_qa_columns = 'question' in df_check.columns and 'answer' in df_check.columns
+                has_text_columns = 'text' in df_check.columns or 'Combined_Text' in df_check.columns
+
+                if has_qa_columns:
+                    # Q/Aペア → Phase 1スキップ
+                    logger.info("✅ Q/Aカラムが存在します - Q/A生成をスキップして登録へ")
+                    generated_csv = args.input_file
+                    qa_count = len(df_check)
+
+                elif has_text_columns:
+                    # テキストのみ → チャンク作成 + Q/A生成
+                    logger.info("📝 テキストカラムのみ検出 - チャンク作成 + Q/A生成を実行します")
+
+                    pipeline = QAPipeline(
+                        input_file=args.input_file,
+                        model=args.model,
+                        output_dir=args.output,  # ✅ 出力先を指定
+                        max_docs=args.max_docs
+                    )
+
+                    result = pipeline.run(
+                        use_celery=args.use_celery,
+                        celery_workers=args.celery_workers,
+                        batch_chunks=args.batch_chunks,
+                        merge_chunks=args.merge_chunks,
+                        analyze_coverage=True,
+                        overlap_tokens=args.overlap_tokens,
+                        use_similarity=args.use_similarity,
+                        similarity_threshold=args.similarity_threshold
+                    )
+
+                    generated_csv = result['saved_files'].get('qa_csv')
+                    if not generated_csv or not os.path.exists(generated_csv):
+                        logger.error("Q/A生成フェーズでCSVファイルが作成されませんでした。")
+                        sys.exit(1)
+
+                    qa_count = result['qa_count']
+                    logger.info(f"✅ Q/A生成完了: {qa_count} ペア")
+
+                else:
+                    logger.error("❌ CSVファイルに必要なカラムが見つかりません")
+                    logger.error("   必要なカラム: (question + answer) または (text または Combined_Text)")
+                    sys.exit(1)
+
             else:
-                logger.error("❌ CSVファイルに必要なカラムが見つかりません")
-                logger.error("   必要なカラム: (question + answer) または (text または Combined_Text)")
+                logger.error(f"❌ 未対応のファイル形式: {file_path.suffix}")
+                logger.error("   対応形式: .txt, .csv")
                 sys.exit(1)
+
+        # datasetが指定された場合
         else:
-            # 従来通りdatasetを使用してQ/A生成
             pipeline = QAPipeline(
                 dataset_name=args.dataset,
                 model=args.model,
+                output_dir=args.output,  # ✅ 出力先を指定
                 max_docs=args.max_docs
             )
 
@@ -371,13 +389,16 @@ def main():
             qa_count = result['qa_count']
             logger.info(f"✅ Q/A生成完了: {qa_count} ペア")
 
+        # ================================================================
         # Phase 2: Qdrant登録
+        # ================================================================
         success = run_registration(
             csv_path=generated_csv,
             collection_name=args.collection,
             recreate=args.recreate,
             batch_size=args.batch_size,
-            provider=args.provider
+            provider=args.provider,
+            ui_output_dir=args.ui_output  # ✅ 出力先を指定
         )
 
         if success:
@@ -385,6 +406,9 @@ def main():
             logger.info(f"🎉 統合処理が正常に完了しました！")
             logger.info(f"   コレクション: {args.collection}")
             logger.info(f"   データ件数  : {qa_count} 件")
+            logger.info(f"   Q/A CSV     : {generated_csv}")
+            logger.info(
+                f"   UI用CSV     : {os.path.join(args.ui_output, normalize_source_filename(os.path.basename(generated_csv)))}")
             logger.info(f"=" * 60)
         else:
             logger.error("\n❌ Qdrant登録フェーズで失敗しました。")

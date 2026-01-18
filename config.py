@@ -7,7 +7,7 @@ config.py - 設定・定数の一元管理
 
 使用箇所:
 - agent_rag.py (Web UI)
-- make_qa.py / register_qdrant.py / make_qa_register_qdrant.py (CLI)
+- make_qa.py / register_qdrant.py / make_qa_register_qdrant_old.py (CLI)
 - celery_tasks.py / celery_config.py
 - helper_rag.py / helper_llm.py
 - qdrant_client_wrapper.py
