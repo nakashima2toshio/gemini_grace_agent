@@ -1,4 +1,22 @@
-# make_qa_register_qdrant.py 完全ガイド
+## make_qa_register_qdrant.py 完全ガイド
+
+- プロジェクト構成
+================
+
+実行ファイル層（4つのCLIツール）
+├── make_qa.py                        ⬅️ Q/A生成専用ツール
+├── register_csv_to_qdrant.py         ⬅️ 汎用CSV登録ツール
+├── register_qdrant.py                ⬅️ make_qa出力専用登録ツール
+└── make_qa_register_qdrant.py        ⬅️ 統合ツール（Q/A生成→Qdrant登録）
+
+共通モジュール層（全ツールが依存）
+├── qa_generation/
+│   └── pipeline.py                   ⬅️ QAPipeline（Q/A生成ロジック）
+├── services/
+│   └── qdrant_service.py             ⬅️ Qdrant操作ロジック
+├── qdrant_client_wrapper.py          ⬅️ Qdrantクライアント作成
+└── config.py                         ⬅️ DATASET_CONFIGS、QdrantConfig
+
 
 ## 📋 目次
 
