@@ -98,13 +98,11 @@ class AsyncAPIClient:
         """
         セマフォで並列数を制御しながらAPI呼び出し
         失敗時は指数バックオフでリトライ
-        
         Args:
             model: Geminiモデル名
             contents: 入力テキスト
             response_schema: レスポンスのPydanticスキーマ
             task_id: タスク識別子（ログ用）
-        
         Returns:
             レスポンステキスト、または失敗時はNone
         """

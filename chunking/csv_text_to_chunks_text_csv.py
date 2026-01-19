@@ -87,9 +87,9 @@ def _normalize_whitespace(text: str) -> str:
         正規化されたテキスト
 
     Examples:
-        >>> _normalize_whitespace("行1\\n\\n行2")
+        _normalize_whitespace("行1\\n\\n行2")
         '行1 行2'
-        >>> _normalize_whitespace("  複数    空白  ")
+        _normalize_whitespace("  複数    空白  ")
         '複数 空白'
     """
     # 改行を半角スペースに置換
@@ -278,10 +278,10 @@ def generate_output_filename(
         出力ファイルの絶対パス
 
     Examples:
-        >>> generate_output_filename("data/input.txt", "chunks_output", "custom")
+        generate_output_filename("data/input.txt", "chunks_output", "custom")
         'chunks_output/input_chunks_20250118_123456.csv'
 
-        >>> generate_output_filename("data/cc_news.csv", "chunks_output", "cc_news")
+        generate_output_filename("data/cc_news.csv", "chunks_output", "cc_news")
         'chunks_output/cc_news_chunks_20250118_123456.csv'
     """
     from datetime import datetime
@@ -322,7 +322,7 @@ def _split_sentences_simple(text: str) -> List[str]:
 
 
 # ================================================================
-# chunks_all_async関数（変更なし - 既存コードと同じ）
+# chunks_all_async関数
 # ================================================================
 
 async def chunks_all_async(
