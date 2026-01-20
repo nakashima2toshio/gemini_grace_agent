@@ -76,7 +76,7 @@ def normalize_source_filename(filename: str) -> str:
         str: 正規化されたファイル名
 
     Example:
-        >>> normalize_source_filename("qa_pairs_fineweb_edu_ja_20251230_123456.csv")
+        normalize_source_filename("qa_pairs_fineweb_edu_ja_20251230_123456.csv")
         'qa_pairs_fineweb_edu_ja.csv'
     """
     normalized = re.sub(r'_\d{8}_\d{6}', '', filename)

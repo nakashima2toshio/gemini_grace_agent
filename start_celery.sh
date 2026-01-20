@@ -1,240 +1,219 @@
 #!/bin/bash
-# start_celery.sh - Celeryワーカー起動スクリプト
-# =============================================
-# Q/A生成のCeleryワーカーを起動・管理
-# ---------------------------------------------
-# ./start_celery.sh stop
-# ./start_celery.sh restart -w 16
-# ---------------------------------------------
-#!/bin/bash
-# start_celery.sh - Celeryワーカー起動スクリプト
-# =============================================
-# Q/A生成のCeleryワーカーを起動・管理
-# ---------------------------------------------
-# ./start_celery.sh stop
-# ./start_celery.sh restart -w 16
-# ---------------------------------------------
-# 色付き出力
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# start_celery_fixed.sh - Celeryワーカー起動スクリプト（修正版）
+#
+# 問題点:
+# 元のスクリプトで -Q オプションが指定されていなかったため、
+# ワーカーがデフォルトキュー 'celery' を監視していなかった
+#
+# 使用方法:
+#   ./start_celery_fixed.sh start -w 8
+#   ./start_celery_fixed.sh stop
+#   ./start_celery_fixed.sh status
+#   ./start_celery_fixed.sh restart -w 8
+
+set -e
+
+# プロジェクトルート
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
+cd "$PROJECT_ROOT"
+
+# ログディレクトリ
+LOG_DIR="$PROJECT_ROOT/logs"
+mkdir -p "$LOG_DIR"
+
+# 環境変数
+export PYTHONPATH="$PROJECT_ROOT:$PROJECT_ROOT/helper"
+
+# ★★★ 重要: すべてのキューを指定 ★★★
+QUEUES="celery,high_priority,normal_priority,low_priority"
 
 # デフォルト設定
-WORKERS=24
-LOG_LEVEL="info"
-QUEUE_NAME="qa_generation"
+WORKERS=8
+LOGLEVEL="INFO"
 
-# ヘルプメッセージ
-usage() {
-    echo "Usage: $0 [start|stop|status|restart] [options]"
+# ヘルプ表示
+show_help() {
+    echo "使用方法: $0 {start|stop|restart|status} [-w workers]"
     echo ""
-    echo "Commands:"
-    echo "  start    Celeryワーカーを起動"
-    echo "  stop     Celeryワーカーを停止"
-    echo "  status   ワーカーのステータスを確認"
-    echo "  restart  ワーカーを再起動"
+    echo "コマンド:"
+    echo "  start   - ワーカーを起動"
+    echo "  stop    - ワーカーを停止"
+    echo "  restart - ワーカーを再起動"
+    echo "  status  - ワーカーの状態を表示"
     echo ""
-    echo "Options:"
-    echo "  -w, --workers NUM    ワーカー数（デフォルト: 4）"
-    echo "  -l, --loglevel LEVEL ログレベル（debug|info|warning|error）"
+    echo "オプション:"
+    echo "  -w, --workers  ワーカー数 (デフォルト: 8)"
     echo ""
-    echo "Example:"
-    echo "  $0 start -w 8        # 8ワーカーで起動"
-    echo "  $0 status            # ステータス確認"
-    exit 1
+    echo "例:"
+    echo "  $0 start -w 4"
+    echo "  $0 stop"
 }
 
-# Redisサーバーの確認
-check_redis() {
-    echo -e "${YELLOW}Redisサーバーを確認中...${NC}"
-    if redis-cli ping > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ Redisサーバーが起動しています${NC}"
-        return 0
-    else
-        echo -e "${RED}✗ Redisサーバーが起動していません${NC}"
-        echo "以下のコマンドでRedisを起動してください："
-        echo "  brew services start redis  # macOS"
-        echo "  sudo systemctl start redis  # Linux"
-        return 1
-    fi
-}
-
-# Celeryワーカーの完全クリーンアップ
-cleanup_workers() {
-    # 古いPIDファイルを削除
-    if [ -f /tmp/celery_qa.pid ]; then
-        rm -f /tmp/celery_qa.pid
-    fi
-
-    # 全てのCeleryワーカープロセスを強制終了
-    pkill -9 -f "celery.*worker" 2>/dev/null
-    sleep 1
-}
-
-# Celeryワーカーの起動
-start_workers() {
-    echo -e "${YELLOW}Celeryワーカーを起動中...${NC}"
-
-    # 既存のワーカーをチェック
-    if pgrep -f "celery.*worker.*qa_generation" > /dev/null; then
-        echo -e "${YELLOW}既にワーカーが起動しています${NC}"
-        echo -e "${YELLOW}クリーンアップして再起動します...${NC}"
-        cleanup_workers
-    fi
-
-    # プロジェクトルートディレクトリを取得
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-    PROJECT_ROOT="${SCRIPT_DIR}"
-
-    # PYTHONPATHにプロジェクトルートとhelperディレクトリを追加
-    export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/helper:${PYTHONPATH}"
-
-    # gRPC DNS解決の環境変数を設定
-    export GRPC_DNS_RESOLVER=native
-    export GRPC_ENABLE_FORK_SUPPORT=1
-
-    echo -e "${GREEN}プロジェクトルート: ${PROJECT_ROOT}${NC}"
-    echo -e "${GREEN}PYTHONPATH: ${PYTHONPATH}${NC}"
-
-    # helper_llmモジュールの存在確認
-    if [ -f "${PROJECT_ROOT}/helper/helper_llm.py" ]; then
-        echo -e "${GREEN}✓ helper/helper_llm.py が見つかりました${NC}"
-    else
-        echo -e "${RED}✗ helper/helper_llm.py が見つかりません${NC}"
-        echo -e "${YELLOW}プロジェクトに helper/helper_llm.py が必要です${NC}"
-
-        # デバッグ情報
-        echo -e "${YELLOW}現在のディレクトリ構造を確認中...${NC}"
-        ls -la "${PROJECT_ROOT}/helper/" 2>/dev/null || echo "helperディレクトリが存在しません"
-        return 1
-    fi
-
-    # Celeryワーカーを起動（celery_configを使用）
-    celery -A celery_config worker \
-        --loglevel=${LOG_LEVEL} \
-        --concurrency=${WORKERS} \
-        --pool=prefork \
-        --queues=${QUEUE_NAME} \
-        --hostname=qa_worker@%h \
-        --pidfile=/tmp/celery_qa.pid \
-        --logfile=logs/celery_qa_%n.log \
-        --detach
-
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✓ Celeryワーカーを起動しました（${WORKERS}ワーカー）${NC}"
-        echo "ログファイル: logs/celery_qa_*.log"
-        return 0
-    else
-        echo -e "${RED}✗ ワーカーの起動に失敗しました${NC}"
-        return 1
-    fi
-}
-
-# Celeryワーカーの停止
+# ワーカー停止
 stop_workers() {
-    echo -e "${YELLOW}Celeryワーカーを停止中...${NC}"
+    echo "Celeryワーカーを停止中..."
+    pkill -9 -f "celery.*worker" 2>/dev/null || true
+    pkill -9 -f "celery_config" 2>/dev/null || true
+    sleep 2
 
-    # PIDファイルから停止
-    if [ -f /tmp/celery_qa.pid ]; then
-        PID=$(cat /tmp/celery_qa.pid)
-        kill -TERM $PID 2>/dev/null
-        sleep 2
-
-        # 完全に停止したか確認
-        if ! kill -0 $PID 2>/dev/null; then
-            rm -f /tmp/celery_qa.pid
-            echo -e "${GREEN}✓ ワーカーを停止しました${NC}"
-        else
-            echo -e "${YELLOW}強制終了を試みます...${NC}"
-            kill -9 $PID 2>/dev/null
-            rm -f /tmp/celery_qa.pid
-            echo -e "${GREEN}✓ ワーカーを強制停止しました${NC}"
-        fi
+    # 確認
+    remaining=$(ps aux | grep -E 'celery.*worker' | grep -v grep | wc -l)
+    if [ "$remaining" -eq 0 ]; then
+        echo "✅ ワーカーを停止しました"
     else
-        # プロセス名で検索して停止
-        pkill -f "celery.*worker.*qa_generation"
-        echo -e "${GREEN}✓ ワーカーを停止しました${NC}"
+        echo "⚠️ まだプロセスが残っています"
+        ps aux | grep -E 'celery.*worker' | grep -v grep
+    fi
+}
+
+# ワーカー起動
+start_workers() {
+    echo "Celeryワーカーを起動中..."
+    echo "プロジェクトルート: $PROJECT_ROOT"
+    echo "PYTHONPATH: $PYTHONPATH"
+    echo "ワーカー数: $WORKERS"
+    echo "監視キュー: $QUEUES"  # ★ 重要
+
+    # helper/helper_llm.py の存在確認
+    if [ -f "$PROJECT_ROOT/helper/helper_llm.py" ]; then
+        echo "✅ helper/helper_llm.py が見つかりました"
+    else
+        echo "⚠️ helper/helper_llm.py が見つかりません"
+    fi
+
+    # ★★★ 修正ポイント: -Q オプションで全キューを指定 ★★★
+    nohup celery -A celery_config worker \
+        --loglevel=$LOGLEVEL \
+        --concurrency=$WORKERS \
+        -Q $QUEUES \
+        -n qa_worker@%h \
+        > "$LOG_DIR/celery_qa_worker.log" 2>&1 &
+
+    sleep 3
+
+    # 起動確認
+    if pgrep -f "celery.*worker" > /dev/null; then
+        echo "✅ Celeryワーカーを起動しました（$WORKERS ワーカー）"
+        echo "ログファイル: $LOG_DIR/celery_qa_worker.log"
+
+        # 監視キューの確認
+        echo ""
+        echo "📋 監視キューの確認中..."
+        sleep 2
+        python3 -c "
+from celery_config import app
+inspect = app.control.inspect()
+queues = inspect.active_queues()
+if queues:
+    for worker, q_list in queues.items():
+        print(f'ワーカー: {worker}')
+        for q in q_list:
+            print(f'  ✅ キュー: {q[\"name\"]}')
+else:
+    print('⚠️ キュー情報を取得できません')
+"
+    else
+        echo "❌ ワーカーの起動に失敗しました"
+        echo "ログを確認: tail -50 $LOG_DIR/celery_qa_worker.log"
+        exit 1
     fi
 }
 
 # ステータス確認
-check_status() {
-    echo -e "${YELLOW}=== Celeryワーカー ステータス ===${NC}"
+show_status() {
+    echo "Celeryワーカーの状態:"
 
-    # Redisの状態
+    # プロセス確認
+    if pgrep -f "celery.*worker" > /dev/null; then
+        echo "✅ ワーカーが起動しています"
+        ps aux | grep -E 'celery.*worker' | grep -v grep
+    else
+        echo "❌ ワーカーが起動していません"
+        return
+    fi
+
+    # 詳細情報
+    python3 -c "
+from celery_config import app
+inspect = app.control.inspect()
+
+print()
+print('--- ワーカー統計 ---')
+stats = inspect.stats()
+if stats:
+    for worker, info in stats.items():
+        pool = info.get('pool', {})
+        print(f'{worker}: concurrency={pool.get(\"max-concurrency\", \"N/A\")}')
+else:
+    print('⚠️ 統計情報を取得できません')
+
+print()
+print('--- 監視キュー ---')
+queues = inspect.active_queues()
+if queues:
+    for worker, q_list in queues.items():
+        for q in q_list:
+            print(f'  ✅ {q[\"name\"]}')
+else:
+    print('⚠️ キュー情報を取得できません')
+"
+}
+
+# Redis確認
+check_redis() {
+    echo "Redisサーバーを確認中..."
     if redis-cli ping > /dev/null 2>&1; then
-        echo -e "Redis: ${GREEN}✓ 起動中${NC}"
-
-        # キューの状態を確認
-        QUEUE_LENGTH=$(redis-cli llen celery 2>/dev/null || echo "0")
-        echo -e "キュー長: ${QUEUE_LENGTH}"
+        echo "✅ Redisサーバーが起動しています"
+        return 0
     else
-        echo -e "Redis: ${RED}✗ 停止中${NC}"
-    fi
-
-    # ワーカーの状態
-    if pgrep -f "celery.*worker.*qa_generation" > /dev/null; then
-        echo -e "ワーカー: ${GREEN}✓ 起動中${NC}"
-
-        # 詳細情報
-        celery -A celery_tasks inspect active --timeout=2 2>/dev/null || true
-        celery -A celery_tasks inspect stats --timeout=2 2>/dev/null | head -20 || true
-    else
-        echo -e "ワーカー: ${RED}✗ 停止中${NC}"
-    fi
-
-    # ログファイルの最新行
-    if ls logs/celery_qa_*.log 1>/dev/null 2>&1; then
-        echo -e "\n${YELLOW}=== 最新のログ ===${NC}"
-        tail -5 logs/celery_qa_*.log 2>/dev/null || true
+        echo "❌ Redisサーバーが起動していません"
+        echo "起動方法: brew services start redis (macOS)"
+        return 1
     fi
 }
 
-# logsディレクトリの作成
-mkdir -p logs
+# メイン処理
+COMMAND=${1:-help}
+shift || true
 
-# コマンドライン引数の解析
-COMMAND=$1
-shift
-
+# オプション解析
 while [[ $# -gt 0 ]]; do
     case $1 in
         -w|--workers)
             WORKERS="$2"
             shift 2
             ;;
-        -l|--loglevel)
-            LOG_LEVEL="$2"
-            shift 2
-            ;;
-        -h|--help)
-            usage
-            ;;
         *)
-            echo "不明なオプション: $1"
-            usage
+            shift
             ;;
     esac
 done
 
-# メイン処理
 case $COMMAND in
     start)
-        check_redis && start_workers
+        check_redis
+        start_workers
         ;;
     stop)
         stop_workers
         ;;
-    status)
-        check_status
-        ;;
     restart)
         stop_workers
-        sleep 2
-        check_redis && start_workers
+        redis-cli FLUSHALL > /dev/null
+        echo "✅ Redisをクリアしました"
+        check_redis
+        start_workers
+        ;;
+    status)
+        show_status
+        ;;
+    help|--help|-h)
+        show_help
         ;;
     *)
-        usage
+        echo "不明なコマンド: $COMMAND"
+        show_help
+        exit 1
         ;;
 esac

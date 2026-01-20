@@ -173,21 +173,27 @@ class QAPipeline:
                     batch_chunks: int = 3,
                     merge_chunks: bool = True,
                     min_tokens: int = 150,
-                    max_tokens: int = 400) -> List[Dict]:
+                    max_tokens: int = 400,
+                    use_smart_generation: bool = True) -> List[Dict]:
         """Q/Aペアを生成する"""
         logger.info("\n[3/4] Q/Aペア生成...")
 
+        # ✨ スマート生成モードのログ出力
+        mode_name = "スマート生成" if use_smart_generation else "従来方式"
+        logger.info(f"  生成モード: {mode_name}")
+
         if use_celery:
             return self._generate_with_celery(
-                chunks, celery_workers, batch_chunks, merge_chunks, min_tokens, max_tokens
+                chunks, celery_workers, batch_chunks, merge_chunks, min_tokens, max_tokens, use_smart_generation
             )
         else:
             return self._generate_sync(
-                chunks, batch_chunks, merge_chunks, min_tokens, max_tokens
+                chunks, batch_chunks, merge_chunks, min_tokens, max_tokens, use_smart_generation
             )
 
     def _generate_with_celery(self, chunks: List[Dict], workers: int, batch_size: int,
-                              merge: bool, min_tokens: int, max_tokens: int) -> List[Dict]:
+                              merge: bool, min_tokens: int, max_tokens: int,
+                              use_smart_generation: bool) -> List[Dict]:
         """Celeryを使用した非同期生成"""
         logger.info(f"Celery並列処理モード: ワーカー数={workers}")
         logger.info("Celeryワーカーの状態を確認中...")
@@ -199,8 +205,10 @@ class QAPipeline:
         else:
             processed_chunks = chunks
 
+        # ✨ use_smart_generationをCeleryタスクに渡す
         tasks = submit_unified_qa_generation(
-            processed_chunks, self.config, self.model, provider="gemini"
+            processed_chunks, self.config, self.model, provider="gemini",
+            use_smart_generation=use_smart_generation  # ✨ 追加
         )
 
         timeout_seconds = min(max(len(tasks) * 10, 600), 1800)
@@ -208,7 +216,8 @@ class QAPipeline:
         return collect_results(tasks, timeout=timeout_seconds)
 
     def _generate_sync(self, chunks: List[Dict], batch_size: int,
-                       merge: bool, min_tokens: int, max_tokens: int) -> List[Dict]:
+                       merge: bool, min_tokens: int, max_tokens: int,
+                       use_smart_generation: bool) -> List[Dict]:
         """同期生成"""
         logger.info("通常処理モード")
         dataset_type = self.config.get("type", "unknown")
@@ -222,7 +231,8 @@ class QAPipeline:
             min_tokens=min_tokens,
             max_tokens=max_tokens,
             config=self.config,
-            client=self.client
+            client=self.client,
+            use_smart_generation=use_smart_generation  # ✨ 追加
         )
 
     def evaluate_coverage(self, chunks: List[Dict], qa_pairs: List[Dict],
@@ -252,7 +262,8 @@ class QAPipeline:
             coverage_threshold: Optional[float] = None,
             overlap_tokens: int = 0,
             use_similarity: bool = False,
-            similarity_threshold: float = 0.7):
+            similarity_threshold: float = 0.7,
+            use_smart_generation: bool = True):  # ✨ デフォルトをTrueに変更
         """
         パイプライン実行
 
@@ -268,6 +279,7 @@ class QAPipeline:
             overlap_tokens: チャンク間の重複トークン数
             use_similarity: ベクトル類似度分割を使用するか
             similarity_threshold: 類似度分割の閾値
+            use_smart_generation: スマートQ/A生成を使用するか（デフォルト: True）
 
         Returns:
             Dict: 実行結果
@@ -301,7 +313,7 @@ class QAPipeline:
             # ================================================================
             qa_pairs = self.generate_qa(
                 chunks, use_celery, celery_workers, batch_chunks,
-                merge_chunks, min_tokens, max_tokens
+                merge_chunks, min_tokens, max_tokens, use_smart_generation
             )
 
             if not qa_pairs:
@@ -337,3 +349,4 @@ class QAPipeline:
         except Exception as e:
             logger.error(f"パイプライン実行エラー: {e}")
             raise
+

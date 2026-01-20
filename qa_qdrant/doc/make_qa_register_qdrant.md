@@ -1,8 +1,255 @@
-## make_qa_register_qdrant.py 完全ガイド
+# make_qa_register_qdrant.py 完全ガイド
 
-- プロジェクト構成
-================
+**Q/A生成からQdrantベクトルデータベース登録までを一貫して実行する統合CLIツール**
 
+**✨ 最新版の特徴**:
+- **スマートQ/A生成がデフォルト**：`SmartQAGenerator`による動的Q/A数決定
+- LLMが内容の重要度・複雑さを分析し、最適なQ/A数（0-5個）を自動決定
+- トピック明示化による高品質なQ/A生成
+- 従来方式（トークン数ベース）への切り替えも可能
+
+---
+
+## 📋 目次
+
+1. [概要](#概要)
+2. [Q/A生成方式](#qa生成方式)
+3. [プログラム構成](#プログラム構成)
+4. [処理の流れ](#処理の流れ)
+5. [データ処理の流れ](#データ処理の流れ)
+6. [入力形式と対応](#入力形式と対応)
+7. [使用方法](#使用方法)
+8. [コマンドラインオプション](#コマンドラインオプション)
+9. [実行例](#実行例)
+10. [推奨される使い分け](#推奨される使い分け)
+11. [トラブルシューティング](#トラブルシューティング)
+
+---
+
+## 📖 概要
+
+### ファイル情報
+
+- **ファイル名**: `make_qa_register_qdrant.py`
+- **配置場所**: `qa_qdrant/make_qa_register_qdrant.py`
+- **バージョン**: v2.1（スマート生成デフォルト化版）
+- **説明**: Q/A生成からQdrant登録までを完結する統合ツール
+
+### 改修履歴
+
+**v2.1（最新）- スマート生成デフォルト化**:
+- ✨ `SmartQAGenerator`をデフォルトで使用
+- ✨ LLMによる動的Q/A数決定（0-5個）
+- ✨ 内容の重要度・複雑さを考慮した高品質生成
+- ✨ `--use-smart-generation`オプション追加（デフォルト有効）
+- ✨ `--no-smart-generation`オプション追加（従来方式切り替え）
+
+**v2.0 - 入力処理の統一**:
+- `--input-chunks`を廃止（チャンク処理の統一）
+- `--input-csv`を`--input-file`に変更（テキスト/CSV両対応）
+- `--output`オプションを追加（出力先の柔軟化）
+- `--ui-output`オプションを追加（UI用CSV出力先の柔軟化）
+- CSVファイルのカラム自動判定機能を追加
+
+### 主な特徴
+
+✅ **インテリジェントなQ/A生成（デフォルト）**
+
+- **スマート生成モード**：`SmartQAGenerator`クラス使用
+  - LLMがチャンク内容を分析
+  - 情報密度、重要度、複雑さを評価
+  - 最適なQ/A数を動的決定（0-5個）
+  - 主要トピックを明示的にカバー
+  - 不要なチャンクは0個生成（スキップ可能）
+
+- **従来モード**：トークン数ベースの固定計算
+  - `--no-smart-generation`で切り替え
+  - 高速処理・低コスト
+  - 大規模データセット向け
+
+✅ **2つの入力形式に対応**
+
+- 事前定義データセット（`config.py`で定義済み）
+- ローカルファイル（`.txt`テキストファイル、`.csv`ファイル）
+
+✅ **インテリジェントな入力処理**
+
+- テキストファイル → 自動的にチャンク作成 + Q/A生成
+- CSV（テキストのみ）→ チャンク作成 + Q/A生成
+- CSV（Q/Aペアあり）→ Phase 1をスキップして直接登録
+
+✅ **2フェーズの自動実行**
+
+- **Phase 1**: Q/Aペア生成（`QAPipeline` + `SmartQAGenerator`）
+- **Phase 2**: Qdrant登録（Embedding + インデックス化）
+
+✅ **高度な並列処理**
+
+- Celeryによる非同期タスク実行
+- 最大24ワーカーでの並列処理対応
+
+✅ **UI統合対応**
+
+- ファイル名の正規化（タイムスタンプ除去）
+- `agent_rag.py`での参照を容易化
+
+---
+
+## 🎯 Q/A生成方式
+
+### 2つの生成方式の比較
+
+| 項目 | スマート生成（デフォルト） | 従来方式 |
+|------|--------------------------|---------|
+| **使用クラス** | `SmartQAGenerator` | `QAGenerator` (legacy mode) |
+| **Q/A数決定** | LLMによる動的判断 | トークン数ベース固定計算 |
+| **Q/A数範囲** | 0-5個（柔軟） | 2-8個（固定ルール） |
+| **LLM呼び出し** | 2回/チャンク（分析+生成） | 1回/チャンク |
+| **処理速度** | 🐢 約2倍の時間 | ⚡ 高速 |
+| **API コスト** | 💰💰 約2倍 | 💰 低コスト |
+| **品質** | ⭐⭐⭐ 高品質 | ⭐⭐ 標準 |
+| **トピック明示** | ✅ あり | ❌ なし |
+| **重要度考慮** | ✅ あり | ❌ なし |
+| **0個生成** | ✅ 可能（不要時スキップ） | ❌ 不可能 |
+| **メタデータ** | 豊富（topic, importance, complexity） | 基本のみ |
+
+### スマート生成の処理フロー
+
+```
+チャンク入力
+    ↓
+【ステップ1】LLMによる分析
+    ├─ 情報密度の評価
+    ├─ 重要度スコア計算（0.0-1.0）
+    ├─ 複雑さ判定（low/medium/high）
+    ├─ 主要トピックの抽出
+    └─ 適切なQ/A数決定（0-5個）
+    ↓
+【ステップ2】動的Q/A生成
+    ├─ 分析結果に基づくプロンプト構築
+    ├─ 主要トピックを優先的にカバー
+    ├─ 重要度に応じた品質指示
+    └─ トピック付きQ/A生成
+    ↓
+Q/Aペア出力（最適数）
+```
+
+### 従来方式の処理フロー
+
+```
+チャンク入力
+    ↓
+【ステップ1】トークン数カウント
+    └─ 固定ルールでQ/A数決定
+        • < 50 tokens  → 2個
+        • < 100 tokens → 3個
+        • < 200 tokens → 4個
+        • < 300 tokens → 5個
+        • >= 300 tokens → 6個
+        • 後半チャンク → +1個
+    ↓
+【ステップ2】Q/A生成
+    └─ 固定数のQ/A生成
+    ↓
+Q/Aペア出力（固定数）
+```
+
+### 生成例の比較
+
+#### テストケース: 技術文書
+
+**入力チャンク**:
+```
+AES-256暗号化アルゴリズムは、対称鍵暗号方式の一種で、
+256ビットの鍵長を持ちます。NIST（米国国立標準技術研究所）
+により承認されており、機密情報の保護に広く使用されています。
+ブロック暗号として動作し、128ビットのブロックサイズで
+データを処理します。CBC、GCM、CTRなど複数のモードが利用可能で、
+用途に応じて選択できます。
+```
+
+#### スマート生成の出力（5個）
+
+```json
+[
+  {
+    "question": "AES-256の暗号化方式の特徴は何ですか？",
+    "answer": "対称鍵暗号方式の一種で、256ビットの鍵長を持ち、高いセキュリティを提供します",
+    "topic": "暗号化方式",
+    "generation_method": "smart",
+    "importance_score": 0.9,
+    "complexity": "high"
+  },
+  {
+    "question": "AES-256の鍵長は何ビットですか？",
+    "answer": "256ビットの鍵長を持ちます",
+    "topic": "鍵長"
+  },
+  {
+    "question": "AES-256のブロックサイズはどのくらいですか？",
+    "answer": "128ビットのブロックサイズでデータを処理します",
+    "topic": "ブロックサイズ"
+  },
+  {
+    "question": "AES-256で利用可能な動作モードにはどのようなものがありますか？",
+    "answer": "CBC、GCM、CTRなど複数のモードが利用可能で、用途に応じて選択できます",
+    "topic": "利用モード"
+  },
+  {
+    "question": "AES-256はどの機関により承認されていますか？",
+    "answer": "NIST（米国国立標準技術研究所）により承認されており、機密情報の保護に広く使用されています",
+    "topic": "承認機関"
+  }
+]
+```
+
+**特徴**:
+- ✅ 主要トピックを全てカバー
+- ✅ 各Q/Aにトピックラベル付き
+- ✅ 重要度・複雑さのメタデータ
+- ✅ 技術的な詳細を漏らさない
+
+#### 従来方式の出力（4個）
+
+```json
+[
+  {
+    "question": "AES-256とは何ですか？",
+    "answer": "対称鍵暗号方式の一種で、256ビットの鍵長を持つ暗号化アルゴリズムです",
+    "question_type": "fact",
+    "generation_method": "legacy"
+  },
+  {
+    "question": "AES-256はどこで承認されていますか？",
+    "answer": "NIST（米国国立標準技術研究所）により承認されています",
+    "question_type": "fact"
+  },
+  {
+    "question": "ブロックサイズは何ビットですか？",
+    "answer": "128ビットのブロックサイズでデータを処理します",
+    "question_type": "fact"
+  },
+  {
+    "question": "利用可能なモードは？",
+    "answer": "CBC、GCM、CTRなど複数のモードが利用可能です",
+    "question_type": "fact"
+  }
+]
+```
+
+**特徴**:
+- ✅ 基本的な情報はカバー
+- ❌ トピックが不明確
+- ❌ 質問タイプが全て"fact"
+- ❌ メタデータが少ない
+
+---
+
+## 🏗️ プログラム構成
+
+### プロジェクト構成
+
+```text
 実行ファイル層（4つのCLIツール）
 ├── make_qa.py                        ⬅️ Q/A生成専用ツール
 ├── register_csv_to_qdrant.py         ⬅️ 汎用CSV登録ツール
@@ -11,693 +258,473 @@
 
 共通モジュール層（全ツールが依存）
 ├── qa_generation/
-│   └── pipeline.py                   ⬅️ QAPipeline（Q/A生成ロジック）
+│   ├── pipeline.py                   ⬅️ QAPipeline（Q/A生成ロジック）
+│   ├── smart_qa_generator.py         ⬅️ SmartQAGenerator（スマート生成）
+│   └── generation.py                 ⬅️ QAGenerator（従来+スマート統合）
 ├── services/
 │   └── qdrant_service.py             ⬅️ Qdrant操作ロジック
 ├── qdrant_client_wrapper.py          ⬅️ Qdrantクライアント作成
 └── config.py                         ⬅️ DATASET_CONFIGS、QdrantConfig
-
-
-## 📋 目次
-
-1. [概要](#概要)
-2. [システムアーキテクチャ](#システムアーキテクチャ)
-3. [データ処理フロー](#データ処理フロー)
-4. [機能詳細](#機能詳細)
-5. [入力形式と対応](#入力形式と対応)
-6. [使用方法（パターン別）](#使用方法パターン別)
-7. [コマンドラインオプション](#コマンドラインオプション)
-8. [実行例とワークフロー](#実行例とワークフロー)
-9. [関数リファレンス](#関数リファレンス)
-10. [トラブルシューティング](#トラブルシューティング)
-11. [ベストプラクティス](#ベストプラクティス)
-
----
-
-## 📖 概要
-
-`make_qa_register_qdrant.py` は、**Q/Aペアの自動生成からQdrantベクトルデータベースへの登録までを一貫して実行する統合CLIツール**です。
-
-### ファイル情報
-
-- **ファイル名**: `make_qa_register_qdrant.py`
-- **説明**: Q/A生成からQdrant登録までを完結する統合ツール（改修版）
-- **改修内容**: チャンクCSV読み込み機能を追加
-- **バージョン**: 最新版（2025-01-17更新）
-
-### 主な特徴
-
-✅ **3つの入力形式に対応**
-
-- **事前定義データセット**（`config.py`で定義）
-- **テキスト/CSV形式の生データ**
-- **チャンクCSV形式**（事前作成済みチャンクの再利用） ← 新機能
-
-✅ **2フェーズの自動実行**
-
-- **Phase 1**: Q/Aペア生成（`QAPipeline`を使用）
-- **Phase 2**: Qdrant登録（Embedding + インデックス化）
-
-✅ **高速並列処理**
-
-- Celeryによる非同期タスク実行
-- 最大24ワーカーでの並列処理に対応
-
-✅ **柔軟な処理制御**
-
-- Q/Aペアが既に存在する場合は生成をスキップ
-- チャンクが既に作成済みの場合は再利用
-- 段階的な処理の確認・デバッグが可能
-
-✅ **UI統合対応**
-
-- ファイル名の正規化（タイムスタンプ除去）
-- `agent_rag.py`での参照を容易にする
-
----
-
-## 🏗️ システムアーキテクチャ
-
-### コンポーネント構成
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│          make_qa_register_qdrant.py (統合CLIツール)           │
-│                                                             │
-│  ┌──────────────────────┐      ┌──────────────────────┐    │
-│  │   Phase 1: QA生成     │      │   Phase 2: Qdrant登録 │    │
-│  │                      │      │                      │    │
-│  │  QAPipeline          │      │  Qdrant Service      │    │
-│  │  ├─ データ読み込み     │       │  ├─ Embedding生成    │    │
-│  │  ├─ チャンク作成       │      │  ├─ ポイント構築       │    │
-│  │  ├─ Q/A生成(LLM)      │       │  └─ バッチ登録         │    │
-│  │  └─ CSV出力           │       │                      │    │
-│  └──────────────────────┘      └──────────────────────┘    │
-│           │                              │                  │
-│           v                              v                  │
-│  qa_pairs_*.csv                   Qdrantコレクション         │
-└─────────────────────────────────────────────────────────────┘
 ```
 
-### 依存モジュール
+### ディレクトリ構造
 
+```text
+プロジェクトルート/
+├── qa_qdrant/                        # Q/Aペア生成&登録ツール群
+│   ├── make_qa.py                    # Q/A生成専用CLI
+│   ├── make_qa_register_qdrant.py    # 統合CLI（本ドキュメント対象）
+│   └── register_to_qdrant.py         # Qdrant登録専用CLI
+│
+├── qa_generation/                    # Q/A生成コアモジュール
+│   ├── __init__.py
+│   ├── pipeline.py                   # QAPipelineクラス
+│   ├── smart_qa_generator.py         # ✨ SmartQAGeneratorクラス
+│   ├── generation.py                 # QAGeneratorクラス（統合版）
+│   ├── structure.py                  # チャンク作成・統合
+│   ├── evaluation.py                 # カバレッジ分析
+│   ├── semantic.py                   # セマンティック類似度計算
+│   ├── models.py                     # Pydanticモデル
+│   ├── content.py                    # コンテンツ処理
+│   ├── data_io.py                    # データ入出力
+│   └── config.py                     # データセット設定
+│
+├── services/                         # Qdrant関連サービス
+│   └── qdrant_service.py             # Qdrant操作関数群
+│
+├── helper/                           # ヘルパーモジュール
+│   └── helper_llm.py                 # LLMクライアント
+│
+├── qdrant_client_wrapper.py          # Qdrantクライアント生成
+├── config.py                         # グローバル設定
+├── celery_tasks.py                   # Celeryタスク定義
+│
+├── qa_output/                        # Q/A生成出力先
+│   ├── pipeline/                     # QAPipeline出力（タイムスタンプ付き）
+│   │   ├── qa_pairs_*.csv
+│   │   ├── qa_pairs_*.json
+│   │   ├── coverage_*.json
+│   │   └── summary_*.json
+│   └── *.csv                         # UI用正規化CSV（タイムスタンプなし）
+│
+└── data/                             # データセットファイル
+    ├── wikipedia_ja.csv
+    ├── cc_news.csv
+    └── ...
 ```
+
+### モジュール依存関係
+
+```text
 make_qa_register_qdrant.py
-├── qa_generation/
-│   ├── pipeline.py           # メインパイプライン制御
-│   ├── generation.py         # LLMによるQ/A生成
-│   ├── structure.py          # チャンク作成ロジック
-│   ├── semantic.py           # セマンティック処理
-│   ├── evaluation.py         # カバレージ分析
-│   └── data_io.py            # データ入出力
-│
-├── services/
-│   └── qdrant_service.py     # Qdrant操作（CRUD）
-│       ├── create_or_recreate_collection_for_qdrant()
-│       ├── embed_texts_for_qdrant()
-│       ├── build_points_for_qdrant()
-│       └── upsert_points_to_qdrant()
-│
-├── qdrant_client_wrapper.py  # Qdrantクライアント初期化
-│   └── create_qdrant_client()
-│
-└── config.py                 # 設定（データセット定義等）
-    └── DATASET_CONFIGS
+    ├─ Phase 1: Q/A生成
+    │   ├─ qa_generation/pipeline.py (QAPipeline)
+    │   │   ├─ qa_generation/structure.py (create_document_chunks)
+    │   │   ├─ qa_generation/generation.py (generate_qa_dataset)
+    │   │   │   └─ qa_generation/smart_qa_generator.py (SmartQAGenerator) ✨
+    │   │   ├─ qa_generation/evaluation.py (analyze_coverage)
+    │   │   └─ qa_generation/data_io.py (save_results)
+    │   └─ config.py (DATASET_CONFIGS)
+    │
+    └─ Phase 2: Qdrant登録
+        ├─ services/qdrant_service.py
+        │   ├─ create_or_recreate_collection_for_qdrant()
+        │   ├─ embed_texts_for_qdrant()
+        │   ├─ build_points_for_qdrant()
+        │   └─ upsert_points_to_qdrant()
+        └─ qdrant_client_wrapper.py (create_qdrant_client)
 ```
 
-### レイヤー構成
+### 主要な関数・クラス
+
+#### `make_qa_register_qdrant.py`
+
+| 関数/クラス | 説明 |
+|-----------|------|
+| `normalize_source_filename()` | ファイル名から日時サフィックスを除去 |
+| `run_registration()` | Phase 2（Qdrant登録）の実行 |
+| `main()` | CLIエントリーポイント |
+
+#### `qa_generation/pipeline.py`
+
+| クラス/メソッド | 説明 |
+|---------------|------|
+| `QAPipeline.__init__()` | パイプライン初期化 |
+| `QAPipeline.load_data()` | データ読み込み（.txt, .csv対応） |
+| `QAPipeline.create_chunks()` | チャンク作成 |
+| `QAPipeline.generate_qa()` | Q/A生成（スマート/従来切り替え） |
+| `QAPipeline.evaluate_coverage()` | カバレッジ分析 |
+| `QAPipeline.save()` | 結果保存 |
+| `QAPipeline.run()` | パイプライン実行 |
+
+#### `qa_generation/smart_qa_generator.py` ✨
+
+| クラス/メソッド | 説明 |
+|---------------|------|
+| `SmartQAGenerator.__init__()` | 初期化（Geminiモデル設定） |
+| `SmartQAGenerator.analyze_chunk()` | チャンク分析（Q/A数・重要度決定） |
+| `SmartQAGenerator.generate_qa_pairs()` | 分析結果に基づくQ/A生成 |
+| `SmartQAGenerator.process_chunk()` | 分析+生成の一括実行 |
+
+#### `qa_generation/generation.py`
+
+| クラス/メソッド | 説明 |
+|---------------|------|
+| `QAGenerator.__init__()` | 初期化（use_smart_generationフラグ） |
+| `QAGenerator.determine_qa_count()` | Q/A数決定（スマート/従来分岐） |
+| `QAGenerator.generate_for_chunk()` | 単一チャンクQ/A生成 |
+| `QAGenerator._generate_smart()` | スマート生成実行 |
+| `QAGenerator._generate_legacy()` | 従来方式実行 |
+| `generate_qa_dataset()` | データセット全体のQ/A生成 |
+
+#### `services/qdrant_service.py`
+
+| 関数 | 説明 |
+|-----|------|
+| `create_or_recreate_collection_for_qdrant()` | コレクション作成/再作成 |
+| `embed_texts_for_qdrant()` | テキストのEmbedding生成 |
+| `build_points_for_qdrant()` | Qdrantポイント構築 |
+| `upsert_points_to_qdrant()` | Qdrantへアップロード |
+
+---
+
+## 🔄 処理の流れ
+
+### 全体フロー
 
 ```
-┌──────────────────────────────────────────┐
-│  CLI Layer (make_qa_register_qdrant.py)   │  ← ユーザーインターフェース
-├───────────────────────────────────────────┤
-│  Business Logic Layer                     │
-│  ├─ QAPipeline (qa_generation/)           │  ← Q/A生成ロジック
-│  └─ QdrantService (services/)             │  ← Qdrant操作ロジック
-├───────────────────────────────────────────┤
-│  Infrastructure Layer                     │
-│  ├─ Google Gemini API (LLM)               │  ← 外部API
-│  ├─ Qdrant Vector DB                      │  ← ベクトルDB
-│  └─ Celery (タスクキュー)                   │  ← 並列処理基盤
-└───────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│            make_qa_register_qdrant.py                   │
+│                                                         │
+│  ┌───────────────────────────────────────────────┐    │
+│  │  Phase 1: Q/A Generation Pipeline              │    │
+│  │                                                 │    │
+│  │  入力ファイル判定                                │    │
+│  │    ├─ .txt file → チャンク作成 + Q/A生成       │    │
+│  │    ├─ .csv (text only) → チャンク作成 + Q/A生成│    │
+│  │    ├─ .csv (Q/A pairs) → Phase 1スキップ       │    │
+│  │    └─ dataset → チャンク作成 + Q/A生成         │    │
+│  │         ↓                                       │    │
+│  │  ✨ スマート生成（デフォルト）                   │    │
+│  │    ├─ LLMがチャンク分析                         │    │
+│  │    ├─ 最適Q/A数決定（0-5個）                   │    │
+│  │    └─ トピック付きQ/A生成                      │    │
+│  │         ↓                                       │    │
+│  │  出力: qa_pairs_YYYYMMDD_HHMMSS.csv            │    │
+│  └───────────────────────────────────────────────┘    │
+│                          ↓                             │
+│  ┌───────────────────────────────────────────────┐    │
+│  │  Phase 2: Qdrant Registration                  │    │
+│  │                                                 │    │
+│  │  1. CSVファイルロード                           │    │
+│  │  2. Qdrantコレクション準備                      │    │
+│  │  3. バッチ処理ループ:                           │    │
+│  │     ├─ Embedding生成（question + answer）      │    │
+│  │     ├─ Qdrantポイント構築                       │    │
+│  │     └─ Qdrantへアップロード                     │    │
+│  │  4. UI用正規化CSVの作成                         │    │
+│  └───────────────────────────────────────────────┘    │
+│                          ↓                             │
+│                  ✅ 完了                                │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Phase 1: Q/A生成の詳細フロー（スマート生成）
+
+```
+入力ファイル
+    ↓
+【1】データ読み込み
+    ├─ .txt → DataFrameに変換
+    ├─ .csv → カラム判定
+    │   ├─ question & answer あり → Phase 2へスキップ
+    │   └─ text/Combined_Text → チャンク作成へ
+    └─ dataset → config.pyから読み込み
+    ↓
+【2】チャンク作成
+    ├─ セマンティック分割（オプション）
+    ├─ パラグラフ優先分割
+    ├─ 文境界保持
+    └─ オーバーラップ設定（オプション）
+    ↓
+【3】Q/A生成（スマート生成モード） ✨
+    ├─ チャンクごとに:
+    │   ├─ 【3-1】LLMでチャンク分析
+    │   │   ├─ 情報密度評価
+    │   │   ├─ 重要度スコア計算（0.0-1.0）
+    │   │   ├─ 複雑さ判定（low/medium/high）
+    │   │   ├─ 主要トピック抽出
+    │   │   └─ Q/A数決定（0-5個）
+    │   │
+    │   └─ 【3-2】Q/A生成
+    │       ├─ 分析結果に基づくプロンプト
+    │       ├─ トピック優先指示
+    │       ├─ 重要度に応じた品質指示
+    │       └─ トピック付きQ/A生成
+    │
+    ├─ バッチ処理（batch_chunks=3）
+    └─ Celery並列処理（オプション）
+    ↓
+【4】カバレッジ分析
+    ├─ セマンティック類似度計算
+    ├─ カバレッジ率算出
+    └─ 未カバーチャンク検出
+    ↓
+【5】結果保存
+    ├─ qa_pairs_YYYYMMDD_HHMMSS.csv（タイムスタンプ付き）
+    ├─ qa_pairs_YYYYMMDD_HHMMSS.json
+    ├─ coverage_YYYYMMDD_HHMMSS.json
+    └─ summary_YYYYMMDD_HHMMSS.json
+    ↓
+Phase 2へ
+```
+
+### Phase 2: Qdrant登録の詳細フロー
+
+```
+Q/A CSV
+    ↓
+【1】CSVロード
+    └─ pd.read_csv()
+    ↓
+【2】Qdrantコレクション準備
+    ├─ --recreate指定時:
+    │   ├─ 既存コレクション削除
+    │   └─ 新規作成
+    └─ 未指定時:
+        └─ コレクション存在確認
+    ↓
+【3】バッチ処理ループ（batch_size=100）
+    ├─ Embedding生成
+    │   └─ embed_texts_for_qdrant(question + "\n" + answer)
+    ├─ Qdrantポイント構築
+    │   ├─ UUID生成
+    │   ├─ ベクトル設定
+    │   └─ Payload設定:
+    │       ├─ question, answer
+    │       ├─ domain, source
+    │       ├─ question_type, difficulty
+    │       ├─ ✨ topic（スマート生成の場合）
+    │       ├─ ✨ importance_score（スマート生成の場合）
+    │       ├─ ✨ complexity（スマート生成の場合）
+    │       └─ chunk_id, generation_method
+    └─ Qdrantアップロード
+    ↓
+【4】UI用正規化CSV作成
+    ├─ ファイル名からタイムスタンプ除去
+    │   例: qa_pairs_20250120_123456.csv
+    │       → qa_pairs.csv
+    └─ qa_output/に保存
+    ↓
+✅ 完了
 ```
 
 ---
 
-## 🔄 データ処理フロー
+## 📊 データ処理の流れ
 
-### 全体フロー図
+### データ構造の変換
 
 ```
-入力データ
-   │
-   ├─ --dataset         → Hugging Face等のデータセット
-   ├─ --input-csv       → テキストCSV or Q/AペアCSV
-   └─ --input-chunks    → チャンクCSV（事前作成済み）✨ NEW
-   │
-   v
-┌──────────────────────────────────────────────┐
-│ Phase 1: Q/Aペア生成 (QAPipeline)             │
-├──────────────────────────────────────────────┤
-│                                              │
-│  ┌─────────────────────────────────┐         │
-│  │ 1. データソース判定               │         │
-│  │   - input_chunks?               │         │
-│  │   - input_csv?                  │         │
-│  │   - dataset?                    │         │
-│  └──────────┬──────────────────────┘         │
-│             │                                │
-│             v                                │
-│  ┌─────────────────────────────────┐         │
-│  │ 2. チャンク作成/読み込み          │         │
-│  │   ・テキスト分割                 │         │
-│  │   ・トークン数計算                │         │
-│  │   ・メタデータ付与                │         │
-│  │   ・チャンクCSV読み込み（NEW）     │         │
-│  └──────────┬──────────────────────┘         │
-│             │                                │
-│             v                                │
-│  ┌─────────────────────────────────┐         │
-│  │ 3. チャンクの前処理              │         │
-│  │   ・マージ（小さいチャンク統合）   │         │
-│  │   ・バッチ化（API呼び出し最適化）  │         │
-│  └──────────┬──────────────────────┘         │
-│             │                                │
-│             v                                │
-│  ┌─────────────────────────────────┐         │
-│  │ 4. Q/A生成（LLM呼び出し）         │         │
-│  │   ・Gemini API呼び出し            │         │
-│  │   ・プロンプト生成                │         │
-│  │   ・応答のパース                  │         │
-│  │   ・Celery並列処理（オプション）   │         │
-│  └──────────┬──────────────────────┘         │
-│             │                                │
-│             v                                │
-│  ┌─────────────────────────────────┐         │
-│  │ 5. CSV出力                       │         │
-│  │   qa_pairs_{dataset}_{ts}.csv   │         │
-│  └─────────────────────────────────┘         │
-│                                              │
-└──────────────┬───────────────────────────────┘
-               │
-               v
-       qa_pairs_{dataset}_{timestamp}.csv
-               │
-               v
-┌──────────────────────────────────────────────┐
-│ Phase 2: Qdrant登録                          │
-├──────────────────────────────────────────────┤
-│                                              │
-│  ┌─────────────────────────────────┐         │
-│  │ 1. CSV読み込み                   │         │
-│  │   ・必須カラム確認                │         │
-│  │   ・データ検証                    │         │
-│  └──────────┬──────────────────────┘         │
-│             │                                │
-│             v                                │
-│  ┌─────────────────────────────────┐         │
-│  │ 2. ベクトル化テキスト準備         │         │
-│  │   question + "\n" + answer       │         │
-│  └──────────┬──────────────────────┘         │
-│             │                                │
-│             v                                │
-│  ┌─────────────────────────────────┐         │
-│  │ 3. Qdrantコレクション準備         │         │
-│  │   ・コレクション作成/再作成       │         │
-│  │   ・ベクトル次元設定（768次元）   │         │
-│  │   ・距離メトリック設定（Cosine）  │         │
-│  └──────────┬──────────────────────┘         │
-│             │                                │
-│             v                                │
-│  ┌─────────────────────────────────┐         │
-│  │ 4. バッチ処理ループ              │         │
-│  │   ┌───────────────────┐          │         │
-│  │   │ Batch 1: 0-99     │          │         │
-│  │   ├───────────────────┤          │         │
-│  │   │ Batch 2: 100-199  │          │         │
-│  │   ├───────────────────┤          │         │
-│  │   │ Batch 3: 200-299  │          │         │
-│  │   └───────────────────┘          │         │
-│  │                                  │         │
-│  │   各バッチで:                     │         │
-│  │   ├─ Embedding生成 (Gemini)      │         │
-│  │   ├─ ポイント構築（メタデータ付与）│         │
-│  │   └─ Qdrantへアップサート         │         │
-│  └──────────┬──────────────────────┘         │
-│             │                                │
-│             v                                │
-│  ┌─────────────────────────────────┐         │
-│  │ 5. UI用正規化CSV作成             │         │
-│  │   ・ファイル名から日時除去        │         │
-│  │   ・qa_output/ に保存            │         │
-│  │   → agent_rag.pyで参照           │         │
-│  └─────────────────────────────────┘         │
-│                                              │
-└──────────────┬───────────────────────────────┘
-               │
-               v
-      Qdrantコレクション
-      ├─ ベクトルインデックス（768次元）
-      ├─ メタデータ（question, answer, source等）
-      └─ 高速検索が可能
-```
-
-### 入力判定ロジック
-
-```python
-# 入力ソースの優先順位と処理分岐
-
-if args.input_chunks:
-    # ========================================
-    # パターンA: チャンクCSV → Q/A生成 → Qdrant
-    # ========================================
-    logger.info(f"📁 チャンクCSVを使用: {args.input_chunks}")
-
-    pipeline = QAPipeline(
-        input_chunks=args.input_chunks,  # ✅ 新機能
-        model=args.model,
-        max_docs=args.max_docs
+1. 入力データ（テキスト/CSV）
+    ↓
+2. DataFrame
+    columns: [Combined_Text, title, ...]
+    ↓
+3. チャンク（Dictのリスト）
+    {
+        'id': 'chunk_0',
+        'text': 'チャンク本文...',
+        'tokens': 250,
+        'type': 'paragraph',
+        'doc_id': 'doc_0',
+        'chunk_idx': 0,
+        'dataset_type': 'local_file'
+    }
+    ↓
+4. Q/Aペア（Dictのリスト）- スマート生成の場合 ✨
+    {
+        'question': '質問文',
+        'answer': '回答文',
+        'question_type': 'fact',
+        'topic': 'トピック名',              # ✨ スマート生成
+        'source_chunk_id': 'chunk_0',
+        'doc_id': 'doc_0',
+        'dataset_type': 'local_file',
+        'chunk_idx': 0,
+        'generation_method': 'smart',       # ✨ スマート生成
+        'importance_score': 0.85,           # ✨ スマート生成
+        'complexity': 'high'                # ✨ スマート生成
+    }
+    ↓
+5. CSV/JSONファイル
+    qa_pairs_YYYYMMDD_HHMMSS.csv
+    ↓
+6. Qdrantポイント
+    PointStruct(
+        id=UUID,
+        vector=[768次元ベクトル],
+        payload={
+            'question': '質問文',
+            'answer': '回答文',
+            'topic': 'トピック名',           # ✨ スマート生成
+            'importance_score': 0.85,        # ✨ スマート生成
+            'complexity': 'high',            # ✨ スマート生成
+            'domain': 'local_file',
+            'source': 'normalized_filename.csv',
+            ...
+        }
     )
+```
 
-    result = pipeline.run(
-        use_celery=args.use_celery,
-        celery_workers=args.celery_workers,
-        batch_chunks=args.batch_chunks,
-        merge_chunks=args.merge_chunks,
-        analyze_coverage=True
-    )
+### データフロー図
 
-    処理 = [
-        "チャンク読み込み（作成スキップ）",
-        "Q/A生成",
-        "Qdrant登録"
-    ]
-
-elif args.input_csv:
-    # CSVの中身を確認
-    df = pd.read_csv(args.input_csv)
-
-    if 'question' in df.columns and 'answer' in df.columns:
-        # ====================================
-        # パターンB: Q/AペアCSV → Qdrant
-        # ====================================
-        logger.info("✅ Q/Aカラムが存在します - Q/A生成をスキップして登録へ")
-
-        generated_csv = args.input_csv
-        qa_count = len(df)
-
-        処理 = [
-            "Q/A生成スキップ",
-            "Qdrant登録のみ"
-        ]
-
-    elif 'text' in df.columns or 'Combined_Text' in df.columns:
-        # ====================================
-        # パターンC: テキストCSV → チャンク作成 → Q/A生成 → Qdrant
-        # ====================================
-        logger.info("📝 テキストカラムのみ検出 - Q/A生成を実行します")
-
-        pipeline = QAPipeline(
-            input_file=args.input_csv,
-            model=args.model,
-            max_docs=args.max_docs
-        )
-
-        result = pipeline.run(
-            use_celery=args.use_celery,
-            celery_workers=args.celery_workers,
-            batch_chunks=args.batch_chunks,
-            merge_chunks=args.merge_chunks,
-            analyze_coverage=True,
-            overlap_tokens=args.overlap_tokens,
-            use_similarity=args.use_similarity,
-            similarity_threshold=args.similarity_threshold
-        )
-
-        処理 = [
-            "チャンク作成",
-            "Q/A生成",
-            "Qdrant登録"
-        ]
-
-    else:
-        logger.error("❌ CSVファイルに必要なカラムが見つかりません")
-        logger.error("   必要なカラム: (question + answer) または (text または Combined_Text)")
-        sys.exit(1)
-
-elif args.dataset:
-    # ========================================
-    # パターンD: データセット → チャンク作成 → Q/A生成 → Qdrant
-    # ========================================
-    pipeline = QAPipeline(
-        dataset_name=args.dataset,
-        model=args.model,
-        max_docs=args.max_docs
-    )
-
-    result = pipeline.run(
-        use_celery=args.use_celery,
-        celery_workers=args.celery_workers,
-        batch_chunks=args.batch_chunks,
-        merge_chunks=args.merge_chunks,
-        analyze_coverage=True,
-        overlap_tokens=args.overlap_tokens,
-        use_similarity=args.use_similarity,
-        similarity_threshold=args.similarity_threshold
-    )
-
-    処理 = [
-        "データセット読み込み",
-        "チャンク作成",
-        "Q/A生成",
-        "Qdrant登録"
-    ]
+```
+┌────────────────┐
+│  Input Source  │
+└────────────────┘
+        │
+        ├─ .txt file
+        ├─ .csv (text)
+        ├─ .csv (Q/A)
+        └─ dataset
+        │
+        ↓
+┌────────────────┐
+│   DataFrame    │
+└────────────────┘
+        │
+        ↓
+┌────────────────┐
+│    Chunks      │  ← create_document_chunks()
+└────────────────┘
+        │
+        ↓
+┌────────────────┐
+│ ✨ Smart       │  ← SmartQAGenerator.analyze_chunk()
+│   Analysis     │     (情報密度、重要度、複雑さ、トピック)
+└────────────────┘
+        │
+        ↓
+┌────────────────┐
+│   Q/A Pairs    │  ← SmartQAGenerator.generate_qa_pairs()
+│  (with topics) │     (トピック付き、メタデータ豊富)
+└────────────────┘
+        │
+        ↓
+┌────────────────┐
+│  CSV/JSON      │  ← save_results()
+│   Files        │
+└────────────────┘
+        │
+        ↓
+┌────────────────┐
+│  Embeddings    │  ← embed_texts_for_qdrant()
+└────────────────┘
+        │
+        ↓
+┌────────────────┐
+│ Qdrant Points  │  ← build_points_for_qdrant()
+└────────────────┘
+        │
+        ↓
+┌────────────────┐
+│ Qdrant DB      │  ← upsert_points_to_qdrant()
+└────────────────┘
 ```
 
 ---
 
-## 🔧 機能詳細
+## 📂 入力形式と対応
 
-### 1. normalize_source_filename() 関数
+### 1. テキストファイル (.txt)
 
-**目的**: UI（agent_rag.py）での参照を安定させるため、ファイル名からタイムスタンプを除去
-
-```python
-def normalize_source_filename(filename: str) -> str:
-    """
-    ファイル名から日時サフィックス（例: _20251230_232641）を除去して正規化する。
-    UI(agent_rag.py)での参照を安定させるための処理。
-    """
-    normalized = re.sub(r'_\d{8}_\d{6}', '', filename)
-    return normalized
-```
-
-**処理例**:
-
-```python
-# 入力
-filename = "qa_pairs_wikipedia_ja_20250117_143025.csv"
-
-# 出力
-normalized = "qa_pairs_wikipedia_ja.csv"
-```
-
-**使用箇所**:
-
-- Phase 2のQdrant登録時
-- ペイロードの`source`フィールドに正規化名を設定
-- UI用CSVの保存時
-
----
-
-### 2. run_registration() 関数
-
-**目的**: Phase 2のQdrant登録処理を実行
-
-**処理フロー**:
+**形式**:
 
 ```
-1. CSV読み込み
-   ↓
-2. 必須カラム確認（question, answer）
-   ↓
-3. ベクトル化テキスト準備（question + "\n" + answer）
-   ↓
-4. Qdrantクライアント作成
-   ↓
-5. コレクション作成/再作成
-   ↓
-6. バッチ処理ループ
-   ├─ Embedding生成
-   ├─ ポイント構築
-   └─ Qdrantへアップサート
-   ↓
-7. UI用正規化CSV作成
-```
-
-**パラメータ**:
-
-```python
-def run_registration(
-    csv_path: str,          # Q/AペアCSVのパス
-    collection_name: str,   # Qdrantコレクション名
-    recreate: bool,         # コレクションを再作成するか
-    batch_size: int,        # バッチサイズ（デフォルト: 100）
-    provider: str           # Embeddingプロバイダー（デフォルト: "gemini"）
-) -> bool:                  # 成功時True、失敗時False
-```
-
-**実装詳細**:
-
-```python
-def run_registration(csv_path: str, collection_name: str, recreate: bool,
-                     batch_size: int, provider: str):
-    logger.info(f"\n" + "=" * 60)
-    logger.info(f"Phase 2: Qdrant Registration")
-    logger.info(f"=" * 60)
-
-    # 1. CSV読み込み
-    df = pd.read_csv(csv_path)
-
-    # 2. ベクトル化対象テキスト準備
-    texts = (df['question'].astype(str) + "\n" + df['answer'].astype(str)).tolist()
-
-    # 3. Qdrantクライアント作成
-    client = create_qdrant_client()
-
-    # 4. コレクション作成/再作成
-    create_or_recreate_collection_for_qdrant(client, collection_name, recreate=recreate)
-
-    # 5. ファイル名正規化
-    source_filename = os.path.basename(csv_path)
-    normalized_filename = normalize_source_filename(source_filename)
-
-    # 6. バッチ処理
-    for i in range(0, len(df), batch_size):
-        batch_df = df.iloc[i:i+batch_size]
-        batch_texts = texts[i:i+batch_size]
-
-        # Embedding生成
-        vectors = embed_texts_for_qdrant(batch_texts)
-
-        # ポイント構築
-        points = build_points_for_qdrant(
-            batch_df,
-            vectors,
-            domain=collection_name,
-            source_file=normalized_filename,
-            start_index=i  # グローバルインデックス
-        )
-
-        # source情報を確実に正規化名で設定
-        for point in points:
-            point.payload["source"] = normalized_filename
-
-        # Qdrantへアップサート
-        upsert_points_to_qdrant(client, collection_name, points)
-
-    # 7. UI用正規化CSV作成
-    output_path = os.path.join("qa_output", normalized_filename)
-    df[['question', 'answer']].to_csv(output_path, index=False, encoding='utf-8')
-
-    return True
-```
-
----
-
-### 3. main() 関数
-
-**目的**: CLIエントリーポイント、引数解析と処理実行
-
-**処理フロー**:
-
-```
-1. 引数解析
-   ↓
-2. 入力検証（排他制御）
-   ↓
-3. APIキー確認
-   ↓
-4. Phase 1実行（Q/A生成）
-   ↓
-5. Phase 2実行（Qdrant登録）
-   ↓
-6. 完了メッセージ
-```
-
-**引数グループ**:
-
-1. **Input Source Options** (排他的)
-
-   - `--dataset`
-   - `--input-csv`
-   - `--input-chunks` ✨ NEW
-2. **QA Generation Options**
-
-   - `--model`
-   - `--max-docs`
-   - `--use-celery`
-   - `--celery-workers`
-   - `--batch-chunks`
-   - `--merge-chunks`
-   - `--overlap-tokens`
-   - `--use-similarity`
-   - `--similarity-threshold`
-3. **Qdrant Registration Options**
-
-   - `--collection` (必須)
-   - `--recreate`
-   - `--batch-size`
-   - `--provider`
-
-**入力検証ロジック**:
-
-```python
-# 排他制御（いずれか1つのみ）
-input_count = sum([
-    args.dataset is not None,
-    args.input_csv is not None,
-    args.input_chunks is not None  # ✅ 新規追加
-])
-
-if input_count == 0:
-    logger.error("--dataset, --input-csv, --input-chunks のいずれか1つを指定してください")
-    sys.exit(1)
-
-if input_count > 1:
-    logger.error("--dataset, --input-csv, --input-chunks は同時に指定できません")
-    sys.exit(1)
-```
-
----
-
-## 📥 入力形式と対応
-
-### 入力形式マトリクス
-
-
-| 入力オプション           | 形式     | 必須カラム                                | チャンク作成 | Q/A生成 | Qdrant登録 |
-| ------------------------ | -------- | ----------------------------------------- | ------------ | ------- | ---------- |
-| `--dataset`              | 事前定義 | -                                         | ✅           | ✅      | ✅         |
-| `--input-csv` (テキスト) | CSV      | `text` or `Combined_Text`                 | ✅           | ✅      | ✅         |
-| `--input-csv` (Q/Aペア)  | CSV      | `question`, `answer`                      | ❌           | ❌      | ✅         |
-| `--input-chunks`         | CSV      | `chunk_id`, `text`, `tokens`, `chunk_idx` | ❌           | ✅      | ✅         |
-
-### パターン別詳細
-
-#### パターンA: チャンクCSVから（NEW）
-
-```bash
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-chunks wiki_chunks.csv \
-  --collection qa_wikipedia \
-  --use-celery \
-  --celery-workers 16 \
-  --recreate
-```
-
-**必須カラム**:
-
-```csv
-chunk_id,text,tokens,chunk_idx,dataset_type
-chunk_0,"テキスト...",150,0,wikipedia_ja
-chunk_1,"テキスト...",200,1,wikipedia_ja
+任意のプレーンテキスト
+複数行対応
 ```
 
 **処理**:
 
-1. チャンクCSV読み込み ← チャンク作成スキップ
-2. Q/A生成
-3. Qdrant登録
+- 自動的に`Combined_Text`カラムを持つDataFrameに変換
+- チャンク作成
+- Q/A生成（スマート生成）
 
-**メリット**:
-
-- チャンク作成時間の節約
-- チャンク品質の事前確認・調整が可能
-- 再現性の向上
-
----
-
-#### パターンB: Q/AペアCSVから（生成スキップ）
+**使用例**:
 
 ```bash
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-csv qa_pairs.csv \
-  --collection my_qa \
-  --batch-size 100 \
+python make_qa_register_qdrant.py \
+  --input-file document.txt \
+  --collection my_docs \
   --recreate
 ```
 
-**必須カラム**:
+### 2. CSVファイル（テキストのみ）
+
+**形式**:
 
 ```csv
-question,answer
-"質問1","回答1"
-"質問2","回答2"
-```
-
-**処理**:
-
-1. Q/A生成スキップ
-2. Qdrant登録のみ
-
-**メリット**:
-
-- 既存のQ/Aペアを直接登録
-- 処理時間の大幅短縮
-
----
-
-#### パターンC: テキストCSVから
-
-```bash
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-csv data.csv \
-  --collection my_collection \
-  --use-celery \
-  --celery-workers 16 \
-  --merge-chunks \
-  --recreate
-```
-
-**必須カラム**:
-
-```csv
-text
-"長文テキスト1..."
-"長文テキスト2..."
+text,title
+"テキスト内容1","タイトル1"
+"テキスト内容2","タイトル2"
 ```
 
 または
 
 ```csv
-Combined_Text
-"長文テキスト1..."
-"長文テキスト2..."
+Combined_Text,title
+"テキスト内容1","タイトル1"
+"テキスト内容2","タイトル2"
 ```
 
 **処理**:
 
-1. チャンク作成
-2. Q/A生成
-3. Qdrant登録
+- `text`または`Combined_Text`カラムを検出
+- チャンク作成
+- Q/A生成（スマート生成）
 
----
-
-#### パターンD: データセットから
+**使用例**:
 
 ```bash
-python qa_qdrant/make_qa_register_qdrant.py \
-  --dataset wikipedia_ja \
-  --collection qa_wikipedia_ja \
-  --use-celery \
-  --celery-workers 24 \
+python make_qa_register_qdrant.py \
+  --input-file documents.csv \
+  --collection my_collection \
   --recreate
 ```
 
-**データセット定義** (config.py):
+### 3. CSVファイル（Q/Aペア既存）
+
+**形式**:
+
+```csv
+question,answer,topic,importance_score,complexity
+"質問1","回答1","トピック1",0.85,"high"
+"質問2","回答2","トピック2",0.60,"medium"
+```
+
+**処理**:
+
+- `question`と`answer`カラムを検出
+- **Phase 1をスキップ**
+- 直接Phase 2（Qdrant登録）へ
+
+**使用例**:
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file qa_pairs.csv \
+  --collection my_qa \
+  --recreate
+```
+
+### 4. 事前定義データセット
+
+**形式**:
 
 ```python
+# config.pyで定義
 DATASET_CONFIGS = {
     "wikipedia_ja": {
         "name": "Wikipedia日本語",
@@ -707,811 +734,675 @@ DATASET_CONFIGS = {
         "lang": "ja",
         "chunk_size": 300,
         "qa_per_chunk": 3
-    }
+    },
+    ...
 }
 ```
 
-**処理**:
-
-1. データセット読み込み
-2. チャンク作成
-3. Q/A生成
-4. Qdrant登録
-
----
-
-## 🚀 使用方法（パターン別）
-
-### パターン1: チャンクCSVからQ/A生成 + Qdrant登録（推奨）
-
-**2段階ワークフロー**:
+**使用例**:
 
 ```bash
-# Step 1: チャンク作成（別ツール）
-python -m chunking.csv_to_chunks_text_para \
-  -i wiki_data.txt \
-  -o wiki_chunks.csv \
-  -w 8
-
-# Step 2: Q/A生成 + Qdrant登録
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-chunks wiki_chunks.csv \
-  --collection qa_wikipedia \
-  --use-celery \
-  --celery-workers 16 \
-  --merge-chunks \
-  --recreate
-```
-
-**メリット**:
-
-- チャンク品質を事前確認可能
-- チャンク作成とQ/A生成を分離
-- デバッグしやすい
-
----
-
-### パターン2: データセットから一貫処理
-
-```bash
-python qa_qdrant/make_qa_register_qdrant.py \
+python make_qa_register_qdrant.py \
   --dataset wikipedia_ja \
-  --collection qa_wikipedia_ja \
-  --use-celery \
-  --celery-workers 24 \
+  --collection wiki_ja \
+  --max-docs 100 \
   --recreate
 ```
 
-**メリット**:
+### 入力判定ロジック
 
-- 1コマンドで完結
-- 設定が`config.py`に集約
+```
+入力ファイル種別判定フローチャート:
+
+┌─ --input-file 指定? ──┐
+│                       │
+YES                    NO
+│                       │
+↓                       ↓
+拡張子チェック         --dataset指定
+│                       │
+├─ .txt               ↓
+│  └→ チャンク+Q/A（スマート生成）
+│
+├─ .csv
+│  ├─ カラムチェック
+│  │  ├─ question & answer あり
+│  │  │  └→ Phase 1スキップ
+│  │  │
+│  │  ├─ text or Combined_Text のみ
+│  │  │  └→ チャンク+Q/A（スマート生成）
+│  │  │
+│  │  └─ 必要カラムなし
+│  │     └→ エラー
+│
+└─ その他
+   └→ エラー
+```
 
 ---
 
-### パターン3: Q/AペアCSVから直接登録
+## 💻 使用方法
+
+### 基本的な使い方
+
+#### パターン1: テキストファイルからQ/A生成&登録（スマート生成）
 
 ```bash
-# 既存のQ/AペアCSVを登録
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-csv qa_output/pipeline/qa_pairs_wiki.csv \
-  --collection qa_wikipedia \
-  --batch-size 100 \
+python make_qa_register_qdrant.py \
+  --input-file document.txt \
+  --collection my_docs \
   --recreate
 ```
 
-**メリット**:
+**実行内容**:
 
-- Phase 1をスキップ
-- 最も高速
+1. テキストファイルを読み込み
+2. セマンティックチャンク作成
+3. ✨ **スマート生成**: LLMがチャンク分析 → 最適Q/A数決定 → トピック付きQ/A生成
+4. Qdrantにベクトル登録
 
----
+**実行ログ**:
 
-### パターン4: テキストCSVからフル実行
+```
+==============================================================
+🆕 Q/A生成モード: スマート生成（デフォルト）
+   - LLMによる動的Q/A数決定（0-5個）
+   - 内容の重要度・複雑さを考慮
+   - 主要トピックを明示的にカバー
+   ※ 従来方式に戻す場合: --no-smart-generation
+==============================================================
+
+Phase 1: QA Generation Pipeline
+==============================================================
+
+[1/4] データ読み込み...
+  📄 テキストファイル: document.txt
+  ✅ 読み込み完了: テキスト長 5,234 文字
+
+[2/4] チャンク作成...
+  ✅ 12 chunks created
+
+[3/4] Q/Aペア生成...
+  生成モード: スマート生成
+
+  分析完了: Q/A数=5, 重要度=0.90
+  Q/A生成完了: 5個
+  分析完了: Q/A数=3, 重要度=0.65
+  Q/A生成完了: 3個
+  分析完了: Q/A数=0, 重要度=0.20
+  Q/A生成スキップ（qa_count=0）
+  ...
+
+[4/4] カバレッジ分析...
+  ✅ Coverage: 85.7%
+
+Phase 2: Qdrant Registration
+==============================================================
+  ✅ Collection 'my_docs' created
+  ✅ 42 Q/A pairs loaded
+  ✅ Batch 1/1 uploaded (42 points)
+  ✅ UI CSV saved: qa_output/document.csv
+
+✅ Complete!
+```
+
+#### パターン2: 従来方式で処理（大規模データ向け）
 
 ```bash
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-csv raw_data.csv \
-  --collection my_collection \
+python make_qa_register_qdrant.py \
+  --input-file large_dataset.csv \
+  --collection large_docs \
+  --max-docs 10000 \
+  --no-smart-generation \
+  --recreate
+```
+
+**実行ログ**:
+
+```
+==============================================================
+🔧 Q/A生成モード: 従来方式（トークン数ベース）
+   - 固定的なQ/A数決定（2-8個）
+   ※ スマート生成に切り替える場合: --use-smart-generation
+==============================================================
+
+Phase 1: QA Generation Pipeline
+==============================================================
+
+[3/4] Q/Aペア生成...
+  生成モード: 従来方式
+  ...
+```
+
+### 高度な使用例
+
+#### Celery並列処理（スマート生成）
+
+```bash
+# 1. Celeryワーカー起動（別ターミナル）
+celery -A celery_tasks worker --loglevel=info --concurrency=16
+
+# 2. 並列処理で実行
+python make_qa_register_qdrant.py \
+  --input-file large_doc.txt \
+  --collection large_docs \
   --use-celery \
   --celery-workers 16 \
-  --overlap-tokens 50 \
-  --use-similarity \
-  --similarity-threshold 0.7 \
   --recreate
 ```
 
-**メリット**:
+**注意**: スマート生成 + Celery並列処理の場合、処理時間は短縮されますが、API呼び出し数は2倍のままです。
 
-- 生データから直接処理
-- 高度なチャンク作成オプション使用可能
+#### セマンティック分割を使用（スマート生成）
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file document.txt \
+  --collection my_docs \
+  --use-similarity \
+  --similarity-threshold 0.75 \
+  --overlap-tokens 50 \
+  --recreate
+```
+
+**効果**:
+
+- より自然な文脈境界でチャンク分割
+- スマート生成が各チャンクの内容を分析
+- 高品質なQ/A生成
+
+#### 出力先のカスタマイズ
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file document.txt \
+  --collection my_docs \
+  --output custom_output/qa_results \
+  --ui-output custom_output/ui_files \
+  --recreate
+```
 
 ---
 
 ## 🎛️ コマンドラインオプション
 
-### 入力ソースオプション（排他的、いずれか1つ必須）
+### 入力ソースオプション（いずれか1つ必須）
 
+| オプション | 型 | 説明 |
+|-----------|---|------|
+| `--dataset` | str | 事前定義されたデータセット名（`config.py`参照） |
+| `--input-file` | str | 入力ファイルのパス（`.txt`, `.csv`） |
 
-| オプション       | 型  | 説明                         | 例             |
-| ---------------- | --- | ---------------------------- | -------------- |
-| `--dataset`      | str | 事前定義データセット名       | `wikipedia_ja` |
-| `--input-csv`    | str | 入力CSVファイルのパス        | `data.csv`     |
-| `--input-chunks` | str | チャンクCSVファイルのパス ✨ | `chunks.csv`   |
+### Q/A生成パラメータ
+
+| オプション | 型 | デフォルト | 説明 |
+|----------|---|----------|------|
+| `--model` | str | `gemini-2.0-flash` | 使用するGeminiモデル |
+| `--max-docs` | int | None | 処理する最大文書数 |
+| **✨ `--use-smart-generation`** | **flag** | **True** | **スマートQ/A生成を使用（デフォルト有効）** |
+| **✨ `--no-smart-generation`** | **flag** | **-** | **従来方式に切り替え（トークン数ベース）** |
+| `--use-celery` | flag | False | Celery並列処理を使用 |
+| `--celery-workers` | int | 8 | Celeryワーカー数 |
+| `--batch-chunks` | int | 3 | 1回のAPIで処理するチャンク数 |
+| `--merge-chunks` | flag | True | 小さいチャンクを統合（デフォルト有効） |
+| `--overlap-tokens` | int | 0 | チャンク間の重複トークン数 |
+| `--use-similarity` | flag | False | ベクトル類似度によるセマンティック分割 |
+| `--similarity-threshold` | float | 0.7 | セマンティック分割の類似度閾値 |
+
+### Qdrant登録パラメータ
+
+| オプション | 型 | デフォルト | 説明 |
+|----------|---|----------|------|
+| `--collection` | str | **必須** | 登録先コレクション名 |
+| `--recreate` | flag | False | コレクションを再作成 |
+| `--batch-size` | int | 100 | Embeddingバッチサイズ |
+| `--provider` | str | `gemini` | Embeddingプロバイダー |
+
+### 出力パラメータ
+
+| オプション | 型 | デフォルト | 説明 |
+|----------|---|----------|------|
+| `--output` | str | `qa_output/pipeline` | Q/AペアCSVの出力ディレクトリ |
+| `--ui-output` | str | `qa_output` | UI用正規化CSVの出力ディレクトリ |
 
 ---
 
-### Q/A生成オプション
+## 📝 実行例
 
-
-| オプション               | 型    | デフォルト         | 説明                                 |
-| ------------------------ | ----- | ------------------ | ------------------------------------ |
-| `--model`                | str   | `gemini-2.0-flash` | 使用するGeminiモデル                 |
-| `--max-docs`             | int   | `None`             | 処理する最大文書数（デバッグ用）     |
-| `--use-celery`           | flag  | False              | Celery並列処理を使用                 |
-| `--celery-workers`       | int   | 8                  | Celeryワーカー数                     |
-| `--batch-chunks`         | int   | 3                  | 1回のAPI呼び出しで処理するチャンク数 |
-| `--merge-chunks`         | flag  | True               | 小さいチャンクを統合                 |
-| `--overlap-tokens`       | int   | 0                  | チャンク間の重複トークン数           |
-| `--use-similarity`       | flag  | False              | ベクトル類似度分割を使用             |
-| `--similarity-threshold` | float | 0.7                | 類似度分割の閾値                     |
-
----
-
-### Qdrant登録オプション
-
-
-| オプション     | 型   | デフォルト | 必須 | 説明                       |
-| -------------- | ---- | ---------- | ---- | -------------------------- |
-| `--collection` | str  | -          | ✅   | 登録先Qdrantコレクション名 |
-| `--recreate`   | flag | False      | -    | コレクションを再作成       |
-| `--batch-size` | int  | 100        | -    | Embeddingバッチサイズ      |
-| `--provider`   | str  | `gemini`   | -    | Embeddingプロバイダー      |
-
----
-
-## 📝 実行例とワークフロー
-
-### ワークフロー1: 小規模テスト（10文書）
+### 例1: 小規模テキストファイルの処理（スマート生成）
 
 ```bash
-# チャンク作成
-python -m chunking.csv_to_chunks_text_para \
-  -i test_data.txt \
-  -o test_chunks.csv \
-  --max-rows 10
-
-# Q/A生成 + Qdrant登録（Celeryなし）
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-chunks test_chunks.csv \
-  --collection test_collection \
-  --batch-size 10 \
+python make_qa_register_qdrant.py \
+  --input-file sample.txt \
+  --collection sample_docs \
   --recreate
-
-# 確認
-curl http://localhost:6333/collections/test_collection
 ```
 
-**所要時間**: 約3-5分
+**期待される動作**:
+- ✅ スマート生成モードで実行
+- ✅ 技術的なチャンクから4-5個のQ/A
+- ✅ 単純なチャンクから1-2個のQ/A
+- ✅ メタ情報のみのチャンクは0個（スキップ）
 
----
-
-### ワークフロー2: 中規模処理（1,000文書）
+### 例2: 大規模CSVファイルの処理（従来方式）
 
 ```bash
-# Celeryワーカー起動
-./start_celery.sh restart -w 16
-
-# チャンク作成
-python -m chunking.csv_to_chunks_text_para \
-  -i data.txt \
-  -o chunks.csv \
-  -w 16
-
-# Q/A生成 + Qdrant登録
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-chunks chunks.csv \
-  --collection my_collection \
+python make_qa_register_qdrant.py \
+  --input-file large_data.csv \
+  --collection large_docs \
+  --max-docs 10000 \
+  --no-smart-generation \
   --use-celery \
   --celery-workers 16 \
-  --merge-chunks \
-  --batch-size 100 \
   --recreate
 ```
 
-**所要時間**: 約30-60分
+**期待される動作**:
+- ✅ 従来方式（高速・低コスト）
+- ✅ Celery並列処理で高速化
+- ✅ 全チャンクから固定数（2-8個）のQ/A生成
+
+### 例3: Q/Aペア既存CSVの登録（Phase 1スキップ）
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file existing_qa_pairs.csv \
+  --collection qa_collection \
+  --recreate
+```
+
+**期待される動作**:
+- ✅ Phase 1をスキップ
+- ✅ 直接Qdrant登録
+- ✅ 高速処理
+
+### 例4: データセット指定（スマート生成 + Celery）
+
+```bash
+python make_qa_register_qdrant.py \
+  --dataset wikipedia_ja \
+  --collection wiki_ja \
+  --max-docs 500 \
+  --use-celery \
+  --celery-workers 16 \
+  --recreate
+```
+
+**期待される動作**:
+- ✅ スマート生成で高品質Q/A
+- ✅ Celery並列処理で処理時間短縮
+- ✅ Wikipedia記事の主要トピックを確実にカバー
+
+### 例5: セマンティック分割 + スマート生成
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file technical_doc.txt \
+  --collection tech_docs \
+  --use-similarity \
+  --similarity-threshold 0.8 \
+  --overlap-tokens 100 \
+  --recreate
+```
+
+**期待される動作**:
+- ✅ 意味的に自然なチャンク境界
+- ✅ スマート生成で各チャンクの特性に応じたQ/A数
+- ✅ オーバーラップで文脈保持
+
+### 例6: 従来方式への切り替え例
+
+```bash
+# スマート生成（デフォルト）
+python make_qa_register_qdrant.py \
+  --input-file doc.txt \
+  --collection docs \
+  --recreate
+
+# 従来方式に切り替え
+python make_qa_register_qdrant.py \
+  --input-file doc.txt \
+  --collection docs \
+  --no-smart-generation \
+  --recreate
+```
 
 ---
 
-### ワークフロー3: 大規模処理（10,000文書以上）
+## 🎯 推奨される使い分け
+
+### スマート生成を使うべき場合（デフォルト）
+
+#### シナリオ1: 品質重視のプロジェクト
+
+- **使用例**: 顧客向けFAQシステム、技術文書検索
+- **理由**: トピックカバレッジが確実、高品質な回答
 
 ```bash
-# Celeryワーカー起動（最大並列）
-./start_celery.sh restart -w 24
+python make_qa_register_qdrant.py \
+  --input-file faq_documents.txt \
+  --collection customer_faq \
+  --recreate
+```
 
-# チャンク作成
-python -m chunking.csv_to_chunks_text_para \
-  -i large_data.txt \
-  -o chunks.csv \
-  -w 24
+#### シナリオ2: 少〜中量データ（100-1,000チャンク）
 
-# Q/A生成 + Qdrant登録
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-chunks chunks.csv \
-  --collection large_collection \
+- **使用例**: 企業ドキュメント、製品マニュアル
+- **理由**: コストが許容範囲内、品質向上のメリット大
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file product_manual.csv \
+  --collection product_docs \
+  --max-docs 500 \
+  --recreate
+```
+
+#### シナリオ3: 多様なコンテンツ
+
+- **使用例**: 技術文書と一般文書が混在
+- **理由**: 各チャンクの特性に応じた適応的なQ/A生成
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file mixed_content.txt \
+  --collection mixed_docs \
+  --recreate
+```
+
+#### シナリオ4: メタデータ活用が必要
+
+- **使用例**: トピック別フィルタリング、重要度ソート
+- **理由**: topic, importance_score, complexityのメタデータ
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file research_papers.csv \
+  --collection research \
+  --recreate
+```
+
+### 従来方式を使うべき場合（`--no-smart-generation`）
+
+#### シナリオ1: 大規模データセット（10,000+チャンク）
+
+- **使用例**: Wikipediaデータセット、ニュース記事コレクション
+- **理由**: API コスト最小化、処理時間短縮
+
+```bash
+python make_qa_register_qdrant.py \
+  --dataset wikipedia_ja \
+  --collection wiki_ja \
+  --max-docs 50000 \
+  --no-smart-generation \
   --use-celery \
   --celery-workers 24 \
-  --merge-chunks \
-  --batch-size 200 \
-  --recreate
-
-# Flower（モニタリング）
-celery -A celery_config flower --port=5555
-# http://localhost:5555 でアクセス
-```
-
-**所要時間**: 数時間～数日
-
----
-
-### ワークフロー4: 既存Q/AペアをQdrantに登録
-
-```bash
-# Q/Aペアが既に存在する場合
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-csv qa_output/pipeline/qa_pairs_wiki_20250117.csv \
-  --collection qa_wikipedia \
-  --batch-size 100 \
   --recreate
 ```
 
-**所要時間**: 数分～数十分
+#### シナリオ2: コスト最適化が必要
 
----
-
-## 🔬 関数リファレンス
-
-### normalize_source_filename()
-
-```python
-def normalize_source_filename(filename: str) -> str:
-    """
-    ファイル名から日時サフィックスを除去して正規化する。
-
-    Args:
-        filename (str): 正規化対象のファイル名
-
-    Returns:
-        str: 正規化されたファイル名
-
-    Examples:
-        >>> normalize_source_filename("qa_pairs_wiki_20250117_143025.csv")
-        "qa_pairs_wiki.csv"
-
-        >>> normalize_source_filename("qa_pairs_news.csv")
-        "qa_pairs_news.csv"
-    """
-    normalized = re.sub(r'_\d{8}_\d{6}', '', filename)
-    return normalized
-```
-
-**使用箇所**:
-
-- Qdrantポイントのペイロードに`source`フィールドとして保存
-- UI用正規化CSVのファイル名として使用
-
----
-
-### run_registration()
-
-```python
-def run_registration(
-    csv_path: str,
-    collection_name: str,
-    recreate: bool,
-    batch_size: int,
-    provider: str
-) -> bool:
-    """
-    Phase 2のQdrant登録処理を実行する。
-
-    Args:
-        csv_path (str): Q/AペアCSVのパス
-        collection_name (str): Qdrantコレクション名
-        recreate (bool): コレクションを再作成するか
-        batch_size (int): Embeddingバッチサイズ
-        provider (str): Embeddingプロバイダー
-
-    Returns:
-        bool: 成功時True、失敗時False
-
-    Raises:
-        FileNotFoundError: CSVファイルが見つからない
-        ValueError: 必須カラムが不足
-        Exception: Qdrant接続エラー、登録エラー
-
-    Process:
-        1. CSV読み込み
-        2. ベクトル化テキスト準備（question + answer）
-        3. Qdrantクライアント作成
-        4. コレクション作成/再作成
-        5. バッチ処理ループ
-           - Embedding生成
-           - ポイント構築
-           - Qdrantへアップサート
-        6. UI用正規化CSV作成
-    """
-```
-
----
-
-### main()
-
-```python
-def main():
-    """
-    CLIエントリーポイント。
-
-    Process:
-        1. コマンドライン引数解析
-        2. 入力検証（排他制御）
-        3. APIキー確認
-        4. Phase 1実行（Q/A生成）
-        5. Phase 2実行（Qdrant登録）
-        6. 完了メッセージ
-
-    Exits:
-        1: 入力エラー、APIキーエラー、処理エラー
-        0: 正常終了
-    """
-```
-
----
-
-## ⚠️ トラブルシューティング
-
-### 問題1: 入力検証エラー
-
-**症状**:
-
-```
-❌ --dataset, --input-csv, --input-chunks のいずれか1つを指定してください
-```
-
-**原因**: 入力オプションが指定されていない
-
-**対処法**:
+- **使用例**: 予算制限のあるプロジェクト
+- **理由**: API呼び出しが半分、コストも約半分
 
 ```bash
-# いずれか1つを指定
-python qa_qdrant/make_qa_register_qdrant.py \
-  --dataset wikipedia_ja \
-  --collection qa_wikipedia \
+python make_qa_register_qdrant.py \
+  --input-file large_corpus.csv \
+  --collection corpus \
+  --no-smart-generation \
   --recreate
 ```
 
----
+#### シナリオ3: 高速処理が必要
 
-### 問題2: 複数の入力オプションエラー
-
-**症状**:
-
-```
-❌ --dataset, --input-csv, --input-chunks は同時に指定できません
-```
-
-**原因**: 複数の入力オプションを同時に指定
-
-**対処法**:
+- **使用例**: リアルタイム処理、バッチジョブ
+- **理由**: 処理時間が約半分
 
 ```bash
-# ❌ 誤り
---dataset wikipedia_ja --input-csv data.csv
-
-# ✅ 正しい
---dataset wikipedia_ja
-# または
---input-csv data.csv
-```
-
----
-
-### 問題3: APIキーエラー
-
-**症状**:
-
-```
-❌ GOOGLE_API_KEYが設定されていません
-```
-
-**対処法**:
-
-```bash
-export GOOGLE_API_KEY="your-api-key-here"
-
-# または .env ファイルに設定
-echo "GOOGLE_API_KEY=your-api-key-here" >> .env
-```
-
----
-
-### 問題4: チャンクCSVの必須カラム不足
-
-**症状**:
-
-```
-ValueError: 必須カラムが不足しています: ['chunk_id', 'text']
-```
-
-**原因**: チャンクCSVに必須カラムが含まれていない
-
-**必須カラム**:
-
-- `chunk_id`
-- `text`
-- `tokens`
-- `chunk_idx`
-
-**対処法**:
-
-```bash
-# 正しいツールでチャンクCSVを作成
-python -m chunking.csv_to_chunks_text_para \
-  -i data.txt \
-  -o chunks.csv
-```
-
----
-
-### 問題5: Q/AペアCSVの必須カラム不足
-
-**症状**:
-
-```
-❌ Q/Aカラムが見つかりません。
-```
-
-**原因**: CSVに`question`または`answer`カラムがない
-
-**対処法**:
-
-```csv
-# CSVファイルの形式を確認
-question,answer
-"質問1","回答1"
-"質問2","回答2"
-```
-
----
-
-### 問題6: Qdrant接続エラー
-
-**症状**:
-
-```
-❌ Qdrant接続エラー: Connection refused
-```
-
-**対処法**:
-
-```bash
-# Qdrantコンテナの起動確認
-docker ps | grep qdrant
-
-# Qdrantを起動
-docker-compose up -d qdrant
-
-# 接続確認
-curl http://localhost:6333/
-```
-
----
-
-### 問題7: Celeryワーカーが起動していない
-
-**症状**:
-
-```
-RuntimeError: Celery workers are not running
-```
-
-**対処法**:
-
-```bash
-# Celeryワーカーを起動
-./start_celery.sh restart -w 16
-
-# ステータス確認
-./start_celery.sh status
-
-# または、Celeryを使わない
-python qa_qdrant/make_qa_register_qdrant.py \
-  --dataset wikipedia_ja \
-  --collection qa_wikipedia \
+python make_qa_register_qdrant.py \
+  --input-file daily_news.csv \
+  --collection news \
+  --no-smart-generation \
+  --use-celery \
+  --celery-workers 16 \
   --recreate
-  # --use-celery を指定しない
+```
+
+#### シナリオ4: 安定性重視（本番環境）
+
+- **使用例**: ミッションクリティカルなシステム
+- **理由**: シンプルなロジック、デバッグが容易
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file production_data.csv \
+  --collection production \
+  --no-smart-generation \
+  --recreate
+```
+
+### 使い分けのガイドライン
+
+| 判断基準 | スマート生成 | 従来方式 |
+|---------|------------|---------|
+| **データ量** | < 1,000チャンク | > 10,000チャンク |
+| **予算** | 余裕あり | 制約あり |
+| **処理時間** | 許容可能 | 最小化したい |
+| **品質** | 最優先 | 標準で十分 |
+| **コンテンツ** | 多様・複雑 | 均質・単純 |
+| **メタデータ** | 必要 | 不要 |
+| **環境** | 開発・テスト | 本番 |
+
+### ハイブリッドアプローチ（推奨）
+
+重要なドキュメントのみスマート生成、その他は従来方式：
+
+```bash
+# ステップ1: 重要ドキュメント（スマート生成）
+python make_qa_register_qdrant.py \
+  --input-file important_docs.csv \
+  --collection all_docs \
+  --recreate
+
+# ステップ2: その他ドキュメント（従来方式）
+python make_qa_register_qdrant.py \
+  --input-file other_docs.csv \
+  --collection all_docs \
+  --no-smart-generation
+  # --recreateを指定しないことで追加登録
 ```
 
 ---
 
-### 問題8: メモリ不足
+## ⚠️ 注意事項
+
+### 1. スマート生成のコストと処理時間
+
+- **API コスト**: 約2倍（チャンクごとに2回のLLM呼び出し）
+- **処理時間**: 約2倍（分析ステップの追加）
+
+### 2. Celery並列処理の制限
+
+- スマート生成 + Celery の場合、`celery_tasks.py`が`use_smart_generation`パラメータに対応している必要があります
+- 現在の実装では対応していない可能性があるため、同期処理を推奨
+
+### 3. 0個生成の扱い
+
+- スマート生成では、メタ情報のみのチャンクから0個のQ/Aを生成する場合があります
+- これは意図的な動作であり、不要なQ/Aを生成しないための機能です
+
+### 4. バッチサイズの推奨
+
+- スマート生成の場合、`--batch-chunks=1`を推奨（各チャンクを個別に分析）
+- 従来方式の場合、`--batch-chunks=3`（デフォルト）で問題なし
+
+---
+
+## 🔧 トラブルシューティング
+
+### 問題1: スマート生成が遅い
 
 **症状**:
+```
+Phase 1の処理時間が非常に長い
+```
 
+**解決策**:
+```bash
+# 従来方式に切り替え
+python make_qa_register_qdrant.py \
+  --input-file doc.txt \
+  --collection docs \
+  --no-smart-generation \
+  --recreate
+```
+
+### 問題2: API コストが高い
+
+**症状**:
+```
+Gemini APIの使用量が予想以上に多い
+```
+
+**解決策**:
+```bash
+# 1. 従来方式に切り替え
+--no-smart-generation
+
+# 2. max-docsで制限
+--max-docs 100
+
+# 3. バッチサイズを調整
+--batch-chunks 5
+```
+
+### 問題3: メモリ不足
+
+**症状**:
 ```
 MemoryError: Unable to allocate array
 ```
 
-**対処法**:
-
+**解決策**:
 ```bash
-# バッチサイズを小さくする
+# 1. バッチサイズを小さく
 --batch-size 50
 
-# 処理文書数を制限
---max-docs 100
+# 2. max-docsで制限
+--max-docs 1000
 
-# Celeryワーカー数を減らす
---celery-workers 8
+# 3. Celery並列処理を使わない
+# --use-celery を削除
 ```
 
----
-
-### 問題9: Q/A生成フェーズでCSVファイルが作成されない
+### 問題4: Celeryワーカーが応答しない
 
 **症状**:
-
 ```
-❌ Q/A生成フェーズでCSVファイルが作成されませんでした。
+RuntimeError: Celery workers are not running
+```
+
+**解決策**:
+```bash
+# 1. ワーカーを起動（別ターミナル）
+celery -A celery_tasks worker --loglevel=info --concurrency=8
+
+# 2. ワーカー数を確認
+celery -A celery_tasks inspect active
+
+# 3. 同期処理に切り替え
+# --use-celery を削除
+```
+
+### 問題5: Q/A数が0個ばかり
+
+**症状**:
+```
+分析完了: Q/A数=0, 重要度=0.20
+Q/A生成スキップ（qa_count=0）
 ```
 
 **原因**:
+- チャンクの内容が補足情報のみ
+- メタ情報のみのチャンク
 
-- Q/A生成が失敗
-- ファイル書き込み権限エラー
-
-**対処法**:
-
+**解決策**:
 ```bash
-# ログを確認
-# qa_output/pipeline/ ディレクトリの権限確認
-ls -la qa_output/pipeline/
+# 1. 従来方式に切り替え（固定数生成）
+--no-smart-generation
 
-# ディレクトリ作成
-mkdir -p qa_output/pipeline
+# 2. チャンクサイズを大きく
+# config.pyで chunk_size を調整
 
-# 権限変更
-chmod 755 qa_output/pipeline
+# 3. セマンティック分割を使用
+--use-similarity --similarity-threshold 0.7
 ```
 
----
-
-### 問題10: UI用ファイル作成失敗
+### 問題6: トピックが取得できない
 
 **症状**:
-
 ```
-⚠️ UI用ファイル作成失敗: Permission denied
+'topic'フィールドがない
 ```
 
-**対処法**:
+**原因**:
+- 従来方式を使用している
+- CSVに既存Q/Aがあり、topicカラムがない
 
+**解決策**:
 ```bash
-# qa_output/ ディレクトリの権限確認
-ls -la qa_output/
-
-# ディレクトリ作成
-mkdir -p qa_output
-
-# 権限変更
-chmod 755 qa_output
-```
-
----
-
-## 💡 ベストプラクティス
-
-### 1. 段階的なテスト
-
-```bash
-# Step 1: 小規模テスト（10文書）
---max-docs 10
-
-# Step 2: 中規模テスト（100文書）
---max-docs 100
-
-# Step 3: 本番実行（全データ）
-# --max-docs を指定しない
-```
-
----
-
-### 2. チャンク品質の確認
-
-```bash
-# チャンク作成のみ実行
-python -m chunking.csv_to_chunks_text_para \
-  -i data.txt \
-  -o chunks.csv
-
-# チャンクCSVを確認
-head -20 chunks.csv
-
-# 統計確認
-python -c "
-import pandas as pd
-df = pd.read_csv('chunks.csv')
-print(df['tokens'].describe())
-print(f'Total chunks: {len(df)}')
-"
-
-# 確認後、Q/A生成
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-chunks chunks.csv \
-  --collection my_collection \
+# スマート生成に切り替え
+python make_qa_register_qdrant.py \
+  --input-file doc.txt \
+  --collection docs \
   --recreate
+  # --no-smart-generation を削除
 ```
 
----
+### 問題7: エラー「Column 'question' or 'answer' not found」
 
-### 3. Celeryの効果的な使用
+**症状**:
+```
+ValueError: CSV must have 'text' or 'Combined_Text' column,
+or both 'question' and 'answer' columns
+```
 
+**原因**:
+- CSVファイルに必要なカラムがない
+
+**解決策**:
 ```bash
-# 小規模（< 100文書）: Celeryなし
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-chunks chunks.csv \
-  --collection small_collection \
-  --recreate
+# CSVのヘッダーを確認
+head -n 1 your_file.csv
 
-# 中規模（100-1,000文書）: Celery 8-16ワーカー
-./start_celery.sh restart -w 16
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-chunks chunks.csv \
-  --collection medium_collection \
-  --use-celery \
-  --celery-workers 16 \
-  --recreate
-
-# 大規模（> 1,000文書）: Celery 24ワーカー
-./start_celery.sh restart -w 24
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-chunks chunks.csv \
-  --collection large_collection \
-  --use-celery \
-  --celery-workers 24 \
-  --recreate
+# 必要なカラムのいずれかを含める:
+# - text または Combined_Text （テキストのみの場合）
+# - question と answer （Q/Aペアの場合）
 ```
-
----
-
-### 4. バッチサイズの最適化
-
-```bash
-# メモリ潤沢（32GB以上）
---batch-size 200
-
-# 標準（16GB）
---batch-size 100
-
-# メモリ制限あり（8GB以下）
---batch-size 50
-```
-
----
-
-### 5. ログの活用
-
-```bash
-# ログをファイルに保存
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-chunks chunks.csv \
-  --collection my_collection \
-  --use-celery \
-  --celery-workers 16 \
-  --recreate \
-  2>&1 | tee qa_generation.log
-
-# エラーのみ抽出
-grep "❌" qa_generation.log
-
-# 進捗確認
-grep "進捗" qa_generation.log
-```
-
----
-
-### 6. コレクション名の規則
-
-```bash
-# 推奨: qa_{データセット名}
---collection qa_wikipedia_ja
---collection qa_news
---collection qa_fineweb
-
-# 避ける: 一般的すぎる名前
---collection data
---collection test
-```
-
----
-
-### 7. 並列処理の監視
-
-```bash
-# Flowerでモニタリング
-celery -A celery_config flower --port=5555
-
-# ブラウザでアクセス
-# http://localhost:5555
-
-# タスク数、成功率、失敗数などを確認
-```
-
----
-
-### 8. 再実行時の注意
-
-```bash
-# 既存コレクションを削除して再作成
---recreate
-
-# 既存コレクションに追記（非推奨）
-# --recreate を指定しない
-```
-
----
-
-### 9. エラーハンドリング
-
-```bash
-# エラー発生時は自動的に終了（sys.exit(1)）
-# 安全に中断できる（Ctrl+C）
-
-# 中断後の再開
-# 同じコマンドを実行すれば最初から再実行される
-# （中間状態の保存機能はないため）
-```
-
----
-
-### 10. UI統合の活用
-
-```python
-# agent_rag.pyでの参照
-
-# 正規化されたファイル名で安定的に参照可能
-source_file = "qa_pairs_wikipedia_ja.csv"  # タイムスタンプなし
-
-# qa_output/ ディレクトリから読み込み
-csv_path = os.path.join("qa_output", source_file)
-df = pd.read_csv(csv_path)
-```
-
----
-
-## 📊 パフォーマンス指標
-
-### チャンク作成
-
-
-| 文書数 | ワーカー数 | 処理時間 | チャンク数 |
-| ------ | ---------- | -------- | ---------- |
-| 100    | 8          | ~2分     | ~300       |
-| 1,000  | 16         | ~15分    | ~3,000     |
-| 10,000 | 24         | ~2時間   | ~30,000    |
-
-### Q/A生成
-
-
-| チャンク数 | Celery | ワーカー数 | 処理時間 | Q/A数   |
-| ---------- | ------ | ---------- | -------- | ------- |
-| 100        | No     | -          | ~15分    | ~300    |
-| 100        | Yes    | 8          | ~5分     | ~300    |
-| 1,000      | Yes    | 16         | ~30分    | ~3,000  |
-| 10,000     | Yes    | 24         | ~4時間   | ~30,000 |
-
-### Qdrant登録
-
-
-| Q/A数   | バッチサイズ | 処理時間 | 登録速度 |
-| ------- | ------------ | -------- | -------- |
-| 1,000   | 100          | ~5分     | ~200/分  |
-| 10,000  | 100          | ~30分    | ~333/分  |
-| 100,000 | 200          | ~4時間   | ~416/分  |
 
 ---
 
 ## 📚 関連ドキュメント
 
-- `qa_generation/doc/qa_generation_module_guide.md` - qa_generationモジュールの詳細
-- `qa_qdrant/doc/qa_generation.md` - モジュール依存関係分析
-- `chunking/SKILL.md` - チャンク処理の技術詳細
-- `services/qdrant_service.py` - Qdrant操作関数の実装
-- `qdrant_client_wrapper.py` - Qdrantクライアントの実装
+- `qa_generation_comparison.md` - スマート生成と従来方式の詳細比較
+- `smart_generation_upgrade_summary.md` - v2.1改修内容の詳細
+- `smart_qa_generator.py` - SmartQAGeneratorクラスの実装
+- `generation.py` - QAGeneratorクラス（統合版）の実装
+- `pipeline.py` - QAPipelineクラスの実装
 
 ---
 
-**作成日**: 2025-01-17
-**最終更新**: 2025-01-17
-**対象ファイル**: `make_qa_register_qdrant.py`
-**ドキュメントバージョン**: 2.0.0
+## 📝 バージョン履歴
+
+| バージョン | 日付 | 変更内容 |
+|----------|------|---------|
+| **v2.1** | 2025-01-20 | ✨ スマート生成デフォルト化、`--use-smart-generation`/`--no-smart-generation`追加 |
+| v2.0 | 2025-01-19 | 入力処理統一、`--input-file`追加、CSVカラム自動判定 |
+| v1.0 | 2025-01-15 | 初版リリース |
+
+---
+
+**作成日**: 2025-01-20
+**最終更新**: 2025-01-20
+**バージョン**: v2.1
+**作成者**: AI Assistant

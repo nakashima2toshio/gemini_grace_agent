@@ -3,11 +3,20 @@
 """
 make_qa_register_qdrant.py - Q/A生成からQdrant登録までを完結する統合ツール（リファクタリング版）
 
+python make_qa_register_qdrant.py \
+  --input-file test.txt \
+  --collection test \
+  --use-celery \
+  --recreate
+
 改修内容:
-- --input-chunksを廃止（チャンク処理の統一）
-- --input-csvを--input-fileに変更（テキスト/CSV両対応）
+- --input-file（テキスト/CSV両対応）
 - --outputオプションを追加（出力先の柔軟化）
 - --ui-outputオプションを追加（UI用CSV出力先の柔軟化）
+- スマートQ/A生成をデフォルトで有効化（SmartQAGenerator使用）
+  - LLMによる動的Q/A数決定（0-5個）
+  - 内容の重要度・複雑さを考慮
+  - --no-smart-generationで従来方式に戻すことも可能
 """
 
 import sys
@@ -203,6 +212,19 @@ def main():
     group_gen.add_argument("--overlap-tokens", type=int, default=0)
     group_gen.add_argument("--use-similarity", action="store_true")
     group_gen.add_argument("--similarity-threshold", type=float, default=0.7)
+    # ✨ スマート生成オプション（デフォルト: True）
+    group_gen.add_argument(
+        "--use-smart-generation",
+        action="store_true",
+        default=True,
+        help="スマートQ/A生成を使用（LLMによる動的Q/A数決定、デフォルト有効）"
+    )
+    group_gen.add_argument(
+        "--no-smart-generation",
+        dest="use_smart_generation",
+        action="store_false",
+        help="従来方式のQ/A生成を使用（トークン数ベース）"
+    )
 
     # ================================================================
     # Qdrant登録パラメータ
@@ -253,6 +275,21 @@ def main():
         logger.error("GOOGLE_API_KEYが設定されていません")
         sys.exit(1)
 
+    # ✨ スマート生成モードのログ表示
+    logger.info("")
+    logger.info("=" * 60)
+    if args.use_smart_generation:
+        logger.info("🆕 Q/A生成モード: スマート生成（デフォルト）")
+        logger.info("   - LLMによる動的Q/A数決定（0-5個）")
+        logger.info("   - 内容の重要度・複雑さを考慮")
+        logger.info("   - 主要トピックを明示的にカバー")
+        logger.info("   ※ 従来方式に戻す場合: --no-smart-generation")
+    else:
+        logger.info("🔧 Q/A生成モード: 従来方式（トークン数ベース）")
+        logger.info("   - 固定的なQ/A数決定（2-8個）")
+        logger.info("   ※ スマート生成に切り替える場合: --use-smart-generation")
+    logger.info("=" * 60)
+
     try:
         # ================================================================
         # Phase 1: Q/A生成
@@ -291,7 +328,8 @@ def main():
                     analyze_coverage=True,
                     overlap_tokens=args.overlap_tokens,
                     use_similarity=args.use_similarity,
-                    similarity_threshold=args.similarity_threshold
+                    similarity_threshold=args.similarity_threshold,
+                    use_smart_generation=args.use_smart_generation  # ✨ 追加
                 )
 
                 generated_csv = result['saved_files'].get('qa_csv')
@@ -340,7 +378,8 @@ def main():
                         analyze_coverage=True,
                         overlap_tokens=args.overlap_tokens,
                         use_similarity=args.use_similarity,
-                        similarity_threshold=args.similarity_threshold
+                        similarity_threshold=args.similarity_threshold,
+                        use_smart_generation=args.use_smart_generation  # ✨ 追加
                     )
 
                     generated_csv = result['saved_files'].get('qa_csv')
@@ -378,7 +417,8 @@ def main():
                 analyze_coverage=True,
                 overlap_tokens=args.overlap_tokens,
                 use_similarity=args.use_similarity,
-                similarity_threshold=args.similarity_threshold
+                similarity_threshold=args.similarity_threshold,
+                use_smart_generation=args.use_smart_generation  # ✨ 追加
             )
 
             generated_csv = result['saved_files'].get('qa_csv')

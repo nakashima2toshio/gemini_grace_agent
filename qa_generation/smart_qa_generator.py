@@ -1,7 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-smart_qa_generator.py - コンテンツを考慮したインテリジェントQ/A生成システム
+smart_qa_generator.py - コンテンツを考慮したインテリジェントQ/A生成システム v2.5
+
+改修内容（v2.5）:
+- google.generativeai → google.genai に移行
+- 新しいAPIに対応
 
 現在の問題点:
 - すべてのチャンクで固定数（qa_per_chunk=3）のQ/Aを生成
@@ -16,7 +20,20 @@ smart_qa_generator.py - コンテンツを考慮したインテリジェントQ/
 import json
 import logging
 from typing import Dict, List, Optional
-import google.generativeai as genai
+
+try:
+    # 新しいパッケージを優先
+    from google import genai
+
+    USING_NEW_API = True
+except ImportError:
+    # フォールバック: 古いパッケージ
+    import google.generativeai as genai
+
+    USING_NEW_API = False
+    import warnings
+
+    warnings.filterwarnings('ignore', category=FutureWarning, module='google.generativeai')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,10 +54,51 @@ class SmartQAGenerator:
         """
         self.model = model
 
-        if api_key:
-            genai.configure(api_key=api_key)
+        if USING_NEW_API:
+            # 新しいAPIの初期化
+            if api_key:
+                client = genai.Client(api_key=api_key)
+                self.client = client
+            else:
+                self.client = genai.Client()
+            logger.info("✅ 新しいgoogle.genai APIを使用")
+        else:
+            # 古いAPIの初期化
+            if api_key:
+                genai.configure(api_key=api_key)
+            self.model_instance = genai.GenerativeModel(model)
+            logger.info("⚠️ 古いgoogle.generativeai APIを使用（非推奨）")
 
-        self.model_instance = genai.GenerativeModel(model)
+    def _generate_content(self, prompt: str, temperature: float = 0.1) -> str:
+        """
+        コンテンツ生成（API切り替え対応）
+
+        Args:
+            prompt: プロンプト
+            temperature: 温度パラメータ
+
+        Returns:
+            生成されたテキスト
+        """
+        if USING_NEW_API:
+            # 新しいAPI
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config={
+                    'temperature': temperature,
+                }
+            )
+            return response.text
+        else:
+            # 古いAPI
+            response = self.model_instance.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=temperature,
+                )
+            )
+            return response.text
 
     def analyze_chunk(self, chunk_text: str) -> Dict:
         """
@@ -113,15 +171,10 @@ class SmartQAGenerator:
 """
 
         try:
-            response = self.model_instance.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,  # 一貫性のため低温度
-                )
-            )
+            text = self._generate_content(prompt, temperature=0.1)
 
             # JSONパース
-            text = response.text.strip()
+            text = text.strip()
 
             # Markdownコードブロックの除去
             if text.startswith('```json'):
@@ -254,16 +307,10 @@ class SmartQAGenerator:
 """
 
         try:
-            response = self.model_instance.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.3,
-                )
-            )
-
-            text = response.text.strip()
+            text = self._generate_content(prompt, temperature=0.3)
 
             # Markdownコードブロックの除去
+            text = text.strip()
             if text.startswith('```json'):
                 text = text[7:]
             if text.startswith('```'):
@@ -414,7 +461,7 @@ if __name__ == "__main__":
     results = []
 
     print("=" * 60)
-    print("スマートQ/A生成システム - デモ")
+    print("スマートQ/A生成システム - デモ v2.5")
     print("=" * 60)
 
     for i, chunk in enumerate(test_chunks, 1):
@@ -462,4 +509,3 @@ if __name__ == "__main__":
     print(f"\n{'=' * 60}")
     print("✅ デモ完了")
     print(f"{'=' * 60}")
-
