@@ -66,20 +66,6 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="/qa_output/pipeline/qa_pairs_fineweb_edu_ja_20251230_232641.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
-        <entry key="/qa_output/qa_pairs_fineweb_edu_ja.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
       </map>
     </option>
   </component>
