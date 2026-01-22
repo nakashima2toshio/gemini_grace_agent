@@ -129,6 +129,13 @@ def show_agent_chat_page():
             help="エージェントが検索ツールを使用する際に、候補として提示されるコレクションです。"
         )
 
+        # ★追加: ハイブリッド検索（Sparse + Dense）の有効化チェックボックス
+        use_hybrid_search = st.checkbox(
+            "⚡ ハイブリッド検索 (Sparse + Dense)",
+            value=True,
+            help="キーワードベースのSparse検索を併用して検索精度を向上させます"
+        )
+
         if st.button("🗑️ 会話履歴をクリア"):
             st.session_state.chat_history = []
             st.session_state.chat_session = None
@@ -138,6 +145,9 @@ def show_agent_chat_page():
             # current_model もクリア
             if "current_model" in st.session_state:
                 del st.session_state["current_model"]
+            # ★追加: current_hybrid_search もクリア
+            if "current_hybrid_search" in st.session_state:
+                del st.session_state["current_hybrid_search"]
             st.rerun()
 
         # キャッシュリセットボタン
@@ -176,6 +186,7 @@ def show_agent_chat_page():
     # 前回のコレクション選択状態・モデルと比較
     current_collections_key = "current_collections"
     current_model_key = "current_model"
+    current_hybrid_key = "current_hybrid_search"  # ★追加
     should_reinitialize = False
 
     # selected_collections はリストなのでソートして比較
@@ -193,15 +204,25 @@ def show_agent_chat_page():
         should_reinitialize = True
         st.toast(f"モデルが変更されました: {selected_model}")
 
+    # ★追加: ハイブリッド検索設定の変更チェック
+    if current_hybrid_key not in st.session_state:
+        should_reinitialize = True
+    elif st.session_state[current_hybrid_key] != use_hybrid_search:
+        should_reinitialize = True
+        st.toast(f"ハイブリッド検索: {'有効' if use_hybrid_search else '無効'}")
+
     if should_reinitialize or "agent" not in st.session_state or st.session_state.agent is None:
         try:
+            # ★変更: use_hybrid_search パラメータを追加
             st.session_state.agent = ReActAgent(
                 selected_collections,
                 selected_model,
-                session_id=st.session_state.agent_session_id  # セッションIDを渡す
+                session_id=st.session_state.agent_session_id,
+                use_hybrid_search=use_hybrid_search  # ★追加
             )
             st.session_state[current_collections_key] = selected_collections
             st.session_state[current_model_key] = selected_model
+            st.session_state[current_hybrid_key] = use_hybrid_search  # ★追加
             st.toast("エージェントの準備が完了しました（キャッシュ+並列検索）。")
         except Exception as e:
             st.error(f"エージェントの初期化に失敗しました: {e}")
@@ -262,4 +283,3 @@ def show_agent_chat_page():
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
                 logger.error(f"Chat Error: {e}", exc_info=True)
-
