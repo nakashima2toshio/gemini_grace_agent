@@ -265,14 +265,21 @@ def rerank_results(
         return sorted_results[:top_k]
 
 
+# ★変更: use_hybrid_search パラメータを追加
 def search_rag_knowledge_base(
         query: str,
-        collection_name: Optional[str] = None
+        collection_name: Optional[str] = None,
+        use_hybrid_search: bool = True  # ★追加
 ) -> str:
     """
     Qdrantデータベースから専門的な知識を検索します（Legacy String Output版）。
 
     検索結果が見つからない場合、自動的に他のコレクションもフォールバック検索します。
+
+    Args:
+        query: 検索クエリ
+        collection_name: 検索対象のコレクション名（省略時はデフォルト）
+        use_hybrid_search: ハイブリッド検索（Sparse + Dense）を使用するか（デフォルト: True）
     """
     # デフォルトコレクションの解決（表示用）
     effective_collection = collection_name if collection_name else AgentConfig.RAG_DEFAULT_COLLECTION
@@ -280,7 +287,8 @@ def search_rag_knowledge_base(
     # フォールバック検索を有効にするかどうか
     enable_fallback = True  # デフォルトでフォールバックを有効化
 
-    results = search_rag_knowledge_base_structured(query, collection_name)
+    # ★変更: use_hybrid_search パラメータを渡す
+    results = search_rag_knowledge_base_structured(query, collection_name, use_hybrid_search=use_hybrid_search)
 
     # フォールバック検索: 結果が見つからない場合、他のコレクションも試す
     if enable_fallback and isinstance(results, str) and "NO_RAG_RESULT" in results:
@@ -301,7 +309,9 @@ def search_rag_knowledge_base(
 
             for fallback_col in fallback_collections[:3]:  # 最大3つまで試行
                 logger.info(f"  → フォールバック検索: {fallback_col}")
-                fallback_results = search_rag_knowledge_base_structured(query, fallback_col)
+                # ★変更: use_hybrid_search パラメータを渡す
+                fallback_results = search_rag_knowledge_base_structured(query, fallback_col,
+                                                                        use_hybrid_search=use_hybrid_search)
 
                 if not isinstance(fallback_results, str):  # 成功した場合
                     logger.info(f"✓ フォールバック検索成功: {fallback_col} で結果を発見")
@@ -343,18 +353,28 @@ def search_rag_knowledge_base(
     return "\n".join(formatted_results)
 
 
+# ★変更: use_hybrid_search パラメータを追加
 def search_rag_knowledge_base_structured(
         query: str,
-        collection_name: Optional[str] = None
+        collection_name: Optional[str] = None,
+        use_hybrid_search: bool = True  # ★追加
 ) -> Union[List[Dict[str, Any]], str]:
     """
     Qdrantデータベースから専門的な知識を検索します（構造化データ版）。
+
+    Args:
+        query: 検索クエリ
+        collection_name: 検索対象のコレクション名（省略時はデフォルト）
+        use_hybrid_search: ハイブリッド検索（Sparse + Dense）を使用するか（デフォルト: True）
     """
     if collection_name is None:
         collection_name = AgentConfig.RAG_DEFAULT_COLLECTION
 
     start_time: float = time.time()
-    logger.info(f"ツールアクション(Structured): RAG検索を実行: query='{query}', collection='{collection_name}'")
+    # ★変更: ログにハイブリッド検索の状態を追加
+    hybrid_status = "有効" if use_hybrid_search else "無効"
+    logger.info(
+        f"ツールアクション(Structured): RAG検索を実行: query='{query}', collection='{collection_name}', hybrid={hybrid_status}")
 
     metrics: SearchMetrics = SearchMetrics(
         query=query,
@@ -379,14 +399,17 @@ def search_rag_knowledge_base_structured(
         if query_vector is None:
             raise EmbeddingError("クエリの埋め込み生成に失敗しました。")
 
-        # スパースベクトルの使用をオプショナルに
+        # ★変更: use_hybrid_search フラグに基づいてスパースベクトルを生成
         sparse_vector = None
-        try:
-            sparse_vector = embed_sparse_query_unified(query)
-            logger.debug(f"スパースベクトル取得成功: {collection_name}")
-        except Exception as e:
-            logger.debug(f"スパースベクトル取得スキップ ({collection_name}): {e}")
-            # スパースベクトルが利用できない場合は None のまま続行
+        if use_hybrid_search:
+            try:
+                sparse_vector = embed_sparse_query_unified(query)
+                logger.debug(f"スパースベクトル取得成功: {collection_name}")
+            except Exception as e:
+                logger.debug(f"スパースベクトル取得スキップ ({collection_name}): {e}")
+                # スパースベクトルが利用できない場合は None のまま続行
+        else:
+            logger.debug(f"ハイブリッド検索無効: スパースベクトルをスキップ ({collection_name})")
 
         # 1. Retrieval (Broad Search)
         # Re-rankingの効果を高めるため、最終的に欲しい数より多く取得する
@@ -453,11 +476,13 @@ def search_rag_knowledge_base_structured(
 
 # ============ 新戦略: キャッシュ + 並列検索 ============
 
+# ★変更: use_hybrid_search パラメータを追加
 def search_rag_knowledge_base_cached(
         query: str,
         session_id: str,
         collection_name: Optional[str] = None,
-        cache_threshold: float = 0.6
+        cache_threshold: float = 0.6,
+        use_hybrid_search: bool = True  # ★追加
 ) -> str:
     """
     キャッシュと並列検索を使用したスマート検索（新戦略）
@@ -473,22 +498,27 @@ def search_rag_knowledge_base_cached(
         session_id: セッションID（キャッシュキー）
         collection_name: 明示的に指定されたコレクション名（優先）
         cache_threshold: キャッシュ検索成功とみなすスコア閾値
+        use_hybrid_search: ハイブリッド検索（Sparse + Dense）を使用するか（デフォルト: True）
 
     Returns:
         検索結果（フォーマット済み文字列）
     """
     start_time = time.time()
 
+    # ★変更: ログにハイブリッド検索の状態を追加
+    hybrid_status = "有効 (Sparse+Dense)" if use_hybrid_search else "無効 (Denseのみ)"
     logger.info(f"\n{'=' * 60}")
     logger.info(f"🔍 スマート検索開始")
     logger.info(f"   Query: '{query}'")
     logger.info(f"   Session: {session_id}")
+    logger.info(f"   Hybrid Search: {hybrid_status}")  # ★追加
     logger.info(f"{'=' * 60}")
 
     # ステップ1: ユーザーが明示的にコレクション指定した場合
     if collection_name:
         logger.info(f"🎯 ユーザー指定コレクション: {collection_name}")
-        result = search_rag_knowledge_base(query, collection_name)
+        # ★変更: use_hybrid_search パラメータを渡す
+        result = search_rag_knowledge_base(query, collection_name, use_hybrid_search=use_hybrid_search)
 
         elapsed = (time.time() - start_time) * 1000
         logger.info(f"⏱️ 検索完了: {elapsed:.0f}ms (ユーザー指定)")
@@ -504,8 +534,9 @@ def search_rag_knowledge_base_cached(
             f"ヒット回数: {cached_entry.hit_count})"
         )
 
-        # キャッシュされたコレクションから検索
-        cached_results = search_rag_knowledge_base_structured(query, cached_entry.collection_name)
+        # ★変更: キャッシュされたコレクションから検索（use_hybrid_search を渡す）
+        cached_results = search_rag_knowledge_base_structured(query, cached_entry.collection_name,
+                                                              use_hybrid_search=use_hybrid_search)
 
         if not isinstance(cached_results, str) and cached_results:
             top_score = max(r.get('score', 0.0) for r in cached_results)
@@ -540,10 +571,14 @@ def search_rag_knowledge_base_cached(
     if not all_collections:
         return "[[NO_RAG_RESULT]] 利用可能なコレクションがありません。"
 
+    # ★変更: use_hybrid_search を渡すためのラッパー関数を作成
+    def search_func_with_hybrid(q: str, col: str) -> Union[List[Dict[str, Any]], str]:
+        return search_rag_knowledge_base_structured(q, col, use_hybrid_search=use_hybrid_search)
+
     all_results = parallel_search_engine.search_all_collections(
         query=query,
         collections=all_collections,
-        search_func=search_rag_knowledge_base_structured
+        search_func=search_func_with_hybrid  # ★変更: ラッパー関数を使用
     )
 
     if not all_results:
@@ -607,4 +642,3 @@ def _format_results(results: List[Dict[str, Any]], source_label: str) -> str:
         )
 
     return "\n".join(formatted_results)
-

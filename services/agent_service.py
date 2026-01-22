@@ -134,11 +134,19 @@ TOOLS_MAP: Dict[str, Any] = {
 # -----------------------------------------------------------------------------
 
 class ReActAgent:
-    def __init__(self, selected_collections: List[str], model_name: str = None, session_id: Optional[str] = None):
+    # ★変更: use_hybrid_search パラメータを追加（デフォルトは True）
+    def __init__(
+        self,
+        selected_collections: List[str],
+        model_name: str = None,
+        session_id: Optional[str] = None,
+        use_hybrid_search: bool = True  # ★追加: ハイブリッド検索フラグ
+    ):
         self.selected_collections = selected_collections
         # モデル名はconfig_serviceから取得（デフォルト）
         self.model_name = model_name or get_config("models.default", "gemini-2.0-flash")
         self.session_id = session_id or str(uuid.uuid4())
+        self.use_hybrid_search = use_hybrid_search  # ★追加: インスタンス変数として保持
 
         # クライアントとチャットの初期化
         self.client = self._setup_client()
@@ -157,7 +165,11 @@ class ReActAgent:
         else:
             self.keyword_extractor = None
 
-        logger.info(f"ReActAgent initialized with session_id: {self.session_id}, model: {self.model_name}")
+        # ★追加: ハイブリッド検索の状態をログ出力
+        logger.info(
+            f"ReActAgent initialized with session_id: {self.session_id}, "
+            f"model: {self.model_name}, use_hybrid_search: {self.use_hybrid_search}"
+        )
 
     def _setup_client(self) -> genai.Client:
         """
@@ -207,9 +219,12 @@ class ReActAgent:
         logger.info(f"Starting agent turn. Session: {self.session_id}, Input: {user_input[:100]}...")
 
         # --- Phase 1: ReAct Loop ---
-        yield {"type": "log", "content": """🤖 **ReAct Phase Start**
+        # ★変更: ハイブリッド検索の状態を表示に追加
+        hybrid_status = "有効 (Sparse + Dense)" if self.use_hybrid_search else "無効 (Dense のみ)"
+        yield {"type": "log", "content": f"""🤖 **ReAct Phase Start**
 📖 **説明**: エージェントが「思考→行動→観察」のサイクルで問題を解決します。
-   質問を分析し、必要に応じてツール（検索など）を使用して情報を収集します。"""}
+   質問を分析し、必要に応じてツール（検索など）を使用して情報を収集します。
+⚡ **ハイブリッド検索**: {hybrid_status}"""}
         draft_answer: Optional[str] = None
         for event in self._execute_react_loop(user_input):
             yield event
@@ -290,10 +305,12 @@ class ReActAgent:
                                 if tool_name in TOOLS_MAP:
                                     # search_rag_knowledge_base の場合はキャッシュ版を使用
                                     if tool_name == 'search_rag_knowledge_base':
+                                        # ★変更: use_hybrid_search パラメータを渡す
                                         tool_result = search_rag_knowledge_base_cached(
                                             query=tool_args.get('query', ''),
                                             session_id=self.session_id,
-                                            collection_name=tool_args.get('collection_name')
+                                            collection_name=tool_args.get('collection_name'),
+                                            use_hybrid_search=self.use_hybrid_search  # ★追加
                                         )
                                     else:
                                         tool_result = TOOLS_MAP[tool_name](**tool_args)
