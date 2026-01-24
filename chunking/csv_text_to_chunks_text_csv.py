@@ -2,13 +2,6 @@
 """
 csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキング（統一版）
 
-改修内容 (v2.0.0):
-- INPUT: `-i, --input` → `--input-file`（短縮形削除）
-- OUTPUT: `-o, --output` → `--output`（ディレクトリ指定、ファイル名自動生成）
-- その他: すべての短縮形削除 (`-m`, `-w`, `-b`, `-v`)
-- デフォルトモデル: `gemini-2.0-flash` に統一
-- テキスト出力廃止（CSV出力のみ）
-
 主要機能:
 - chunks_all_async(): テキストからチャンクを作成（LLMベース、asyncio並列処理）
 - load_text_from_csv(): CSVファイルからテキストを読み込み
@@ -19,19 +12,37 @@ csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキ�
 非同期・並列処理により高速化。CSV出力時に改行を削除してクリーンなCSVを作成。
 
 Usage:
+# Worker起動
+# ./start_celery.sh stop
+# ./start_celery.sh status
+# ./start_celery.sh restart -w 4 --flower
+
+# CSVファイル → チャンクCSV
+python -m chunking.csv_text_to_chunks_text_csv \
+  --input-file OUTPUT/cc_news_5per.csv \
+  --output output_chunked \
+  --model gemini-2.5-flash \
+  --workers 4 \
+  --text-column text \
+  --combine-rows \
+  --block-size 1000
+
+python -m chunking.csv_text_to_chunks_text_csv \
+  --input-file OUTPUT/wikipedia_ja_5per.csv \
+  --output output_chunked \
+  --model gemini-2.5-flash \
+  --workers 4 \
+  --text-column text \
+  --combine-rows \
+  --block-size 1000
+
+# ----------------------------------------------
 # テキストファイル → チャンクCSV
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file ./data/document.txt \
   --output chunks_output \
-  --model gemini-2.0-flash \
+  --model gemini-2.5-flash \
   --workers 8
-
-# CSVファイル → チャンクCSV
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file ./data/articles.csv \
-  --output chunks_output \
-  --text-column text \
-  --combine-rows
 
 # デフォルト出力ディレクトリ使用
 python -m chunking.csv_text_to_chunks_text_csv \
@@ -327,7 +338,7 @@ def _split_sentences_simple(text: str) -> List[str]:
 
 async def chunks_all_async(
         text: str,
-        model: str = "gemini-2.0-flash-exp",
+        model: str = "gemini-2.5-flash",
         max_workers: int = 8,
         block_size: int = 2000,
         checkpoint_manager: Optional[CheckpointManager] = None,
@@ -522,7 +533,7 @@ async def _step3_continuity_check(
     # results = await asyncio.gather(*tasks)
     results = await async_tqdm.gather(
         *tasks,
-        desc="Step2: 連続性チェック",  # 各ステップで説明を変更
+        desc="Step3: 連続性チェック",  # ✅ 修正: Step2 → Step3
         total=len(tasks)
     )
 
@@ -582,7 +593,7 @@ async def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="gemini-2.0-flash",  # ✅ デフォルト値を統一
+        default="gemini-2.5-flash",  # ✅ デフォルト値を統一
         help="使用するLLMモデル"
     )
     parser.add_argument(
@@ -713,4 +724,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

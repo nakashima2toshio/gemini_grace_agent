@@ -1,23 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-celery_tasks.py - Celeryタスク定義（修正版 v2.6）
+celery_tasks.py - Celeryタスク定義（修正版 v2.7）
+
+修正内容（v2.7）:
+- ★新規★ 並列数（concurrency）指定への対応
+- check_celery_workers() の戻り値を拡張（Dict形式）
+- get_total_concurrency() ヘルパー関数の追加
+- get_worker_info() 詳細情報取得関数の追加
 
 修正内容（v2.6）:
-- ★重要★ generate_qa_dataset() の呼び出しを正しいシグネチャに修正
+- generate_qa_dataset() の呼び出しを正しいシグネチャに修正
 - 削除: provider 引数（存在しない）
-- 確認済みシグネチャ:
-    generate_qa_dataset(
-        chunks, dataset_type, model, chunk_batch_size, merge_chunks,
-        min_tokens, max_tokens, config, client, use_smart_generation
-    )
 """
 
 import os
 import sys
 import logging
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 
 # ================================================================
 # 重要: プロジェクトルートをsys.pathに追加
@@ -239,37 +240,250 @@ def collect_results(tasks: List, timeout: int = 600) -> List[Dict]:
 
 
 # ================================================================
-# ワーカー状態確認
+# ワーカー状態確認（v2.7 改修）
 # ================================================================
 
-def check_celery_workers(min_workers: int = 1) -> bool:
-    """Celeryワーカーの状態確認"""
+def get_worker_info() -> Dict:
+    """
+    Celeryワーカーの詳細情報を取得
+
+    Returns:
+        Dict: {
+            'available': bool,           # ワーカーが利用可能か
+            'worker_count': int,         # ワーカー数
+            'total_concurrency': int,    # 総並列処理能力
+            'workers': Dict[str, Dict],  # ワーカー名 → 詳細情報
+            'error': Optional[str]       # エラーメッセージ（あれば）
+        }
+
+    Example:
+        info = get_worker_info()
+            if info['available']:
+            print(f"並列処理能力: {info['total_concurrency']}")
+    """
+    result = {
+        'available': False,
+        'worker_count': 0,
+        'total_concurrency': 0,
+        'workers': {},
+        'error': None
+    }
+
     try:
         inspect = app.control.inspect()
         stats = inspect.stats()
 
         if stats is None:
-            logger.error("❌ Celeryワーカーが応答しません")
-            return False
+            result['error'] = "Celeryワーカーが応答しません"
+            return result
 
-        worker_count = len(stats)
-        logger.info(f"アクティブなワーカー: {worker_count}個")
-
-        if worker_count < min_workers:
-            logger.error(f"❌ ワーカー数が不足: {worker_count} < {min_workers}")
-            return False
+        total_concurrency = 0
+        workers_info = {}
 
         for worker_name, worker_stats in stats.items():
             pool_info = worker_stats.get('pool', {})
-            concurrency = pool_info.get('max-concurrency', 'N/A')
-            logger.info(f"  - {worker_name}: concurrency={concurrency}")
+            concurrency = pool_info.get('max-concurrency', 0)
 
+            # concurrencyが文字列の場合は整数に変換
+            if isinstance(concurrency, str):
+                try:
+                    concurrency = int(concurrency)
+                except ValueError:
+                    concurrency = 0
+
+            workers_info[worker_name] = {
+                'concurrency': concurrency,
+                'pool': pool_info.get('implementation', 'unknown'),
+                'processes': pool_info.get('processes', [])
+            }
+            total_concurrency += concurrency
+
+        result['available'] = True
+        result['worker_count'] = len(stats)
+        result['total_concurrency'] = total_concurrency
+        result['workers'] = workers_info
+
+        return result
+
+    except Exception as e:
+        result['error'] = str(e)
+        return result
+
+
+def get_total_concurrency() -> int:
+    """
+    Celeryワーカーの総並列処理能力を取得
+
+    Returns:
+        int: 総concurrency数（エラー時は0）
+
+    Example:
+        >>> concurrency = get_total_concurrency()
+        >>> print(f"利用可能な並列数: {concurrency}")
+    """
+    info = get_worker_info()
+    return info.get('total_concurrency', 0)
+
+
+def check_celery_workers(
+        min_workers: int = 1,
+        required_concurrency: Optional[int] = None
+) -> Union[bool, Dict]:
+    """
+    Celeryワーカーの状態確認（v2.7 改修版）
+
+    Args:
+        min_workers: 必要最小ワーカー数（デフォルト: 1）
+        required_concurrency: 必要な並列数（Noneの場合はチェックしない）
+
+    Returns:
+        bool: 後方互換モード（required_concurrency=None の場合）
+        Dict: 詳細モード（required_concurrency 指定時）
+            {
+                'ok': bool,                  # 要件を満たしているか
+                'worker_count': int,         # ワーカー数
+                'total_concurrency': int,    # 総並列処理能力
+                'required_concurrency': int, # 要求された並列数
+                'available_concurrency': int,# 実際に使用可能な並列数
+                'workers': Dict,             # ワーカー詳細
+                'message': str               # 状態メッセージ
+            }
+
+    Example（後方互換）:
+        >>> if check_celery_workers():
+        ...     print("ワーカー準備完了")
+
+    Example（詳細モード）:
+        >>> result = check_celery_workers(required_concurrency=4)
+        >>> if result['ok']:
+        ...     print(f"並列数 {result['available_concurrency']} で実行可能")
+    """
+    # ワーカー情報を取得
+    info = get_worker_info()
+
+    # ワーカーが利用不可の場合
+    if not info['available']:
+        error_msg = info.get('error', 'Celeryワーカーが応答しません')
+        logger.error(f"❌ {error_msg}")
+
+        if required_concurrency is not None:
+            return {
+                'ok': False,
+                'worker_count': 0,
+                'total_concurrency': 0,
+                'required_concurrency': required_concurrency,
+                'available_concurrency': 0,
+                'workers': {},
+                'message': error_msg
+            }
+        return False
+
+    worker_count = info['worker_count']
+    total_concurrency = info['total_concurrency']
+
+    logger.info(f"アクティブなワーカー: {worker_count}個")
+    logger.info(f"総並列処理能力: {total_concurrency}")
+
+    # ワーカー詳細をログ出力
+    for worker_name, worker_info in info['workers'].items():
+        concurrency = worker_info.get('concurrency', 'N/A')
+        logger.info(f"  - {worker_name}: concurrency={concurrency}")
+
+    # ワーカー数チェック
+    if worker_count < min_workers:
+        error_msg = f"ワーカー数が不足: {worker_count} < {min_workers}"
+        logger.error(f"❌ {error_msg}")
+
+        if required_concurrency is not None:
+            return {
+                'ok': False,
+                'worker_count': worker_count,
+                'total_concurrency': total_concurrency,
+                'required_concurrency': required_concurrency,
+                'available_concurrency': 0,
+                'workers': info['workers'],
+                'message': error_msg
+            }
+        return False
+
+    # required_concurrency が指定されていない場合（後方互換モード）
+    if required_concurrency is None:
         logger.info("✅ Celeryワーカーの準備完了")
         return True
 
-    except Exception as e:
-        logger.error(f"❌ ワーカー確認エラー: {e}")
-        return False
+    # required_concurrency チェック（詳細モード）
+    # 実際に使用する並列数を決定（要求値と利用可能値の小さい方）
+    available_concurrency = min(required_concurrency, total_concurrency)
+
+    if total_concurrency >= required_concurrency:
+        message = f"要求された並列数 {required_concurrency} で実行可能"
+        logger.info(f"✅ {message}")
+        ok = True
+    else:
+        message = f"要求された並列数 {required_concurrency} に対し、利用可能は {total_concurrency}（制限して実行可能）"
+        logger.warning(f"⚠️ {message}")
+        ok = True  # 制限付きだが実行は可能
+
+    return {
+        'ok': ok,
+        'worker_count': worker_count,
+        'total_concurrency': total_concurrency,
+        'required_concurrency': required_concurrency,
+        'available_concurrency': available_concurrency,
+        'workers': info['workers'],
+        'message': message
+    }
+
+
+def validate_concurrency(requested: int) -> Dict:
+    """
+    要求された並列数が実行可能かを検証
+
+    Args:
+        requested: 要求する並列数
+
+    Returns:
+        Dict: {
+            'valid': bool,           # 実行可能か
+            'requested': int,        # 要求された並列数
+            'available': int,        # 利用可能な並列数
+            'effective': int,        # 実際に使用する並列数
+            'message': str           # メッセージ
+        }
+
+    Example:
+        >>> result = validate_concurrency(8)
+        >>> if result['valid']:
+        ...     effective = result['effective']
+        ...     print(f"並列数 {effective} で実行します")
+    """
+    total = get_total_concurrency()
+
+    if total == 0:
+        return {
+            'valid': False,
+            'requested': requested,
+            'available': 0,
+            'effective': 0,
+            'message': "Celeryワーカーが起動していません"
+        }
+
+    effective = min(requested, total)
+
+    if total >= requested:
+        message = f"要求通り {requested} 並列で実行可能"
+        logger.info(f"✅ {message}")
+    else:
+        message = f"要求 {requested} → 利用可能 {total} に制限"
+        logger.warning(f"⚠️ {message}")
+
+    return {
+        'valid': True,
+        'requested': requested,
+        'available': total,
+        'effective': effective,
+        'message': message
+    }
 
 
 # ================================================================
@@ -304,7 +518,7 @@ def purge_queue(queue_name: str = 'celery') -> int:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Celeryタスクモジュール - 修正版 v2.6")
+    print("Celeryタスクモジュール - 修正版 v2.7")
     print("=" * 60)
     print(f"プロジェクトルート: {project_root}")
     print(f"アプリケーション: {app.main}")
@@ -332,9 +546,42 @@ if __name__ == "__main__":
         print(f"❌ インポート失敗: {e}")
     print()
 
-    # ワーカー確認
-    print("ワーカー状態を確認中...")
+    # ワーカー確認（後方互換モード）
+    print("=" * 60)
+    print("ワーカー状態を確認中（後方互換モード）...")
+    print("=" * 60)
     if check_celery_workers():
         print("✅ ワーカーが起動しています")
     else:
         print("❌ ワーカーが起動していません")
+    print()
+
+    # ワーカー確認（詳細モード）
+    print("=" * 60)
+    print("ワーカー状態を確認中（詳細モード: required_concurrency=8）...")
+    print("=" * 60)
+    result = check_celery_workers(required_concurrency=8)
+    if isinstance(result, dict):
+        print(f"  ok: {result['ok']}")
+        print(f"  worker_count: {result['worker_count']}")
+        print(f"  total_concurrency: {result['total_concurrency']}")
+        print(f"  required_concurrency: {result['required_concurrency']}")
+        print(f"  available_concurrency: {result['available_concurrency']}")
+        print(f"  message: {result['message']}")
+    print()
+
+    # 並列数検証テスト
+    print("=" * 60)
+    print("並列数検証テスト（validate_concurrency）...")
+    print("=" * 60)
+    for req in [4, 8, 16]:
+        result = validate_concurrency(req)
+        print(f"  要求={req}: valid={result['valid']}, effective={result['effective']}, message={result['message']}")
+    print()
+
+    # 総並列数取得テスト
+    print("=" * 60)
+    print("総並列数取得テスト（get_total_concurrency）...")
+    print("=" * 60)
+    total = get_total_concurrency()
+    print(f"  総並列処理能力: {total}")

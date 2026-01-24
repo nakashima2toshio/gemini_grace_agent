@@ -1,13 +1,13 @@
 # csv_text_to_chunks_text_csv.py 詳細設計書
 
-**バージョン:** v2.0.0
-**最終更新:** 2026-01-19
+**バージョン:** v3.1.0
+**最終更新:** 2026-01-23
 **ファイル名の意味:** `csv_text` (CSV/テキスト入力) → `to_chunks` (チャンク化) → `text_csv` (テキスト/CSV出力)
 
 ## 📋 目次
 
 1. [概要](#1-概要)
-2. [v2.0.0での主要な変更点](#2-v200での主要な変更点)
+2. [v3.1.0での主要な変更点](#2-v310での主要な変更点)
 3. [処理フロー全体図](#3-処理フロー全体図)
 4. [データの流れ詳細](#4-データの流れ詳細)
 5. [3段階チャンク化戦略](#5-3段階チャンク化戦略)
@@ -26,11 +26,11 @@
 LLM（Gemini API）を活用し、形式的な区切りではなく、**文脈・トピックに基づいた高品質な分割** を実現。
 チャンク方式は：step1:(階層構造化), step2(意味的分割), step3(連続性判定)とこれらの処理の並列化で実践向けとしました。
 
-#### 手っ取り早く、この技術を評価、取得したい方向けの速習コース：
+#### 速習コース：
 - 3.1 システム全体の流れ： mermaid図で全体の処理を把握する（step1, step2, step3）
 - 3.2 関数呼び出しの階層構造: step1:(階層構造化), step2(意味的分割), step3(連続性判定)
 - 5.3段階チャンク化戦略 + 6-関数別詳細設計
-- 具体例で、チャンクしてみる。check_function/check_step1.py, check_step2.py, check_step3.py
+- 具体例で、チャンクしてみる。step1.py, step2.py, step3.py
 - 9. async並列処理の詳細（並列処理を確認する。）
 
 ### 1.2 主要機能一覧
@@ -45,13 +45,15 @@ LLM（Gemini API）を活用し、形式的な区切りではなく、**文脈�
 
 ### 1.3 技術スタック
 
-- **言語:** Python 3.10+
-- **LLM:** Google Gemini API (`gemini-2.0-flash`)
-- **非同期処理:** asyncio + asyncio.to_thread()
-- **並列制御:** asyncio.Semaphore（デフォルト: 8並列）
-- **データ検証:** Pydantic v2
-- **進捗表示:** tqdm.asyncio
-- **トークン計算:** tiktoken
+| 項目 | 技術 |
+|------|------|
+| 言語 | Python 3.10+ |
+| LLM | Google Gemini API (`gemini-2.5-flash`) |
+| 非同期処理 | asyncio + asyncio.to_thread() |
+| 並列制御 | asyncio.Semaphore（デフォルト: 8並列） |
+| データ検証 | Pydantic v2 |
+| 進捗表示 | tqdm.asyncio |
+| トークン計算 | tiktoken |
 
 ### 1.4 基本的な使用方法
 
@@ -61,57 +63,46 @@ python -m chunking.csv_text_to_chunks_text_csv \
   --input-file ./data/document.txt \
   --output chunks_output
 
-# 出力: chunks_output/document_chunks_20260119_123456.csv
+# 出力: chunks_output/document_chunks_20260123_123456.csv
 ```
 
-## 2. v2.0.0での主要な変更点
+## 2. v3.1.0での主要な変更点
 
-### 2.1 コマンドライン引数の統一化
+### 2.1 デフォルトモデルの更新
 
-#### 変更内容
+| 項目 | v2.0.0 | v3.1.0 |
+|------|--------|--------|
+| デフォルトモデル | `gemini-2.0-flash` | `gemini-2.5-flash` |
+| 理由 | - | 高いレート制限とパフォーマンス |
 
-|  引数・オプション | 変更内容 |
+### 2.2 コマンドライン引数（継続）
+
+| 引数・オプション | 説明 |
 |---------|---------|
-| `--input-file` | 短縮形削除、名称明確化 |
-| `--output` | ディレクトリ指定に変更 |
-| `--model` | 短縮形削除 |
-| `--workers` | 短縮形削除 |
-| `--block-size` | 短縮形削除 |
-| `--verbose` | 短縮形削除 |
+| `--input-file` | 入力ファイル（.txt, .csv） |
+| `--output` | 出力ディレクトリ（デフォルト: chunks_output） |
+| `--model` | 使用するLLMモデル（デフォルト: gemini-2.5-flash） |
+| `--workers` | 並列ワーカー数（デフォルト: 8） |
+| `--block-size` | バッチサイズ（デフォルト: 2000文字） |
+| `--verbose` | 詳細ログ出力 |
+| `--resume` | 再開するジョブID |
+| `--text-column` | CSVのテキストカラム名 |
+| `--max-rows` | 最大処理行数（CSV用） |
+| `--combine-rows` | CSV全行を結合 |
 
-#### 使用例
+### 2.3 使用例
 
 ```bash
 python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file input.txt --output chunks_output --model gemini-2.0-flash --workers 8
+  --input-file input.txt --output chunks_output --model gemini-2.5-flash --workers 8
 ```
 
-### 2.2 出力方式
+### 2.4 出力方式
 - **ディレクトリ指定**: `--output`でディレクトリを指定
 - **ファイル名自動生成**: `入力ファイル名_chunks_タイムスタンプ.csv`
 - **CSV出力推奨**: テキスト出力は非推奨（後方互換性のみ）
-**例:**
-```bash
---input-file data/document.txt --output chunks_output
-# → 出力: chunks_output/document_chunks_20260119_123456.csv
-```
 
-### 2.3 デフォルトモデル
-このプロジェクトではGemini APIを採用しています。
---model オプションで、評価したいモデルを指定します。
-
-### 2.4 新機能: テキスト正規化
-CSV出力時に改行・空白を自動正規化し、クリーンなCSVを生成。
-
-**正規化の内容:**
-- 改行(`\n`)を半角スペースに変換
-- 連続する空白を1つに統合
-- 先頭・末尾の空白を削除
-
-（失敗例）チャンク分割の方式の失敗例：
-- 最初は、チャンク分割に：Regex、重要単語の抽出に：Mecabを利用していましたが、
-チャンク分割の「意味的なまとまりで分割する」、「文章の連続性を捉える」ができず、正規化、Mecab：複合名詞取得だけでは
-結果、失敗でした。
+---
 
 ## 3. 処理フロー全体図
 
@@ -142,44 +133,27 @@ graph TB
 
     N --> O[CSV保存]
     O --> P[出力ファイル]
-
-    style A fill:#4CAF50,stroke:#2E7D32,color:#fff
-    style B fill:#2196F3,stroke:#1565C0,color:#fff
-    style G fill:#FF9800,stroke:#E65100,color:#fff
-    style H fill:#9C27B0,stroke:#6A1B9A,color:#fff
-    style I fill:#F44336,stroke:#C62828,color:#fff
-    style K fill:#F44336,stroke:#C62828,color:#fff
-    style M fill:#F44336,stroke:#C62828,color:#fff
-    style P fill:#4CAF50,stroke:#2E7D32,color:#fff
 ```
 
 ### 3.2 関数呼び出しの階層構造
 
-```
-main()
-  ├─ load_text_from_csv() または ファイル読み込み
-  │
-  ├─ generate_output_filename()  ← v2.0.0新機能
-  │
-  ├─ chunks_all_async()  ← メイン処理
-  │    │
-  │    ├─ _step1_hierarchical_split()
-  │    │    ├─ AsyncAPIClient.generate_content() × N回（並列）
-  │    │    └─ CheckpointManager.save("step1")
-  │    │
-  │    ├─ _step2_semantic_chunking()
-  │    │    ├─ AsyncAPIClient.generate_content() × M回（並列）
-  │    │    └─ CheckpointManager.save("step2")
-  │    │
-  │    ├─ _step3_continuity_check()
-  │    │    ├─ AsyncAPIClient.generate_content() × (M-1)回（並列）
-  │    │    └─ CheckpointManager.save("step3")
-  │    │
-  │    └─ save_chunks_as_csv()
-  │         └─ _normalize_whitespace() × チャンク数
-  │
-  └─ 完了ログ出力
-```
+| 階層 | 関数 | 説明 |
+|:----:|------|------|
+| 1 | `main()` | エントリーポイント |
+| 1.1 | `load_text_from_csv()` | CSV読み込み（CSV入力時） |
+| 1.2 | `generate_output_filename()` | 出力ファイル名自動生成 |
+| 1.3 | `chunks_all_async()` | メイン処理 |
+| 1.3.1 | `_step1_hierarchical_split()` | Step1: 階層構造化 |
+| | → `AsyncAPIClient.generate_content()` × N回（並列） | |
+| | → `CheckpointManager.save("step1")` | |
+| 1.3.2 | `_step2_semantic_chunking()` | Step2: 意味的分割 |
+| | → `AsyncAPIClient.generate_content()` × M回（並列） | |
+| | → `CheckpointManager.save("step2")` | |
+| 1.3.3 | `_step3_continuity_check()` | Step3: 連続性判定 |
+| | → `AsyncAPIClient.generate_content()` × (M-1)回（並列） | |
+| | → `CheckpointManager.save("step3")` | |
+| 1.3.4 | `save_chunks_as_csv()` | CSV保存 |
+| | → `_normalize_whitespace()` × チャンク数 | |
 
 ---
 
@@ -187,27 +161,19 @@ main()
 
 ### 4.1 データ変換の全体像
 
-```
-【入力】
-CSV/テキストファイル
-    ↓
-【統一テキスト】
-"第1章 はじめに\n\nこのドキュメントでは...\n\n第2章 基本操作\n\n..."
-    ↓
-【Step1: 階層構造化】
-["第1章 はじめに\n\nこのドキュメントでは...", "第2章 基本操作\n\n..."]
-    ↓
-【Step2: 意味的分割】
-["第1章 はじめに", "このドキュメントでは...", "第2章 基本操作", "..."]
-    ↓
-【Step3: 連続性判定】
-["第1章 はじめに\n\nこのドキュメントでは...", "第2章 基本操作\n\n..."]
-    ↓
-【CSV出力（正規化済み）】
-chunk_id,text,tokens,...
-document_chunk_0,"第1章 はじめに このドキュメントでは...",245,...
-document_chunk_1,"第2章 基本操作 ...",198,...
-```
+| 段階 | データ形式 |
+|------|-----------|
+| **入力** | CSV/テキストファイル |
+| ↓ | |
+| **統一テキスト** | `"第1章 はじめに\n\nこのドキュメントでは...\n\n第2章 基本操作\n\n..."` |
+| ↓ | |
+| **Step1: 階層構造化** | `["第1章 はじめに\n\nこのドキュメントでは...", "第2章 基本操作\n\n..."]` |
+| ↓ | |
+| **Step2: 意味的分割** | `["第1章 はじめに", "このドキュメントでは...", "第2章 基本操作", "..."]` |
+| ↓ | |
+| **Step3: 連続性判定** | `["第1章 はじめに\n\nこのドキュメントでは...", "第2章 基本操作\n\n..."]` |
+| ↓ | |
+| **CSV出力（正規化済み）** | `chunk_id,text,tokens,...` |
 
 ### 4.2 具体的な処理例
 
@@ -228,73 +194,37 @@ document_chunk_1,"第2章 基本操作 ...",198,...
 次回も同じ店に行きたいと思います。
 ```
 
-### Step1の出力（階層構造化）
-- step1の処理を確認するプログラムを下記に配置しました。
-「クラス、関数の使い方、処理の流れなどを確認してください。」
-- chunking/check_function/check_step1.py
+### 4.3 各Stepの出力
 
-```python
-[
-  "第1章 人工知能の基礎\n\n人工知能（AI）は、コンピュータに人間のような知能を持たせる技術です。\n機械学習やディープラーニングがその中核をなしています。",
+**【Step1の出力（階層構造化）】**
 
-  "第2章 機械学習の手法\n\n教師あり学習では、ラベル付きデータから学習します。\n代表的な手法には、ランダムフォレストやサポートベクターマシンがあります。\n\nところで、昨日食べたラーメンが美味しかったです。\n次回も同じ店に行きたいと思います。"
-]
-```
+| 段落 | 内容 |
+|:----:|------|
+| 段落1 | `"第1章 人工知能の基礎\n\n人工知能（AI）は...機械学習やディープラーニングがその中核をなしています。"` |
+| 段落2 | `"第2章 機械学習の手法\n\n教師あり学習では...ところで、昨日食べたラーメンが美味しかったです。次回も同じ店に行きたいと思います。"` |
 
-**ポイント:**
-- 章ごとに段落を分割
-- 見出しと本文を1つの段落として保持
-- 改行構造を維持
+**【Step2の出力（意味的分割）】**
 
-### Step2の出力（意味的分割）
-- step2の処理を確認するプログラムを下記に配置しました。
-「クラス、関数の使い方、処理の流れなどを確認してください。」
-- chunking/check_function/check_step2.py
+| チャンク | 内容 | 備考 |
+|:--------:|------|------|
+| 1 | `"第1章 人工知能の基礎\n\n人工知能（AI）は..."` | AI関連 |
+| 2 | `"第2章 機械学習の手法\n\n教師あり学習では..."` | 機械学習関連 |
+| 3 | `"ところで、昨日食べたラーメンが美味しかったです..."` | 話題転換を検出 |
 
-```python
-[
-  "第1章 人工知能の基礎\n\n人工知能（AI）は、コンピュータに人間のような知能を持たせる技術です。\n機械学習やディープラーニングがその中核をなしています。",
+**【Step3の出力（連続性判定）】**
 
-  "第2章 機械学習の手法\n\n教師あり学習では、ラベル付きデータから学習します。\n代表的な手法には、ランダムフォレストやサポートベクターマシンがあります。",
+| 最終チャンク | 内容 | 処理 |
+|:------------:|------|------|
+| 1 | `"第1章 人工知能の基礎...\n\n第2章 機械学習の手法..."` | AI+機械学習を結合（連続トピック） |
+| 2 | `"ところで、昨日食べたラーメンが美味しかったです..."` | 独立（話題転換） |
 
-  "ところで、昨日食べたラーメンが美味しかったです。\n次回も同じ店に行きたいと思います。"
-]
-```
-
-**ポイント:**
-- 第2章の段落内で意味の転換を検出
-- 「機械学習」と「ラーメン」という無関係なトピックを分離
-- 物理的な段落構造を無視して意味優先で分割
-
-#### Step3の出力（連続性判定）
-- step3の処理を確認するプログラムを下記に配置しました。
-「クラス、関数の使い方、処理の流れなどを確認してください。」
-- chunking/check_function/check_step3.py
-
-```python
-[
-  "第1章 人工知能の基礎\n\n人工知能（AI）は、コンピュータに人間のような知能を持たせる技術です。\n機械学習やディープラーニングがその中核をなしています。\n\n第2章 機械学習の手法\n\n教師あり学習では、ラベル付きデータから学習します。\n代表的な手法には、ランダムフォレストやサポートベクターマシンがあります。",
-
-  "ところで、昨日食べたラーメンが美味しかったです。\n次回も同じ店に行きたいと思います。"
-]
-```
-
-**ポイント:**
-- 第1章と第2章は連続したトピック（AI→機械学習）なので結合
-- ラーメンの話は全く別のトピックなので独立したチャンク
-
-#### CSV出力（正規化後）
+**【CSV出力（正規化後）】**
 
 ```csv
 chunk_id,text,tokens,chunk_idx,dataset_type,type,sentence_count,source_file
-document_chunk_0,"第1章 人工知能の基礎 人工知能（AI）は、コンピュータに人間のような知能を持たせる技術です。 機械学習やディープラーニングがその中核をなしています。 第2章 機械学習の手法 教師あり学習では、ラベル付きデータから学習します。 代表的な手法には、ランダムフォレストやサポートベクターマシンがあります。",156,0,document,llm_chunk,6,document.txt
-document_chunk_1,"ところで、昨日食べたラーメンが美味しかったです。 次回も同じ店に行きたいと思います。",38,1,document,llm_chunk,2,document.txt
+document_chunk_0,"第1章 人工知能の基礎 人工知能（AI）は...",156,0,document,llm_chunk,6,document.txt
+document_chunk_1,"ところで、昨日食べたラーメンが美味しかったです...",38,1,document,llm_chunk,2,document.txt
 ```
-
-**ポイント:**
-- 改行が半角スペースに変換され、CSV形式としてクリーン
-- トークン数、文数などのメタデータが付与
-- データ分析や機械学習に適した形式
 
 ---
 
@@ -302,91 +232,29 @@ document_chunk_1,"ところで、昨日食べたラーメンが美味しかっ�
 
 ### 5.1 なぜ3段階が必要なのか？
 
-単純な文字数分割やベクトル類似度だけでは不十分な理由:
-
-1. **物理構造の無視**: 文字数で切ると見出しが分断される
-2. **意味的混在**: 同じ段落内でも話題が変わることがある
-3. **文脈の欠落**: 過剰に細分化すると代名詞の参照先が不明
+| 問題 | 原因 | 解決するStep |
+|------|------|:------------:|
+| 見出しの分断 | 文字数で切ると見出しが途切れる | Step1 |
+| 意味的混在 | 同じ段落内で話題が変わる | Step2 |
+| 文脈の欠落 | 過剰に細分化すると代名詞の参照先が不明 | Step3 |
 
 → **3つの異なる視点を組み合わせることで、これらの問題を解決**
 
 ### 5.2 Step1: 階層構造化（Hierarchical Split）
 
-#### 5.2.1 目的
-
+#### 目的
 文章の **論理構造（章・節・段落）** を尊重した分割
 
-#### 5.2.2 アルゴリズム
+#### アルゴリズム
 
-```
-1. 入力テキストをblock_size（デフォルト2000文字）ごとに分割
-2. 各ブロックをLLMに送信
-3. LLMが以下のルールで構造化:
-   - 空行（\n\n）で段落を分割
-   - 句点（。）で文を分割
-   - 見出しと本文は分離せず、1つの段落として保持
-4. 全ブロックの結果を結合して段落リストを生成
-```
+| ステップ | 処理内容 |
+|:--------:|----------|
+| 1 | 入力テキストを`block_size`（デフォルト2000文字）ごとに分割 |
+| 2 | 各ブロックをLLMに送信（並列処理） |
+| 3 | LLMが構造化:<br>・空行（`\n\n`）で段落を分割<br>・句点（。）で文を分割<br>・見出しと本文は分離せず、1つの段落として保持 |
+| 4 | 全ブロックの結果を結合して段落リストを生成 |
 
-#### 5.2.3 LLMへのプロンプト
-
-```
-あなたはテキスト構造化エンジンです。
-入力されたテキストを階層構造（段落 > 文）に変換してください。
-
-【分割ルール】
-- **見出しと本文を分離しないこと**
-- 「第〇章」や「見出し」がある場合、直後の本文も含めて1つのParagraph
-- Paragraphを分ける基準は「空行（\n\n）」や「章の変わり目」のみ
-```
-
-#### 5.2.4 具体例
-
-**入力:**
-```text
-第1章 データベース設計
-
-データベース設計は、システム開発の基礎です。正規化により、データの冗長性を削減します。第2正規形では、部分関数従属性を排除します。
-
-第2章 SQL最適化
-
-クエリのパフォーマンス向上には、インデックスが重要です。
-```
-
-**Step1の出力（JSON構造）:**
-```json
-{
-  "paragraphs": [
-    {
-      "id": 0,
-      "sentences": [
-        {"text": "第1章 データベース設計\n\n"},
-        {"text": "データベース設計は、システム開発の基礎です。"},
-        {"text": "正規化により、データの冗長性を削減します。"},
-        {"text": "第2正規形では、部分関数従属性を排除します。"}
-      ]
-    },
-    {
-      "id": 1,
-      "sentences": [
-        {"text": "第2章 SQL最適化\n\n"},
-        {"text": "クエリのパフォーマンス向上には、インデックスが重要です。"}
-      ]
-    }
-  ]
-}
-```
-
-**Step1の出力（結合後のテキストリスト）:**
-```python
-[
-  "第1章 データベース設計\n\nデータベース設計は、システム開発の基礎です。正規化により、データの冗長性を削減します。第2正規形では、部分関数従属性を排除します。",
-
-  "第2章 SQL最適化\n\nクエリのパフォーマンス向上には、インデックスが重要です。"
-]
-```
-
-#### 5.2.5 Step1の効果
+#### Step1の効果
 
 | 問題 | Step1がない場合 | Step1適用後 |
 |------|----------------|------------|
@@ -398,211 +266,50 @@ document_chunk_1,"ところで、昨日食べたラーメンが美味しかっ�
 
 ### 5.3 Step2: 意味的分割（Semantic Chunking）
 
-#### 5.3.1 目的
-
+#### 目的
 **話題の転換点** を意味的に検出し、トピックごとに分割
 
-#### 5.3.2 アルゴリズム
+#### アルゴリズム
 
-```
-1. Step1の各段落をLLMに送信（並列処理）
-2. LLMが段落内の文を分析:
-   - 文の「意味的な距離」を判定
-   - 話題が転換する箇所で分割
-   - 物理的な改行は無視し、意味の純度を優先
-3. 分割されたチャンクを収集
-```
+| ステップ | 処理内容 |
+|:--------:|----------|
+| 1 | Step1の各段落をLLMに送信（並列処理） |
+| 2 | LLMが段落内の文を分析:<br>・文の「意味的な距離」を判定<br>・話題が転換する箇所で分割<br>・物理的な改行は無視し、意味の純度を優先 |
+| 3 | 分割されたチャンクを収集 |
 
-#### 5.3.3 LLMへのプロンプト
+#### RAGでの効果
 
-```
-あなたは「セマンティック・チャンキング（意味的分割）エンジン」です。
-入力されたテキストを「意味のまとまり（トピック）」に基づいて再構成してください。
-
-【処理ロジック】
-1. 隣り合う文同士の「意味的な距離」を分析
-2. 文の内容が連続している場合は同じブロックに結合
-3. **話題の転換点**を見つけたら分割
-
-【分割の基準】
-- 文字数や物理的な改行（\n）は無視
-- 改行がなくても、話題が大きく変われば分割
-- 改行があっても、文脈や意味が続いているなら分割しない
-```
-
-#### 5.3.4 具体例: トピック混在の検出
-
-**入力（Step1の1つの段落）:**
-```text
-最新のGemini 2.0は、推論速度が大幅に向上しています。
-コンテキスト長も200万トークンまで拡大され、大規模文書の処理が可能になりました。
-また、マルチモーダル機能により、画像と音声の同時処理も実現しています。
-
-話は変わりますが、先週購入したBluetoothスピーカーの音質が素晴らしいです。
-低音の響きが非常にクリアで、映画鑑賞にも最適です。
-次は、同じメーカーのヘッドホンも購入しようと考えています。
-```
-
-**Step2の処理:**
-
-LLMが文の意味的距離を分析:
-
-```
-文1: "Gemini 2.0は、推論速度が大幅に..."
-文2: "コンテキスト長も200万トークンまで..."
-文3: "また、マルチモーダル機能により..."
-→ トピック: AIモデルの性能向上（類似度: 高）
-
-文4: "話は変わりますが、先週購入したBluetoothスピーカーの..."
-→ トピック転換検出！（類似度: 低）
-
-文5: "低音の響きが非常にクリアで..."
-文6: "次は、同じメーカーのヘッドホンも..."
-→ トピック: オーディオ機器（類似度: 高）
-```
-
-**Step2の出力:**
-```python
-[
-  "最新のGemini 2.0は、推論速度が大幅に向上しています。\nコンテキスト長も200万トークンまで拡大され、大規模文書の処理が可能になりました。\nまた、マルチモーダル機能により、画像と音声の同時処理も実現しています。",
-
-  "話は変わりますが、先週購入したBluetoothスピーカーの音質が素晴らしいです。\n低音の響きが非常にクリアで、映画鑑賞にも最適です。\n次は、同じメーカーのヘッドホンも購入しようと考えています。"
-]
-```
-
-#### 5.3.5 RAGでの効果
-
-**悪い例（Step2なし）:**
-```
-質問: 「Gemini 2.0の主な特徴は？」
-
-検索されたチャンク:
-"最新のGemini 2.0は...マルチモーダル機能も...
-話は変わりますが、Bluetoothスピーカーの音質が..."
-
-生成された回答:
-"Gemini 2.0は推論速度が向上し、Bluetoothスピーカーの音質も
-素晴らしいです..." ← 無関係な情報が混入！
-```
-
-**良い例（Step2適用）:**
-```
-質問: 「Gemini 2.0の主な特徴は？」
-
-検索されたチャンク:
-"最新のGemini 2.0は、推論速度が大幅に向上しています。
-コンテキスト長も200万トークン...マルチモーダル機能..."
-
-生成された回答:
-"Gemini 2.0の主な特徴は、推論速度の向上、200万トークンの
-コンテキスト長、マルチモーダル機能です。" ← 正確！
-```
+| 状況 | Step2なし | Step2あり |
+|------|-----------|-----------|
+| 質問 | 「Gemini 2.0の主な特徴は？」 | 「Gemini 2.0の主な特徴は？」 |
+| 検索チャンク | 「Gemini 2.0は...Bluetoothスピーカーの音質が...」 | 「Gemini 2.0は推論速度が向上し...」 |
+| 回答品質 | ❌ 無関係な情報が混入 | ✅ 正確な回答 |
 
 ---
 
 ### 5.4 Step3: 連続性判定（Continuity Check）
 
-#### 5.4.1 目的
-
+#### 目的
 過剰に分割されたチャンクを **文脈の連続性** に基づいて再結合
 
-#### 5.4.2 アルゴリズム
+#### アルゴリズム
 
-```
-1. Step2の隣接する2つのチャンクをペアでLLMに送信
-2. LLMが判定: 「同じトピックで連続しているか？」
-   - is_connected = True  → 結合
-   - is_connected = False → 分離
-3. 全てのペアを判定し、結果を反映してチャンクを再構成
-```
+| ステップ | 処理内容 |
+|:--------:|----------|
+| 1 | Step2の隣接する2つのチャンクをペアでLLMに送信（並列処理） |
+| 2 | LLMが判定:<br>・`is_connected = True` → 結合<br>・`is_connected = False` → 分離 |
+| 3 | 全てのペアを判定し、結果を反映してチャンクを再構成 |
 
-#### 5.4.3 LLMへのプロンプト
+#### 判定基準
 
-```
-あなたは「文脈判定エンジン」です。
-「前のテキスト(Prev)」と「次のテキスト(Next)」が
-**「一つの連続した話題（トピック）」**としてつながっているかを判定してください。
-
-【判定基準】
-False (切断すべき):
-- 章が変わった（例：「第1章」から「第2章」へ）
-- 全く別の話題、製品、カテゴリの話に切り替わった
-- 前の文が「完結」しており、次の文から新しいセクションが始まっている
-
-True (接続すべき):
-- 文脈が連続しており、前の文の情報を知らないと次の文が理解しにくい
-- 同じトピックの説明が続いている
-```
-
-#### 5.4.4 具体例: 代名詞の参照先を維持
-
-**入力（Step2の出力）:**
-```python
-チャンクA: "Appleは2024年に新型MacBook Proを発表しました。"
-
-チャンクB: "同社は、M4チップの性能を大幅に向上させています。"
-
-チャンクC: "また、バッテリー持続時間も22時間に延長されました。"
-
-チャンクD: "Googleは、同時期にPixel 9シリーズを発売しました。"
-```
-
-**Step3の判定プロセス:**
-
-```
-ペア1: A ↔ B
-前: "Appleは2024年に新型MacBook Proを..."
-次: "同社は、M4チップの性能を..."
-→ 判定: is_connected = True（「同社」=Appleの文脈が連続）
-
-ペア2: B ↔ C
-前: "同社は、M4チップの性能を..."
-次: "また、バッテリー持続時間も..."
-→ 判定: is_connected = True（MacBook Proの話題が継続）
-
-ペア3: C ↔ D
-前: "また、バッテリー持続時間も22時間に..."
-次: "Googleは、同時期にPixel 9シリーズを..."
-→ 判定: is_connected = False（Apple → Googleに話題転換）
-```
-
-**Step3の出力:**
-```python
-[
-  "Appleは2024年に新型MacBook Proを発表しました。\n\n同社は、M4チップの性能を大幅に向上させています。\n\nまた、バッテリー持続時間も22時間に延長されました。",
-
-  "Googleは、同時期にPixel 9シリーズを発売しました。"
-]
-```
-
-#### 5.4.5 Step3の効果
-
-**悪い例（Step3なし）:**
-```
-質問: 「M4チップの特徴は？」
-
-検索されたチャンク:
-"同社は、M4チップの性能を大幅に向上させています。"
-
-生成された回答:
-"M4チップは性能が向上しています（詳細不明）"
-← 「同社」が誰か不明で文脈不足！
-```
-
-**良い例（Step3適用）:**
-```
-質問: 「M4チップの特徴は？」
-
-検索されたチャンク:
-"Appleは2024年に新型MacBook Proを発表しました。
-同社は、M4チップの性能を大幅に向上させています。
-また、バッテリー持続時間も22時間に延長されました。"
-
-生成された回答:
-"AppleのM4チップは、MacBook Proに搭載され、性能が大幅に向上し、
-バッテリー持続時間も22時間に延長されました。"
-← 文脈が完結して正確！
-```
+| 判定 | 条件 | 例 |
+|:----:|------|-----|
+| **True（結合）** | 前方依存: 指示語で前を参照 | 「**この手法**の利点は...」 |
+| **True（結合）** | 後方依存: 専門用語が未定義で使用 | 「**チャンク**サイズは...」 |
+| **True（結合）** | 同じトピックの説明が続く | 定義→活用の流れ |
+| **False（分離）** | 章が変わった | 第1章 → 第2章 |
+| **False（分離）** | 全く別の話題に転換 | RAG → 京都観光 |
+| **False（分離）** | 独立して理解可能 | 京都観光と沖縄観光 |
 
 ---
 
@@ -611,67 +318,35 @@ True (接続すべき):
 | 項目 | Step1: 階層構造化 | Step2: 意味的分割 | Step3: 連続性判定 |
 |------|------------------|-----------------|------------------|
 | **英語名** | Hierarchical Split | Semantic Chunking | Continuity Check |
-| **判断基準** | 物理構造（改行・句点） | 意味的距離（トピック） | 文脈の連続性 |
+| **判断基準** | 物理構造（空行・句点） | 意味的距離（トピック） | 文脈の連続性 |
 | **LLMの役割** | 構造解析 | 話題転換検出 | 文脈判定 |
 | **入力** | 生テキスト | 段落リスト | チャンクリスト |
 | **出力** | 段落リスト | チャンクリスト | 最終チャンクリスト |
 | **API呼び出し数** | テキスト長/2000 | 段落数 | チャンク数-1 |
 | **解決する問題** | 見出しの分断 | トピック混在 | 文脈の欠落 |
-| **有効な場面** | 構造化された文書 | トピック混在文書 | 細分化された文書 |
+| **スキーマ** | StructuralResult | StructuralResult | ContinuityResult |
 
 ---
 
 ### 5.6 なぜ「Chunk Overlap」ではなく「Continuity Check」なのか？
 
-#### 従来手法: Chunk Overlap（重複方式）
-
-```
-チャンク1: "ABCDE"
-チャンク2:     "CDEFG"  ← 一部重複
-チャンク3:         "EFGHI"
-```
-
-**問題点:**
-- 同じ情報が複数のチャンクに重複 → ストレージ効率が悪い
-- 重複部分の長さを調整するのが難しい
-- 無駄な情報の重複が発生
-
-#### 本システム: Continuity Check（連続性判定）
-
-```
-ステップA: 細分化
-チャンク1: "ABC"
-チャンク2: "DE"
-チャンク3: "FGH"
-チャンク4: "I"
-
-ステップB: 連続性判定
-1 ↔ 2: 連続 → 結合 → "ABCDE"
-2 ↔ 3: 非連続 → 分離
-3 ↔ 4: 連続 → 結合 → "FGHI"
-
-最終結果:
-チャンク1: "ABCDE"
-チャンク2: "FGHI"
-```
-
-**利点:**
-- 重複なし → ストレージ効率が高い
-- LLMが文脈を判断 → 最適な結合
-- 自然で冗長性の少ないチャンク
+| 方式 | 説明 | 問題点/利点 |
+|------|------|-------------|
+| **従来: Chunk Overlap** | 一部重複させる<br>`チャンク1: "ABCDE"`<br>`チャンク2: "CDEFG"` | ❌ ストレージ効率が悪い<br>❌ 重複部分の長さ調整が困難<br>❌ 無駄な情報の重複 |
+| **本システム: Continuity Check** | 連続性を判定して結合<br>`1↔2: 連続 → 結合`<br>`2↔3: 非連続 → 分離` | ✅ 重複なし<br>✅ LLMが文脈を判断<br>✅ 自然で冗長性の少ないチャンク |
 
 ---
 
 ## 6. 関数別詳細設計
 
-### 6.1 `chunks_all_async()` - メイン処理のオーケストレーター
+### 6.1 `chunks_all_async()` - メイン処理
 
 #### シグネチャ
 
 ```python
 async def chunks_all_async(
     text: str,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-2.5-flash",
     max_workers: int = 8,
     block_size: int = 2000,
     checkpoint_manager: Optional[CheckpointManager] = None,
@@ -686,7 +361,7 @@ async def chunks_all_async(
 | パラメータ | 型 | デフォルト | 説明 |
 |-----------|-----|-----------|------|
 | text | str | - | チャンク化対象のテキスト（必須） |
-| model | str | gemini-2.0-flash | 使用するGeminiモデル |
+| model | str | `gemini-2.5-flash` | 使用するGeminiモデル |
 | max_workers | int | 8 | 並列実行数（Semaphoreで制御） |
 | block_size | int | 2000 | Step1のバッチサイズ（文字数） |
 | checkpoint_manager | CheckpointManager | None | チェックポイント管理（省略時は自動生成） |
@@ -696,40 +371,20 @@ async def chunks_all_async(
 
 #### 処理フロー
 
-```python
-1. AsyncAPIClientの初期化
-   - Semaphoreで並列数を制御
-   - リトライロジックを内包
-
-2. Step1: 階層構造化
-   - テキストをblock_sizeで分割
-   - 各ブロックを並列でLLM処理
-   - 段落リストを生成・保存
-
-3. Step2: 意味的分割
-   - 各段落を並列でLLM処理
-   - チャンクリストを生成・保存
-
-4. Step3: 連続性判定
-   - 隣接チャンクペアを並列でLLM処理
-   - 最終チャンクリストを生成・保存
-
-5. 出力処理
-   - output_fileが指定されている場合、CSV保存
-   - 改行正規化を適用
-
-6. 最終チャンクリストを返す
-```
+| ステップ | 処理内容 |
+|:--------:|----------|
+| 1 | AsyncAPIClientの初期化（Semaphoreで並列数を制御、リトライロジックを内包） |
+| 2 | Step1: 階層構造化（テキストをblock_sizeで分割、各ブロックを並列でLLM処理、段落リストを生成・保存） |
+| 3 | Step2: 意味的分割（各段落を並列でLLM処理、チャンクリストを生成・保存） |
+| 4 | Step3: 連続性判定（隣接チャンクペアを並列でLLM処理、最終チャンクリストを生成・保存） |
+| 5 | 出力処理（output_fileが指定されている場合、CSV保存、改行正規化を適用） |
+| 6 | 最終チャンクリストを返す |
 
 ---
 
 ### 6.2 `load_text_from_csv()` - CSV入力処理
 
-#### 機能
-
-CSVファイルからテキストを抽出し、統一された文字列として返す。
-
-#### パラメータ
+#### シグネチャ
 
 ```python
 def load_text_from_csv(
@@ -740,59 +395,30 @@ def load_text_from_csv(
 ) -> str:
 ```
 
+#### パラメータ
+
 | パラメータ | 説明 | 使用例 |
 |-----------|------|--------|
-| csv_path | CSVファイルパス | "./data/articles.csv" |
-| text_column | テキストカラム名（省略時は自動検出） | "content" |
-| max_rows | 最大処理行数（省略時は全行） | 1000 |
-| combine_rows | 全行結合モード | True/False |
+| csv_path | CSVファイルパス | `"./data/articles.csv"` |
+| text_column | テキストカラム名（省略時は自動検出） | `"content"` |
+| max_rows | 最大処理行数（省略時は全行） | `1000` |
+| combine_rows | 全行結合モード | `True`/`False` |
 
 #### テキストカラムの自動検出ロジック
 
-```python
-優先順位:
-1. text, Text, TEXT
-2. content, Content, CONTENT
-3. Combined_Text, combined_text
-4. body, Body, BODY
-5. document, Document
-6. answer, Answer
-
-検出できない場合: 最初のカラムを使用（警告あり）
-```
-
-#### 使用例
-
-```python
-# 基本的な使用
-text = load_text_from_csv("data.csv")
-
-# カラム指定
-text = load_text_from_csv(
-    csv_path="articles.csv",
-    text_column="article_body"
-)
-
-# 行数制限
-text = load_text_from_csv(
-    csv_path="large_dataset.csv",
-    max_rows=500
-)
-
-# 全行結合モード
-text = load_text_from_csv(
-    csv_path="chunks.csv",
-    combine_rows=True
-)
-```
+| 優先順位 | 候補 |
+|:--------:|------|
+| 1 | text, Text, TEXT |
+| 2 | content, Content, CONTENT |
+| 3 | Combined_Text, combined_text |
+| 4 | body, Body, BODY |
+| 5 | document, Document |
+| 6 | answer, Answer |
+| - | 検出できない場合: 最初のカラムを使用（警告あり） |
 
 ---
 
-### 6.3 `save_chunks_as_csv()` - CSV出力処理（v2.0.0改修）
-
-#### 機能
-
-チャンクをCSV形式で保存。メタデータ付き、改行正規化対応。
+### 6.3 `save_chunks_as_csv()` - CSV出力処理
 
 #### シグネチャ
 
@@ -802,7 +428,7 @@ def save_chunks_as_csv(
     output_file: str,
     dataset_type: str = "custom",
     source_file: Optional[str] = None,
-    normalize_whitespace: bool = True  # ← v2.0.0新機能
+    normalize_whitespace: bool = True
 ) -> str:
 ```
 
@@ -819,30 +445,16 @@ def save_chunks_as_csv(
 | sentence_count | 文の数 | `5` |
 | source_file | 元ファイル名 | `document.txt` |
 
-#### 改行正規化の効果（v2.0.0）
+#### 改行正規化の効果
 
-**正規化前:**
-```
-"第1章\n\nこのドキュメントでは、\n基本的な概念を説明します。"
-```
-
-**正規化後:**
-```
-"第1章 このドキュメントでは、 基本的な概念を説明します。"
-```
-
-**メリット:**
-- CSVファイルが読みやすく、編集しやすい
-- パース時のエラーが減少
-- 機械学習での前処理が簡単
+| 状態 | テキスト |
+|------|----------|
+| 正規化前 | `"第1章\n\nこのドキュメントでは、\n基本的な概念を説明します。"` |
+| 正規化後 | `"第1章 このドキュメントでは、 基本的な概念を説明します。"` |
 
 ---
 
-### 6.4 `generate_output_filename()` - 出力ファイル名の自動生成（v2.0.0新機能）
-
-#### 機能
-
-入力ファイル名とタイムスタンプから出力ファイル名を自動生成。
+### 6.4 `generate_output_filename()` - 出力ファイル名の自動生成
 
 #### シグネチャ
 
@@ -856,54 +468,30 @@ def generate_output_filename(
 
 #### 生成ルール
 
-```
-{入力ファイルのベース名}_chunks_{タイムスタンプ}.csv
-
-例:
-input_file = "data/document.txt"
-output_dir = "chunks_output"
-→ "chunks_output/document_chunks_20260119_123456.csv"
-
-input_file = "articles.csv"
-output_dir = "output"
-→ "output/articles_chunks_20260119_143022.csv"
-```
-
-#### タイムスタンプ形式
-
-```python
-datetime.now().strftime("%Y%m%d_%H%M%S")
-# 例: 20260119_123456
-```
+| 入力 | 出力 |
+|------|------|
+| `input_file = "data/document.txt"`<br>`output_dir = "chunks_output"` | `"chunks_output/document_chunks_20260123_123456.csv"` |
+| `input_file = "articles.csv"`<br>`output_dir = "output"` | `"output/articles_chunks_20260123_143022.csv"` |
 
 ---
 
-### 6.5 `_normalize_whitespace()` - テキスト正規化（v2.0.0新機能）
-
-#### 機能
-
-改行・空白を正規化し、CSV出力をクリーンにする。
+### 6.5 `_normalize_whitespace()` - テキスト正規化
 
 #### 処理内容
 
-```python
-1. 改行（\n, \r）を半角スペースに変換
-2. タブ（\t）を半角スペースに変換
-3. 連続する空白を1つに統合
-4. 先頭・末尾の空白を削除
-```
+| ステップ | 処理 |
+|:--------:|------|
+| 1 | 改行（`\n`, `\r`）を半角スペースに変換 |
+| 2 | タブ（`\t`）を半角スペースに変換 |
+| 3 | 連続する空白を1つに統合 |
+| 4 | 先頭・末尾の空白を削除 |
 
 #### 具体例
 
-```python
-入力: "第1章\n\nはじめに\n  基本的な    概念を\t説明します。  "
-出力: "第1章 はじめに 基本的な 概念を 説明します。"
-```
-
-#### 適用タイミング
-
-- CSV保存時（`save_chunks_as_csv()` 内で自動適用）
-- `normalize_whitespace=False` で無効化可能
+| 状態 | テキスト |
+|------|----------|
+| 入力 | `"第1章\n\nはじめに\n  基本的な    概念を\t説明します。  "` |
+| 出力 | `"第1章 はじめに 基本的な 概念を 説明します。"` |
 
 ---
 
@@ -918,7 +506,7 @@ python -m chunking.csv_text_to_chunks_text_csv \
   --input-file ./data/document.txt \
   --output chunks_output
 
-# 出力: chunks_output/document_chunks_20260119_123456.csv
+# 出力: chunks_output/document_chunks_20260123_123456.csv
 ```
 
 #### CSV入力 → CSV出力
@@ -947,7 +535,7 @@ python -m chunking.csv_text_to_chunks_text_csv \
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file large_document.txt \
   --output chunks_output \
-  --model gemini-2.0-flash \
+  --model gemini-2.5-flash \
   --workers 12 \
   --block-size 3000
 ```
@@ -971,7 +559,7 @@ async def main():
     checkpoint_manager = CheckpointManager()
     chunks = await chunks_all_async(
         text=text,
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         max_workers=8,
         block_size=2000,
         checkpoint_manager=checkpoint_manager,
@@ -1002,13 +590,10 @@ async def process_csv():
     )
 
     # チャンク化
-    checkpoint_manager = CheckpointManager()
     chunks = await chunks_all_async(
         text=text,
-        checkpoint_manager=checkpoint_manager,
-        output_file="output/dataset_chunks.csv",
-        dataset_type="dataset",
-        source_file="dataset.csv"
+        model="gemini-2.5-flash",
+        output_file="output/chunks.csv"
     )
 
     return chunks
@@ -1016,927 +601,71 @@ async def process_csv():
 asyncio.run(process_csv())
 ```
 
-#### チェックポイントからの再開
-
-```python
-import asyncio
-from chunking import chunks_all_async, CheckpointManager
-
-async def resume_from_checkpoint():
-    # 既存のチェックポイントを指定
-    checkpoint_manager = CheckpointManager(job_id="20260119_123456")
-
-    with open("document.txt", "r", encoding="utf-8") as f:
-        text = f.read()
-
-    # 途中から再開
-    chunks = await chunks_all_async(
-        text=text,
-        checkpoint_manager=checkpoint_manager,
-        output_file="output/resumed_chunks.csv"
-    )
-
-    return chunks
-
-asyncio.run(resume_from_checkpoint())
-```
-
 ---
 
 ## 8. トラブルシューティング
 
-### 8.1 よくあるエラー
+### 8.1 よくある問題と解決策
 
-#### エラー1: `Rate limit hit`
+| 問題 | 原因 | 解決策 |
+|------|------|--------|
+| レート制限エラー | 並列数が多すぎる | `--workers 4` に減らす |
+| メモリ不足 | 大きなテキストを処理 | `--block-size 4000` に増やす |
+| 処理が遅い | 並列数が少ない | `--workers 12` に増やす |
+| APIキーエラー | 環境変数未設定 | `export GOOGLE_API_KEY='your-key'` |
+| CSV読み込みエラー | カラム名が見つからない | `--text-column` で明示的に指定 |
 
-**原因:** API呼び出しが多すぎる
-
-**解決策:**
-```bash
-# 並列数を減らす
---workers 4
-
-# または、処理を分割
---max-rows 500
-```
-
-#### エラー2: `Incomplete JSON detected`
-
-**原因:** LLMのレスポンスが切断された
-
-**解決策:**
-```python
-# AsyncAPIClientのmax_output_tokensを増やす
-client = AsyncAPIClient(
-    api_key=api_key,
-    max_output_tokens=8192  # デフォルト: 4096
-)
-```
-
-#### エラー3: `指定されたカラムが見つかりません`
-
-**原因:** CSV入力時にtext_columnの指定ミス
-
-**解決策:**
-```bash
-# CSVのカラム名を確認
-python -c "import pandas as pd; print(pd.read_csv('data.csv').columns.tolist())"
-
-# 正しいカラム名を指定
---text-column "article_body"
-
-# または、自動検出に任せる（--text-columnを省略）
-```
-
-#### エラー4: `入力ファイルが見つかりません`
-
-**原因:** ファイルパスの誤り
-
-**解決策:**
-```bash
-# 絶対パスを使用
---input-file /absolute/path/to/file.txt
-
-# または、カレントディレクトリを確認
-pwd
-ls -la
-```
-
----
-
-### 8.2 パフォーマンスチューニング
-
-#### 並列数の調整
-
-```
-小さいテキスト（<10,000文字）: --workers 4
-中程度（10,000-50,000文字）: --workers 8
-大きいテキスト（>50,000文字）: --workers 12
-```
-
-#### block_sizeの調整
-
-```
-詳細な分割が必要: --block-size 1000
-標準: --block-size 2000（デフォルト）
-粗い分割で高速化: --block-size 4000
-```
-
-#### メモリ不足の対処
+### 8.2 チェックポイントからの再開
 
 ```bash
-# 行数を制限
---max-rows 1000
-
-# または、ファイルを分割して処理
-split -l 5000 large_file.csv chunk_
-
-# 各チャンクを個別に処理
-for file in chunk_*; do
-  python -m chunking.csv_text_to_chunks_text_csv \
-    --input-file $file --output chunks_output
-done
-```
-
----
-
-### 8.3 デバッグ方法
-
-#### 詳細ログの確認
-
-```bash
-# 詳細ログを有効化
+# 前回のジョブIDを指定して再開
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file document.txt \
   --output chunks_output \
-  --verbose
-
-# ログファイルを確認
-tail -f ./logs/chunking_*.log
+  --resume job_20260123_123456
 ```
 
-#### チェックポイントの確認
-
-```bash
-# 保存されているジョブを確認
-ls -la ./checkpoints/
-
-# 特定ジョブの内容を確認
-cat ./checkpoints/20260119_123456/step1.json | head -n 50
-```
-
-#### API統計情報の取得
-
-```python
-import asyncio
-from chunking.async_api_client import AsyncAPIClient
-
-async def check_stats():
-    client = AsyncAPIClient(api_key="your-key", max_workers=8)
-
-    # ... 処理実行 ...
-
-    stats = client.get_stats()
-    print(f"総リクエスト数: {stats['total_requests']}")
-    print(f"失敗リクエスト数: {stats['failed_requests']}")
-    print(f"成功率: {stats['success_rate']:.2f}%")
-    print(f"切断レスポンス数: {stats['truncated_responses']}")
-
-asyncio.run(check_stats())
-```
+---
 
 ## 9. async並列処理の詳細
 
-### 9.1 並列処理の概要
-
-本システムでは、**asyncio**を活用した非同期・並列処理により、API呼び出しを高速化しています。
-
-#### 9.1.1 なぜ並列処理が必要か？
-
-| 処理方式 | 実行時間（例: 100 API呼び出し） | 特徴 |
-|---------|--------------------------|------|
-| **逐次処理** | 約200秒（1呼び出し2秒×100） | シンプルだが遅い |
-| **並列処理（8並列）** | 約25秒（2秒×(100÷8)） | **6-8倍高速** |
-
-**並列処理の効果:**
-- API呼び出しはI/Oバウンド（ネットワーク待機時間が支配的）
-- 複数のリクエストを同時に送信することで待機時間を削減
-- CPU使用率は低いため、並列化のオーバーヘッドが小さい
-
----
-
-### 9.2 並列処理の実装構造
-
-#### 9.2.1 基本アーキテクチャ
-
-```
-┌─────────────────────────────────────────────┐
-│         chunks_all_async()                  │
-│         (メイン非同期関数)                    │
-└─────────────────────────────────────────────┘
-                    │
-        ┌───────────┼───────────┐
-        │           │           │
-   ┌────▼────┐ ┌───▼────┐ ┌───▼────┐
-   │ Step1   │ │ Step2  │ │ Step3  │
-   │ 階層化  │ │ 意味分割│ │ 連続性 │
-   └────┬────┘ └───┬────┘ └───┬────┘
-        │          │          │
-        │          │          │
-   ┌────▼─────────────────────▼────┐
-   │   async_tqdm.gather()         │
-   │   (並列実行 + 進捗表示)        │
-   └────┬──────────────────────────┘
-        │
-   ┌────▼────────────────────────┐
-   │  AsyncAPIClient             │
-   │  (Semaphore制御)            │
-   └────┬────────────────────────┘
-        │
-   ┌────▼────────────────────────┐
-   │  Gemini API                 │
-   │  (複数同時接続)              │
-   └─────────────────────────────┘
-```
-
-#### 9.2.2 主要コンポーネント
-
-| コンポーネント | 役割 | 技術 |
-|-------------|------|------|
-| `asyncio.gather()` | 複数のコルーチンを並列実行 | Python標準ライブラリ |
-| `async_tqdm.gather()` | 並列実行 + 進捗バー表示 | tqdm.asyncio |
-| `asyncio.Semaphore` | 並列数の制御（デフォルト8） | Python標準ライブラリ |
-| `AsyncAPIClient` | API呼び出しの抽象化・管理 | カスタム実装 |
-
----
-
-### 9.3 各ステップでの並列処理
-
-#### 9.3.1 Step1: 階層構造化の並列処理
-
-```python
-async def _step1_hierarchical_split(
-    text: str,
-    client: AsyncAPIClient,
-    model: str,
-    block_size: int,
-    checkpoint_manager: CheckpointManager
-) -> List[str]:
-    """Step 1: 階層構造化"""
-
-    # 1. テキストをブロックに分割
-    blocks = [text[i:i + block_size] for i in range(0, len(text), block_size)]
-    logger.info(f"  ブロック数: {len(blocks)}")
-
-    # 2. 各ブロックに対するタスクを作成
-    tasks = []
-    for i, block in enumerate(blocks):
-        prompt = f"{PARAGRAPH_SEPARATION_PROMPT}\n\n【入力テキスト】\n{block}"
-        task = client.generate_content(
-            model=model,
-            contents=prompt,
-            response_schema=StructuralResult,
-            task_id=f"step1_block_{i}"
-        )
-        tasks.append(task)
-
-    # 3. 並列実行 + 進捗表示
-    results = await async_tqdm.gather(
-        *tasks,
-        desc="Step1: 階層構造化",
-        total=len(tasks)
-    )
-
-    # 4. 結果を収集
-    paragraphs = []
-    for result_json in results:
-        if result_json:
-            try:
-                result = StructuralResult.model_validate_json(result_json)
-                for para in result.paragraphs:
-                    paragraphs.append(para.full_text)
-            except Exception as e:
-                logger.warning(f"パース失敗: {e}")
-
-    return paragraphs
-```
-
-**並列処理の特徴:**
-- テキストをblock_size（デフォルト2000文字）で分割
-- 各ブロックを独立してAPI処理（**並列度 = ブロック数**）
-- 例: 10,000文字のテキスト → 5ブロック → **5並列**
-
-**進捗表示の例:**
-```
-Step1: 階層構造化: 100%|████████████| 5/5 [00:03<00:00,  1.67it/s]
-```
-
----
-
-#### 9.3.2 Step2: 意味的分割の並列処理
-
-```python
-async def _step2_semantic_chunking(
-    paragraphs: List[str],
-    client: AsyncAPIClient,
-    model: str,
-    checkpoint_manager: CheckpointManager
-) -> List[str]:
-    """Step 2: 意味的分割"""
-
-    logger.info(f"  入力: {len(paragraphs)} 段落")
-
-    # 1. 各段落に対するタスクを作成
-    tasks = []
-    for i, para in enumerate(paragraphs):
-        prompt = f"{SEMANTIC_CHUNKING_PROMPT}\n\n【入力テキスト】\n{para}"
-        task = client.generate_content(
-            model=model,
-            contents=prompt,
-            response_schema=StructuralResult,
-            task_id=f"step2_para_{i}"
-        )
-        tasks.append(task)
-
-    # 2. 並列実行 + 進捗表示
-    results = await async_tqdm.gather(
-        *tasks,
-        desc="Step2: 意味的分割",
-        total=len(tasks)
-    )
-
-    # 3. 結果を収集
-    chunks = []
-    for result_json in results:
-        if result_json:
-            try:
-                result = StructuralResult.model_validate_json(result_json)
-                for para in result.paragraphs:
-                    chunks.append(para.full_text)
-            except Exception as e:
-                logger.warning(f"パース失敗: {e}")
-
-    return chunks
-```
-
-**並列処理の特徴:**
-- Step1の出力段落数 = 並列度
-- 例: 10段落 → **10並列**
-- 各段落が独立して処理されるため、並列化が容易
-
-**進捗表示の例:**
-```
-Step2: 意味的分割: 100%|████████████| 10/10 [00:05<00:00,  2.00it/s]
-```
-
----
-
-#### 9.3.3 Step3: 連続性チェックの並列処理
-
-```python
-async def _step3_continuity_check(
-    chunks: List[str],
-    client: AsyncAPIClient,
-    model: str,
-    checkpoint_manager: CheckpointManager
-) -> List[str]:
-    """Step 3: 文脈連続性チェック"""
-
-    logger.info(f"  入力: {len(chunks)} チャンク")
-
-    if len(chunks) <= 1:
-        return chunks
-
-    # 1. 隣接ペアに対するタスクを作成
-    tasks = []
-    for i in range(len(chunks) - 1):
-        prompt = f"{CONTINUITY_CHECK_PROMPT}\n\n【前のテキスト】\n{chunks[i]}\n\n【次のテキスト】\n{chunks[i + 1]}"
-        task = client.generate_content(
-            model=model,
-            contents=prompt,
-            response_schema=ContinuityResult,
-            task_id=f"step3_pair_{i}"
-        )
-        tasks.append(task)
-
-    # 2. 並列実行 + 進捗表示
-    results = await async_tqdm.gather(
-        *tasks,
-        desc="Step3: 連続性チェック",
-        total=len(tasks)
-    )
-
-    # 3. マージ処理（逐次）
-    final_chunks = [chunks[0]]
-    for i, result_json in enumerate(results):
-        if result_json:
-            try:
-                result = ContinuityResult.model_validate_json(result_json)
-                if result.is_connected:
-                    # 連続している → 結合
-                    final_chunks[-1] += "\n\n" + chunks[i + 1]
-                else:
-                    # 連続していない → 分離
-                    final_chunks.append(chunks[i + 1])
-            except Exception as e:
-                logger.warning(f"パース失敗: {e}")
-                final_chunks.append(chunks[i + 1])
-        else:
-            final_chunks.append(chunks[i + 1])
-
-    return final_chunks
-```
-
-**並列処理の特徴:**
-- 隣接ペア数 = チャンク数 - 1 = 並列度
-- 例: 15チャンク → 14ペア → **14並列**
-- 判定は並列、マージは逐次（依存関係があるため）
-
-**進捗表示の例:**
-```
-Step3: 連続性チェック: 100%|████████████| 14/14 [00:07<00:00,  2.00it/s]
-```
-
----
-
-### 9.4 並列数の制御（Semaphore）
-
-#### 9.4.1 Semaphoreの役割
-
-```python
-# AsyncAPIClient内部の実装
-class AsyncAPIClient:
-    def __init__(self, api_key: str, max_workers: int = 8):
-        self.semaphore = asyncio.Semaphore(max_workers)
-        # ...
-
-    async def generate_content(self, ...):
-        async with self.semaphore:
-            # API呼び出し（Semaphoreで制御）
-            response = await self._call_api(...)
-            return response
-```
-
-**Semaphoreの効果:**
-```
-max_workers = 8 の場合:
-
-タスク1  ┃█████████████┃
-タスク2  ┃█████████████┃
-タスク3  ┃█████████████┃
-タスク4  ┃█████████████┃
-タスク5  ┃█████████████┃
-タスク6  ┃█████████████┃
-タスク7  ┃█████████████┃
-タスク8  ┃█████████████┃
-タスク9       ┃待機┃█████████████┃  ← 空きが出るまで待機
-タスク10      ┃待機┃█████████████┃
-         ↑
-    最大8個まで同時実行
-```
-
-#### 9.4.2 並列数の推奨設定
-
-| テキストサイズ | 推奨並列数 | 理由 |
-|--------------|-----------|------|
-| 小（<10,000文字） | 4-6 | API呼び出し数が少ない |
-| 中（10,000-50,000文字） | 8 | **デフォルト** |
-| 大（>50,000文字） | 10-12 | 高速化を優先 |
-
-**注意事項:**
-- 並列数が多すぎる → APIレート制限に引っかかる可能性
-- 並列数が少なすぎる → 処理が遅くなる
-- Gemini APIのレート制限を確認して調整
-
----
-
-### 9.5 進捗表示（tqdm.asyncio）
-
-#### 9.5.1 async_tqdm.gather()の使用
-
-```python
-from tqdm.asyncio import tqdm as async_tqdm
-
-# 標準のasyncio.gather()
-results = await asyncio.gather(*tasks)
-
-# ↓ 進捗バー付き
-
-# async_tqdm.gather()
-results = await async_tqdm.gather(
-    *tasks,
-    desc="Step1: 階層構造化",  # 進捗バーの説明
-    total=len(tasks)            # タスク総数
-)
-```
-
-#### 9.5.2 進捗表示の例
-
-```
-============================================================
-[Step 1/3] 階層構造化（段落 > 文）
-============================================================
-  ブロック数: 5
-
-Step1: 階層構造化: 100%|████████████| 5/5 [00:03<00:00,  1.67it/s]
-
-  出力: 10 段落
-
-============================================================
-[Step 2/3] 意味的分割
-============================================================
-  入力: 10 段落
-
-Step2: 意味的分割: 100%|████████████| 10/10 [00:05<00:00,  2.00it/s]
-
-  出力: 15 チャンク
-
-============================================================
-[Step 3/3] 文脈連続性チェック
-============================================================
-  入力: 15 チャンク
-
-Step3: 連続性チェック: 100%|████████████| 14/14 [00:07<00:00,  2.00it/s]
-
-  出力: 12 チャンク（マージ後）
-============================================================
-```
-
-**進捗バーの要素:**
-- `100%`: 完了率
-- `████████████`: ビジュアルバー
-- `5/5`: 完了数/総数
-- `[00:03<00:00, 1.67it/s]`: 経過時間、残り時間、処理速度
-
----
-
-### 9.6 パフォーマンス特性
-
-#### 9.6.1 処理時間の比較
-
-**テストケース:** 10,000文字のテキスト、API呼び出し1回あたり2秒
-
-| 処理方式 | Step1 | Step2 | Step3 | 合計 |
-|---------|-------|-------|-------|------|
-| **逐次処理** | 10秒 | 20秒 | 28秒 | **58秒** |
-| **並列処理（8並列）** | 2秒 | 3秒 | 4秒 | **9秒** |
-| **高速化率** | 5倍 | 6.7倍 | 7倍 | **6.4倍** |
-
-#### 9.6.2 並列度とAPI呼び出し数の関係
-
-**例: 10,000文字のテキスト**
-
-```
-Step1: テキストサイズ ÷ block_size
-  10,000文字 ÷ 2,000文字 = 5ブロック
-  → 5 API呼び出し（最大5並列）
-
-Step2: Step1の出力段落数
-  5ブロック → 10段落（仮定）
-  → 10 API呼び出し（最大10並列）
-
-Step3: Step2の出力チャンク数 - 1
-  10段落 → 15チャンク（仮定）
-  → 14 API呼び出し（14ペア、最大14並列）
-
-合計: 5 + 10 + 14 = 29 API呼び出し
-```
-
-#### 9.6.3 実測パフォーマンス（参考値）
-
-| テキストサイズ | API呼び出し数 | 並列数 | 処理時間（逐次） | 処理時間（並列） | 高速化率 |
-|--------------|-------------|--------|---------------|---------------|---------|
-| 5,000文字 | 15回 | 8 | 30秒 | 5秒 | 6倍 |
-| 10,000文字 | 29回 | 8 | 58秒 | 9秒 | 6.4倍 |
-| 50,000文字 | 140回 | 12 | 280秒 | 35秒 | 8倍 |
-
-**注記:** 実際の処理時間はAPI応答速度やネットワーク状況に依存します
-
----
-
-### 9.7 エラーハンドリングと並列処理
-
-#### 9.7.1 個別タスクのエラー処理
-
-```python
-# async_tqdm.gather()は、一部のタスクが失敗しても継続
-results = await async_tqdm.gather(
-    *tasks,
-    desc="Step1: 階層構造化",
-    total=len(tasks)
-)
-
-# 結果を個別に検証
-for i, result_json in enumerate(results):
-    if result_json:
-        try:
-            result = StructuralResult.model_validate_json(result_json)
-            # 正常処理
-        except Exception as e:
-            logger.warning(f"パース失敗 (ブロック{i}): {e}")
-            # エラーログを記録して継続
-    else:
-        logger.error(f"API呼び出し失敗 (ブロック{i})")
-        # None を返したタスクをスキップ
-```
-
-**エラー処理のポイント:**
-- `asyncio.gather()` はデフォルトで最初のエラーで停止
-- カスタム実装により、エラーを記録しつつ処理継続
-- 個別タスクの失敗が全体に影響しない設計
-
-#### 9.7.2 リトライ機構
-
-```python
-# AsyncAPIClient内部でリトライを実装
-async def generate_content(self, ...):
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            async with self.semaphore:
-                response = await self._call_api(...)
-                return response
-        except Exception as e:
-            if attempt < max_retries - 1:
-                logger.warning(f"リトライ ({attempt + 1}/{max_retries}): {e}")
-                await asyncio.sleep(2 ** attempt)  # 指数バックオフ
-            else:
-                logger.error(f"最大リトライ回数到達: {e}")
-                return None
-```
-
----
-
-### 9.8 並列処理のベストプラクティス
-
-#### 9.8.1 推奨設定
-
-```python
-# 推奨設定例
-chunks = await chunks_all_async(
-    text=text,
-    model="gemini-2.0-flash",
-    max_workers=8,        # ← バランスの良い並列数
-    block_size=2000,      # ← 適切なブロックサイズ
-    checkpoint_manager=checkpoint_manager
-)
-```
-
-#### 9.8.2 チューニングガイド
-
-**並列数（max_workers）の調整:**
-```bash
-# 小規模処理: レート制限を避ける
---workers 4
-
-# 標準処理: バランス重視（推奨）
---workers 8
-
-# 大規模処理: 速度重視
---workers 12
-
-# 超大規模処理: 最大速度
---workers 16
-```
-
-**ブロックサイズ（block_size）の調整:**
-```bash
-# 細かい分割: 並列度を上げる
---block-size 1000
-
-# 標準: バランス（推奨）
---block-size 2000
-
-# 粗い分割: API呼び出しを減らす
---block-size 4000
-```
-
-#### 9.8.3 トラブルシューティング
-
-**問題1: レート制限エラー**
-```
-解決策:
-1. 並列数を減らす: --workers 4
-2. リクエスト間隔を空ける（AsyncAPIClient内で実装）
-3. 処理を分割: --max-rows で分割処理
-```
-
-**問題2: メモリ不足**
-```
-解決策:
-1. ブロックサイズを大きくする: --block-size 4000
-2. 並列数を減らす: --workers 4
-3. 入力を分割処理
-```
-
-**問題3: 処理が遅い**
-```
-原因分析:
-1. API応答が遅い → ネットワーク確認
-2. 並列数が少ない → --workers を増やす
-3. ブロックサイズが小さい → API呼び出しが多すぎる
-
-解決策:
---workers 12 --block-size 3000
-```
-
----
-
-### 9.9 実装例とコード
-
-#### 9.9.1 完全な実装例
-
-```python
-import asyncio
-from tqdm.asyncio import tqdm as async_tqdm
-from chunking.async_api_client import AsyncAPIClient
-from chunking.models import StructuralResult, ContinuityResult
-from chunking.prompts import (
-    PARAGRAPH_SEPARATION_PROMPT,
-    SEMANTIC_CHUNKING_PROMPT,
-    CONTINUITY_CHECK_PROMPT
-)
-
-async def parallel_processing_demo():
-    """並列処理のデモンストレーション"""
-
-    # 1. クライアント初期化（並列数8）
-    client = AsyncAPIClient(
-        api_key="your-api-key",
-        max_workers=8
-    )
-
-    # 2. テストデータ
-    text = "長いテキスト..." * 1000  # 10,000文字と仮定
-
-    # 3. Step1: 階層構造化（並列処理）
-    print("=== Step1: 階層構造化 ===")
-    blocks = [text[i:i+2000] for i in range(0, len(text), 2000)]
-
-    tasks = []
-    for i, block in enumerate(blocks):
-        prompt = f"{PARAGRAPH_SEPARATION_PROMPT}\n\n{block}"
-        task = client.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-            response_schema=StructuralResult,
-            task_id=f"block_{i}"
-        )
-        tasks.append(task)
-
-    # 並列実行
-    results = await async_tqdm.gather(
-        *tasks,
-        desc="階層構造化",
-        total=len(tasks)
-    )
-
-    # 結果処理
-    paragraphs = []
-    for result_json in results:
-        if result_json:
-            result = StructuralResult.model_validate_json(result_json)
-            paragraphs.extend([p.full_text for p in result.paragraphs])
-
-    print(f"出力: {len(paragraphs)} 段落")
-
-    # 4. Step2: 意味的分割（並列処理）
-    print("\n=== Step2: 意味的分割 ===")
-
-    tasks = []
-    for i, para in enumerate(paragraphs):
-        prompt = f"{SEMANTIC_CHUNKING_PROMPT}\n\n{para}"
-        task = client.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-            response_schema=StructuralResult,
-            task_id=f"para_{i}"
-        )
-        tasks.append(task)
-
-    results = await async_tqdm.gather(
-        *tasks,
-        desc="意味的分割",
-        total=len(tasks)
-    )
-
-    chunks = []
-    for result_json in results:
-        if result_json:
-            result = StructuralResult.model_validate_json(result_json)
-            chunks.extend([p.full_text for p in result.paragraphs])
-
-    print(f"出力: {len(chunks)} チャンク")
-
-    # 5. Step3: 連続性チェック（並列処理 + 逐次マージ）
-    print("\n=== Step3: 連続性チェック ===")
-
-    if len(chunks) > 1:
-        tasks = []
-        for i in range(len(chunks) - 1):
-            prompt = f"{CONTINUITY_CHECK_PROMPT}\n\n【前】\n{chunks[i]}\n\n【次】\n{chunks[i+1]}"
-            task = client.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-                response_schema=ContinuityResult,
-                task_id=f"pair_{i}"
-            )
-            tasks.append(task)
-
-        results = await async_tqdm.gather(
-            *tasks,
-            desc="連続性チェック",
-            total=len(tasks)
-        )
-
-        # マージ処理（逐次）
-        final_chunks = [chunks[0]]
-        for i, result_json in enumerate(results):
-            if result_json:
-                result = ContinuityResult.model_validate_json(result_json)
-                if result.is_connected:
-                    final_chunks[-1] += "\n\n" + chunks[i + 1]
-                else:
-                    final_chunks.append(chunks[i + 1])
-            else:
-                final_chunks.append(chunks[i + 1])
-
-        print(f"出力: {len(final_chunks)} チャンク（マージ後）")
-    else:
-        final_chunks = chunks
-
-    return final_chunks
-
-# 実行
-if __name__ == "__main__":
-    chunks = asyncio.run(parallel_processing_demo())
-    print(f"\n最終チャンク数: {len(chunks)}")
-```
-
-#### 9.9.2 並列数による速度比較の測定
-
-```python
-import asyncio
-import time
-from chunking import chunks_all_async, CheckpointManager
-
-async def benchmark_parallel_workers():
-    """並列数による速度比較"""
-
-    with open("large_document.txt", "r", encoding="utf-8") as f:
-        text = f.read()
-
-    worker_counts = [2, 4, 8, 12, 16]
-    results = {}
-
-    for workers in worker_counts:
-        print(f"\n=== 並列数: {workers} ===")
-
-        start_time = time.time()
-
-        checkpoint_manager = CheckpointManager()
-        chunks = await chunks_all_async(
-            text=text,
-            model="gemini-2.0-flash",
-            max_workers=workers,
-            checkpoint_manager=checkpoint_manager
-        )
-
-        elapsed_time = time.time() - start_time
-
-        results[workers] = {
-            'time': elapsed_time,
-            'chunks': len(chunks),
-            'speed': len(chunks) / elapsed_time
-        }
-
-        print(f"処理時間: {elapsed_time:.2f}秒")
-        print(f"チャンク数: {len(chunks)}")
-        print(f"速度: {len(chunks) / elapsed_time:.2f} chunks/sec")
-
-    # 結果表示
-    print("\n=== 結果サマリー ===")
-    print(f"{'並列数':<10} {'処理時間':<15} {'チャンク数':<12} {'速度':<15}")
-    print("-" * 60)
-    for workers, data in results.items():
-        print(f"{workers:<10} {data['time']:<15.2f} {data['chunks']:<12} {data['speed']:<15.2f}")
-
-# 実行
-asyncio.run(benchmark_parallel_workers())
-```
-
----
-
-### 9.10 まとめ
-
-#### 9.10.1 並列処理の利点
-
-✅ **高速化**: 逐次処理の6-8倍の速度
-✅ **スケーラビリティ**: テキストサイズに応じて自動的にスケール
-✅ **可視性**: tqdm.asyncioによる進捗表示
-✅ **制御性**: Semaphoreによる並列数の柔軟な制御
-✅ **堅牢性**: エラーハンドリングとリトライ機構
-
-#### 9.10.2 注意点
-
-⚠️ **レート制限**: 並列数が多すぎるとAPI制限に抵触
-⚠️ **メモリ使用**: 並列処理により一時的にメモリ使用量が増加
-⚠️ **ネットワーク依存**: API応答速度がボトルネックになる可能性
-⚠️ **コスト**: API呼び出し数が増えるため、料金に注意
-
-#### 9.10.3 推奨設定
+### 9.1 並列処理の仕組み
+
+| コンポーネント | 役割 |
+|---------------|------|
+| `asyncio.Semaphore` | 同時実行数を制限（デフォルト: 8） |
+| `asyncio.to_thread()` | 同期APIを非同期でラップ |
+| `tqdm.asyncio.gather()` | 並列実行 + 進捗表示 |
+
+### 9.2 各Stepの並列化
+
+| Step | 並列対象 | 並列数 |
+|:----:|----------|:------:|
+| Step1 | ブロック（2000文字単位） | テキスト長 ÷ 2000 |
+| Step2 | 段落 | 段落数 |
+| Step3 | 隣接ペア | チャンク数 - 1 |
+
+### 9.3 速度比較（参考値）
+
+| 並列数 | 処理時間（相対） | 備考 |
+|:------:|:---------------:|------|
+| 1（逐次） | 100% | ベースライン |
+| 4 | 30% | 安定性重視 |
+| 8 | 15% | **推奨** |
+| 12 | 12% | 速度重視 |
+| 16 | 10% | 最大速度（レート制限注意） |
+
+### 9.4 推奨設定
 
 ```bash
 # 標準的な設定（推奨）
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file document.txt \
   --output chunks_output \
-  --model gemini-2.0-flash \
+  --model gemini-2.5-flash \
   --workers 8 \
   --block-size 2000
 ```
-
-この設定で、ほとんどのユースケースにおいて **速度・安定性・コスト** のバランスが取れた処理が可能です。
 
 ---
 
@@ -1944,34 +673,38 @@ python -m chunking.csv_text_to_chunks_text_csv \
 
 ### A. なぜ非同期・並列化？
 
-**理由:** API呼び出しはI/Oバウンド → 並列化で劇的な高速化
-**効果:** 逐次処理の6-8倍の速度
+| 項目 | 内容 |
+|------|------|
+| 理由 | API呼び出しはI/Oバウンド → 並列化で劇的な高速化 |
+| 効果 | 逐次処理の6-8倍の速度 |
 
 ### B. なぜSemaphore固定？
 
-**理由:** レート制限回避 + 安定性重視
-**代替案:** Rate Limiterの実装（将来的に検討）
+| 項目 | 内容 |
+|------|------|
+| 理由 | レート制限回避 + 安定性重視 |
+| 代替案 | Rate Limiterの実装（将来的に検討） |
 
 ### C. なぜチェックポイント？
 
-**理由:** 長時間処理のクラッシュ対策
-**効果:** 途中から再開可能 → 時間とコスト削減
+| 項目 | 内容 |
+|------|------|
+| 理由 | 長時間処理のクラッシュ対策 |
+| 効果 | 途中から再開可能 → 時間とコスト削減 |
 
 ### D. なぜ3段階処理？
 
-**理由:**
-- Step1: 物理構造を維持
-- Step2: 意味的に分離
-- Step3: 文脈を最適化
+| Step | 役割 |
+|:----:|------|
+| Step1 | 物理構造を維持 |
+| Step2 | 意味的に分離 |
+| Step3 | 文脈を最適化 |
 
 **効果:** 単純分割より高品質で、文脈を保持したチャンク
 
-### E. なぜ改行正規化？（v2.0.0）
+### E. なぜ改行正規化？
 
-**理由:**
-- CSV形式での可読性向上
-- パースエラーの削減
-- 機械学習での前処理が簡単
-
-**効果:** クリーンで扱いやすいCSVデータセット
-
+| 項目 | 内容 |
+|------|------|
+| 理由 | CSV形式での可読性向上、パースエラーの削減、機械学習での前処理が簡単 |
+| 効果 | クリーンで扱いやすいCSVデータセット |

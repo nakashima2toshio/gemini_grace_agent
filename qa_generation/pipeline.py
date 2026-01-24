@@ -8,6 +8,18 @@ qa_generation/pipeline.py - Q/A生成パイプライン制御モジュール（�
 - テキストファイル（.txt）対応を追加
 - load_chunks_from_csv()メソッドを削除
 - コードの簡素化（約149行削減）
+- ✅ concurrencyパラメータを追加（並列タスク数の指定）
+
+使用例:
+  # make_qa_register_qdrant.py から呼び出し
+  result = pipeline.run(
+      use_celery=True,
+      celery_workers=1,      # ワーカープロセス数チェック用
+      concurrency=8,         # ✅ 並列タスク数
+      batch_chunks=3,
+      merge_chunks=True,
+      use_smart_generation=True
+  )
 """
 
 import sys
@@ -148,7 +160,15 @@ class QAPipeline:
                       use_similarity: bool = False,
                       similarity_threshold: float = 0.7,
                       max_workers: int = 8) -> List[Dict]:
-        """チャンクを作成する"""
+        """チャンクを作成する
+
+        Args:
+            df: データフレーム
+            overlap_tokens: チャンク間の重複トークン数
+            use_similarity: ベクトル類似度分割を使用するか
+            similarity_threshold: 類似度閾値
+            max_workers: 並列処理のワーカー数（チャンク作成時）
+        """
         logger.info("\n[2/4] チャンク作成...")
         dataset_type = self.config.get("type", "unknown")
         max_docs_for_chunks = None if self.input_file else self.max_docs
@@ -169,13 +189,26 @@ class QAPipeline:
 
     def generate_qa(self, chunks: List[Dict],
                     use_celery: bool = False,
-                    celery_workers: int = 8,
+                    celery_workers: int = 1,
+                    concurrency: int = 8,  # ✅ 改修: concurrency パラメータ追加
                     batch_chunks: int = 3,
                     merge_chunks: bool = True,
                     min_tokens: int = 150,
                     max_tokens: int = 400,
                     use_smart_generation: bool = True) -> List[Dict]:
-        """Q/Aペアを生成する"""
+        """Q/Aペアを生成する
+
+        Args:
+            chunks: チャンクのリスト
+            use_celery: Celery並列処理を使用するか
+            celery_workers: Celeryワーカープロセス数チェック用（デフォルト: 1）
+            concurrency: 並列タスク数（デフォルト: 8）★新規追加
+            batch_chunks: 1回のAPIで処理するチャンク数
+            merge_chunks: 小さいチャンクを統合するか
+            min_tokens: 統合対象の最小トークン数
+            max_tokens: 統合後の最大トークン数
+            use_smart_generation: スマートQ/A生成を使用するか
+        """
         logger.info("\n[3/4] Q/Aペア生成...")
 
         # ✨ スマート生成モードのログ出力
@@ -184,18 +217,37 @@ class QAPipeline:
 
         if use_celery:
             return self._generate_with_celery(
-                chunks, celery_workers, batch_chunks, merge_chunks, min_tokens, max_tokens, use_smart_generation
+                chunks, celery_workers, concurrency, batch_chunks,
+                merge_chunks, min_tokens, max_tokens, use_smart_generation
             )
         else:
             return self._generate_sync(
                 chunks, batch_chunks, merge_chunks, min_tokens, max_tokens, use_smart_generation
             )
 
-    def _generate_with_celery(self, chunks: List[Dict], workers: int, batch_size: int,
+    def _generate_with_celery(self, chunks: List[Dict],
+                              workers: int,
+                              concurrency: int,  # ✅ 改修: concurrency 追加
+                              batch_size: int,
                               merge: bool, min_tokens: int, max_tokens: int,
                               use_smart_generation: bool) -> List[Dict]:
-        """Celeryを使用した非同期生成"""
-        logger.info(f"Celery並列処理モード: ワーカー数={workers}")
+        """Celeryを使用した非同期生成
+
+        Args:
+            chunks: チャンクのリスト
+            workers: ワーカープロセス数チェック用
+            concurrency: 並列タスク数★新規追加
+            batch_size: バッチサイズ
+            merge: チャンク統合を行うか
+            min_tokens: 統合対象の最小トークン数
+            max_tokens: 統合後の最大トークン数
+            use_smart_generation: スマートQ/A生成を使用するか
+        """
+        # ✅ 改修: 並列数をログ出力
+        logger.info(f"Celery並列処理モード:")
+        logger.info(f"  - ワーカープロセス数チェック: {workers}")
+        logger.info(f"  - 並列タスク数 (concurrency): {concurrency}")
+
         logger.info("Celeryワーカーの状態を確認中...")
         if not check_celery_workers(workers):
             raise RuntimeError("Celery workers are not running")
@@ -208,9 +260,10 @@ class QAPipeline:
         # ✨ use_smart_generationをCeleryタスクに渡す
         tasks = submit_unified_qa_generation(
             processed_chunks, self.config, self.model, provider="gemini",
-            use_smart_generation=use_smart_generation  # ✨ 追加
+            use_smart_generation=use_smart_generation
         )
 
+        # ✅ 改修: タイムアウトをconcurrencyベースで計算
         timeout_seconds = min(max(len(tasks) * 10, 600), 1800)
         logger.info(f"結果収集タイムアウト: {timeout_seconds}秒（{len(tasks)}タスク）")
         return collect_results(tasks, timeout=timeout_seconds)
@@ -232,7 +285,7 @@ class QAPipeline:
             max_tokens=max_tokens,
             config=self.config,
             client=self.client,
-            use_smart_generation=use_smart_generation  # ✨ 追加
+            use_smart_generation=use_smart_generation
         )
 
     def evaluate_coverage(self, chunks: List[Dict], qa_pairs: List[Dict],
@@ -253,7 +306,8 @@ class QAPipeline:
     def run(
             self,
             use_celery: bool = False,
-            celery_workers: int = 8,
+            celery_workers: int = 1,  # ✅ 改修: デフォルトを1に変更
+            concurrency: int = 8,  # ✅ 改修: concurrency パラメータ追加
             batch_chunks: int = 3,
             merge_chunks: bool = True,
             min_tokens: int = 150,
@@ -263,13 +317,14 @@ class QAPipeline:
             overlap_tokens: int = 0,
             use_similarity: bool = False,
             similarity_threshold: float = 0.7,
-            use_smart_generation: bool = True):  # ✨ デフォルトをTrueに変更
+            use_smart_generation: bool = True):
         """
         パイプライン実行
 
         Args:
             use_celery: Celery並列処理を使用するか
-            celery_workers: Celeryワーカー数
+            celery_workers: Celeryワーカープロセス数チェック用（デフォルト: 1）
+            concurrency: 並列タスク数（デフォルト: 8）★新規追加
             batch_chunks: 1回のAPIで処理するチャンク数
             merge_chunks: 小さいチャンクを統合するか
             min_tokens: 統合対象の最小トークン数
@@ -299,21 +354,28 @@ class QAPipeline:
             # データ読み込み
             df = self.load_data()
 
-            # チャンク作成
+            # ✅ 改修: チャンク作成時のmax_workersにconcurrencyを使用
             chunks = self.create_chunks(
                 df,
                 overlap_tokens=overlap_tokens,
                 use_similarity=use_similarity,
                 similarity_threshold=similarity_threshold,
-                max_workers=celery_workers
+                max_workers=concurrency  # ✅ 改修: celery_workers → concurrency
             )
 
             # ================================================================
             # Q/A生成
             # ================================================================
             qa_pairs = self.generate_qa(
-                chunks, use_celery, celery_workers, batch_chunks,
-                merge_chunks, min_tokens, max_tokens, use_smart_generation
+                chunks,
+                use_celery,
+                celery_workers,
+                concurrency,  # ✅ 改修: concurrency を渡す
+                batch_chunks,
+                merge_chunks,
+                min_tokens,
+                max_tokens,
+                use_smart_generation
             )
 
             if not qa_pairs:
@@ -349,4 +411,3 @@ class QAPipeline:
         except Exception as e:
             logger.error(f"パイプライン実行エラー: {e}")
             raise
-

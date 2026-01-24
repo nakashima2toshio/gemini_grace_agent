@@ -20,8 +20,18 @@ class ParagraphUnit(BaseModel):
 
     @property
     def full_text(self) -> str:
-        """段落内の全文を結合して返す"""
-        return "".join([s.text for s in self.sentences])
+        """段落内の全文を結合して返す
+
+        注意: 改行（\n）で文を結合します。
+        これにより、元のテキスト構造が保持され、
+        Step2・Step3での処理精度が向上します。
+
+        CSV入力時に特に重要：
+        - CSVセル内の改行が保持される
+        - 可読性が高まる
+        - 意味的分割が正確になる
+        """
+        return "\n".join([s.text for s in self.sentences])
 
 
 class StructuralResult(BaseModel):
@@ -30,7 +40,10 @@ class StructuralResult(BaseModel):
 
 
 class ContinuityResult(BaseModel):
-    """文脈連続性判定の結果"""
     is_connected: bool = Field(
-        description="前のテキストと次のテキストが、意味的に連続している（同じトピックである）場合はTrue、話題が転換している場合はFalse"
+        description=(
+            "前のテキスト(Prev)と次のテキスト(Next)が一つの連続した話題としてつながっている場合はTrue。"
+            "Nextを単独で読んだ場合に意味が不完全・曖昧になる場合もTrue。"
+            "話題が転換し、NextがPrevなしでも完全に理解できる場合はFalse。"
+        )
     )

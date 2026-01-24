@@ -59,6 +59,13 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="/OUTPUT/wikipedia_ja_5per.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="/logs/unanswered_questions.csv">
           <value>
             <Attribute>

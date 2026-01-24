@@ -33,7 +33,7 @@ class AsyncAPIClient:
         api_key: str,
         max_workers: int = 8,
         max_retries: int = 3,
-        max_output_tokens: int = 4096
+        max_output_tokens: int = 8192
     ):
         """
         Args:
