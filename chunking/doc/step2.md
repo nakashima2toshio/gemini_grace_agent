@@ -1,8 +1,16 @@
-# Step2: 意味的分割（Semantic Chunking）
+## Step2: 意味的分割（Semantic Chunking）
 
-**バージョン:** v3.1.0
-**対象ファイル:** `chunking/step2.py`（同期版・単体テスト用）
-**共通モジュール:** `chunking/models.py`, `chunking/prompts.py`
+本番チャンクは、「csv_text_to_chunks_text_csv.py」のコマンドです。
+ここでは、上記コマンドの
+RAGの[チャンク分割]の4つのステージのStep2（意味的分割）の説明をします。
+
+- Step1（階層構造化）
+- Step2（意味的分割）
+- Step3（文脈連続性チェック）
+- 非同期・並列処理
+
+##### 全ソースは： GitHubにあります。
+- URL: https://github.com/nakashima2toshio/gemini_grace_agent
 
 ---
 

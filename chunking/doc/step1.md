@@ -1,7 +1,9 @@
 ## Step1: 階層構造化（Hierarchical Split）
 
-ここでは、
+本番チャンクは、「csv_text_to_chunks_text_csv.py」のコマンドです。
+ここでは、上記コマンドの
 RAGの[チャンク分割]の4つのステージのStep1(階層構造化)の説明をします。
+
 - Step1（階層構造化）
 - Step2（意味的分割）
 - Step3（文脈連続性チェック）
@@ -10,14 +12,19 @@ RAGの[チャンク分割]の4つのステージのStep1(階層構造化)の説�
 ##### 全ソースは： GitHubにあります。
 - URL: https://github.com/nakashima2toshio/gemini_grace_agent
 [環境準備（超簡易版）]：
-自環境にcloneし、
-・[ライブラリー]pip install -r requirements.txt　でライブラリを入れてください。
-・[docker compose]プロジェクト・ルートのdocker-compose/ 以下でmemo.txt を見ながらRedis, Qdrantを立ち上げてください。
-・Gemini APIのKeyを取得し、.evn と環境変数に登録してください。
+- 上記リポジトリーを自環境にcloneし、
+- [ライブラリー]pip install -r requirements.txt　でライブラリを入れてください。
+- [docker compose]プロジェクト・ルートのdocker-compose/ 以下で
+memo.txt を参考として、docker composeで、Redis, Qdrantを立ち上げてください。
+- Gemini APIのKeyを取得し、.evn と環境変数に登録してください。
+
 ---
-開発環境（確認環境）：他の環境の方は、Anthropic(Claude code)やGemini, ChatGPTに確認してください。
-・Macbook air M2, 24Gバイトメモリー
-・PyCharm pro, Gemini API, Python, Streamlit, docker compose(Redis, Qdrant)
+
+##### 開発環境（確認環境）：他の環境の方は、Anthropic(Claude code)やGemini, ChatGPTに確認してください。
+
+- Macbook air M2, 24Gバイトメモリー
+- PyCharm pro, Gemini API, Python, Streamlit, docker compose(Redis, Qdrant)
+
 ---
 
 ## 📋 目次
@@ -49,6 +56,7 @@ RAGの[チャンク分割]の4つのステージのStep1(階層構造化)の説�
 
 機能確認の方法：各ステップの確認プログラムで、機能を確認しましょう。
 [確認]:
+
 - 本番チャンクは、「csv_text_to_chunks_text_csv.py」のCLIでバッチ処理です。
 - 最終確認は、[agent_rag.py]のstreamlit[GUI]で、実施します。
 - 機能を確認するため「csv_text_to_chunks_text_csv.py」プログラムのstep1, step2, step3の処理を抜き出し、
@@ -123,20 +131,22 @@ graph TD
 ### 2.1 目的
 
 **文章の物理構造（空行による段落分け）を尊重した分割**を行います。
+
 - 段落（パラグラフ）への分割は、regexでも可能ですが、
-ここでは、後の拡張性、改善を考慮し（LLM）を利用し分割しています。
+  LLM（ここではGemini）のAPIを使う練習ですね。
+  ここでは、後の拡張性、改善を考慮し（LLM）を利用し分割しています。
 
 #### [重要な前提]：
 - 入力文章はCSV形式をデフォルトとしています。
-- ・人がこのCSVを作成した時に、「csvの行には、なんらかの意味があるはずだ」、が前提となっています。
+- 人がこのCSVを作成した時に、「csvの行には、なんらかの意味があるはずだ」、が前提となっています。
 - 全く改行のないテキストも(オプションで指定)入力できますが、
 - 現在のLLM(モデル)で、これを段落に分割するには(かなりの計算パワ＝料金)がかかるので、
 - 入力文章は、CSVをおすすめします。
 
 > ⚠️ **重要**: Step1は**空行（`\n\n`）のみ**を分割基準とします。
 > 章の変わり目（第1章→第2章）では**分割しません**。
-[注] 入力文章により、「章立てがある」、「Chapter、Sectionがある、、、」など
-入力文章の特徴により、この部分に対応する[プロンプト-> prompts.py]は変更する必要があります。
+> [注] 入力文章により、「章立てがある」、「Chapter、Sectionがある、、、」など
+> 入力文章の特徴により、この部分に対応する[プロンプト-> prompts.py]は変更する必要があります。
 
 単純な文字数分割では、以下の問題が発生します：
 
