@@ -47,6 +47,12 @@ async def step1_hierarchical_split(text: str, client: genai.Client, block_size: 
     テキストを段落単位に分割する。
     見出し（第X章など）と本文は分離せず、1つの段落としてまとめる。
 
+    【分割ルール】
+    - 空行（\\n\\n）が存在する箇所のみで分割
+    - 見出しと直後の本文は空行がなければ同じ段落に
+    - 章が変わっても空行がなければ分割しない
+    - 改行（\\n）だけでは分割しない
+
     【処理の流れ】
     1. 入力テキストをブロック（2000文字単位）に分割
     2. 各ブロックをGemini APIに送信し、段落構造を抽出
@@ -76,8 +82,9 @@ async def step1_hierarchical_split(text: str, client: genai.Client, block_size: 
         # プロンプト作成
         prompt = f"{PARAGRAPH_SEPARATION_PROMPT}\n\n【入力テキスト】\n{block}"
 
-        # API呼び出し（同期だが、awaitで他の処理に制御を渡せる）
+        # Gemini API 呼び出し（同期だが、awaitで他の処理に制御を渡せる）
         # gemini-2.5-flash: 最新の安定版、高いレート制限とパフォーマンス
+        # URL: https://ai.google.dev/gemini-api/docs/text-generation?lang=python
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
@@ -115,6 +122,11 @@ async def step2_semantic_chunking(paragraphs: list[str], client: genai.Client) -
     段落を意味的な類似度に基づいて再構成する。
     話題の転換点で分割し、形式的な改行ではなく意味のまとまりで分割する。
 
+    【Step1との違い】
+    - Step1: 物理的構造（空行のみ）で分割
+    - Step2: 意味的な類似度（話題の転換）で分割
+    - 章の変わり目（第1章→第2章）はStep2で分割
+
     【処理の流れ】
     1. Step1の出力（段落リスト）を入力として受け取る
     2. 各段落をGemini APIに送信し、意味的なチャンクに分割
@@ -133,14 +145,16 @@ async def step2_semantic_chunking(paragraphs: list[str], client: genai.Client) -
 
     chunks = []
 
+    # Step1との違い: Step1はブロック（2000文字）単位、Step2は段落単位で処理
     for i, para in enumerate(paragraphs):
-        print(f"段落{i + 1}/{len(paragraphs)} 処理中...")
+        print(f"段落 {i + 1}/{len(paragraphs)} 処理中...")
 
         # プロンプト作成
         prompt = f"{SEMANTIC_CHUNKING_PROMPT}\n\n【入力テキスト】\n{para}"
 
-        # API呼び出し
+        # Gemini API 呼び出し（同期）
         # gemini-2.5-flash: 最新の安定版、高いレート制限
+        # URL: https://ai.google.dev/gemini-api/docs/text-generation?lang=python
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
@@ -156,7 +170,7 @@ async def step2_semantic_chunking(paragraphs: list[str], client: genai.Client) -
         for chunk_para in result.paragraphs:
             chunks.append(chunk_para.full_text)
 
-        print(f"  → {len(result.paragraphs)}チャンクに分割")
+        print(f"  → {len(result.paragraphs)}個のチャンクに分割")
 
         # 非同期のポイント: 他のタスクに制御を渡す
         await asyncio.sleep(0)  # イベントループに制御を戻す
@@ -176,6 +190,11 @@ async def step3_continuity_check(chunks: list[str], client: genai.Client) -> lis
     隣接するチャンク間の文脈連続性を判定し、
     連続している場合は結合、非連続の場合は分離する。
 
+    【Step2との違い】
+    - Step2: 分割（1段落→複数チャンク、チャンク数が増加）
+    - Step3: 結合（複数チャンク→少数チャンク、チャンク数が減少）
+    - Step3はStep2の「過分割」を修正する役割
+
     【処理の流れ】
     1. Step2の出力（チャンクリスト）を入力として受け取る
     2. 隣接ペアごとにGemini APIで連続性を判定
@@ -183,11 +202,11 @@ async def step3_continuity_check(chunks: list[str], client: genai.Client) -> lis
     4. 最終的なチャンクリストを返す
 
     【検証パターン】
-    - 前方依存: 「この」「それ」等の指示語で前を参照 → 結合
-    - 後方依存: 専門用語が未定義のまま使用 → 結合
-    - 話題転換: 完全に別のトピック → 分離
-    - 独立判定: 話題は同じでも単独で理解可能 → 分離
-    - 章構造: 章が変わった場合 → 分離
+    - 前方依存: 「この」「それ」等の指示語で前を参照 → 結合（True）
+    - 後方依存: 専門用語が未定義のまま使用 → 結合（True）
+    - 話題転換: 完全に別のトピック → 分離（False）
+    - 独立判定: 話題は同じでも単独で理解可能 → 分離（False）
+    - 章構造: 章が変わった場合 → 分離（False）
 
     Args:
         chunks: チャンクのリスト
@@ -204,23 +223,27 @@ async def step3_continuity_check(chunks: list[str], client: genai.Client) -> lis
         print("チャンク数が1以下のため、スキップ")
         return chunks
 
+    print(f"入力: {len(chunks)}チャンク")
+
     # 隣接ペアの連続性を判定
     continuity_flags = []
 
     for i in range(len(chunks) - 1):
-        print(f"ペア{i + 1}/{len(chunks) - 1} 判定中...")
+        print(f"ペア {i + 1}/{len(chunks) - 1} 判定中...")
 
         # プロンプト作成
         prompt = f"{CONTINUITY_CHECK_PROMPT}\n\n【前のテキスト】\n{chunks[i]}\n\n【次のテキスト】\n{chunks[i + 1]}"
 
-        # API呼び出し
+        # Gemini API 呼び出し（同期）
         # gemini-2.5-flash: 最新の安定版、高いレート制限
+        # URL: https://ai.google.dev/gemini-api/docs/text-generation?lang=python
+        # Step1, Step2との違い: Step3はContinuityResult（ブール値のみ）を使用
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_schema=ContinuityResult
+                response_schema=ContinuityResult  # ブール値のみを返す
             )
         )
 
@@ -228,21 +251,26 @@ async def step3_continuity_check(chunks: list[str], client: genai.Client) -> lis
         result = ContinuityResult.model_validate_json(response.text)
         continuity_flags.append(result.is_connected)
 
-        status = "連続→結合" if result.is_connected else "非連続→分離"
+        status = "連続 → 結合" if result.is_connected else "非連続 → 分離"
         print(f"  → {status}")
 
         # 非同期のポイント: 他のタスクに制御を渡す
         await asyncio.sleep(0)
 
     # マージ処理
-    print("\nマージ処理...")
+    print()
+    print("マージ処理...")
     final_chunks = [chunks[0]]
 
     for i, is_connected in enumerate(continuity_flags):
         if is_connected:
+            # 結合: 空行（\n\n）で連結し、段落構造を保持
             final_chunks[-1] += "\n\n" + chunks[i + 1]
+            print(f"  チャンク{i + 1} + チャンク{i + 2} → 結合")
         else:
+            # 分離: 新しいチャンクとして追加
             final_chunks.append(chunks[i + 1])
+            print(f"  チャンク{i + 2} → 新規追加")
 
     print(f"合計: {len(chunks)}チャンク → {len(final_chunks)}チャンク")
     return final_chunks
@@ -339,10 +367,48 @@ HNSWやIVFなどのインデックス手法を選択することで、このバ�
 画像認識や自然言語処理で革命的な成果を上げています。
 本章では、CNNとRNNの基本アーキテクチャを説明します。"""
 
+    # ============================================================
+    # テスト用テキスト2（空行なし版）
+    # Step1で1段落として認識され、Step2で意味的に分割されることを検証
+    # ============================================================
+    test_text2 = """RAG（Retrieval-Augmented Generation）は、検索と生成を組み合わせた手法です。
+外部知識ベースから関連情報を取得し、それをLLMのコンテキストとして渡します。
+2020年にFacebookが発表し、現在では多くのシステムで採用されています。
+この手法の最大の利点は、最新情報を反映できることです。
+それにより、LLM単体では対応できない時事的な質問にも回答可能になります。
+また、ハルシネーションを軽減する効果も報告されています。
+セマンティックチャンキングは、テキストを意味単位で分割する技術です。
+「チャンク」とは、分割されたテキストの各ブロックを指します。
+「埋め込み」（Embedding）は、テキストを数値ベクトルに変換したものです。
+チャンクサイズは検索精度に大きく影響します。
+小さすぎると文脈が失われ、埋め込みの品質が低下します。
+大きすぎると検索ノイズが増加し、関連性の低い情報が混入します。
+京都の紅葉は11月中旬から下旬が見頃です。
+清水寺や嵐山が特に人気のスポットとして知られています。
+混雑を避けるなら平日の早朝がおすすめです。
+沖縄の海は透明度が高く、シュノーケリングに最適です。
+那覇から車で約1時間の恩納村には美しいビーチが点在しています。
+夏季は台風に注意が必要ですが、それ以外の季節も温暖で過ごしやすいです。
+ベクトルデータベースは、高次元ベクトルを効率的に格納・検索するシステムです。
+代表的な製品にPinecone、Weaviate、Chromaなどがあります。
+ANN（Approximate Nearest Neighbor）アルゴリズムにより高速な類似検索を実現します。
+ANNの精度とスピードはトレードオフの関係にあります。
+HNSWやIVFなどのインデックス手法を選択することで、このバランスを調整できます。
+ベクトルDBの選定では、スケーラビリティとコストも重要な判断基準となります。
+第1章 機械学習入門
+機械学習は、データからパターンを学習するアルゴリズムの総称です。
+教師あり学習、教師なし学習、強化学習の3つに大別されます。
+本章では、これらの基本概念を解説しました。
+第2章 深層学習の基礎
+深層学習は、多層のニューラルネットワークを用いる機械学習の一手法です。
+画像認識や自然言語処理で革命的な成果を上げています。
+本章では、CNNとRNNの基本アーキテクチャを説明します。"""
+
     print("=" * 50)
     print("【入力テキスト】")
     print("=" * 50)
     print(test_text)
+    # print(test_text2)  # 空行なし版をテストする場合はこちらを使用
 
     print()
     print("【期待される処理結果】")
@@ -373,6 +439,7 @@ HNSWやIVFなどのインデックス手法を選択することで、このバ�
 
     # 全Stepを実行（awaitで順番に処理）
     final_chunks = await process_text(test_text, api_key)
+    # final_chunks = await process_text(test_text2, api_key)  # 空行なし版
 
     # 最終結果表示
     print("\n" + "=" * 50)

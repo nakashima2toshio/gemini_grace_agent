@@ -459,7 +459,26 @@ async def _step2_semantic_chunking(
         model: str,
         checkpoint_manager: CheckpointManager
 ) -> List[str]:
-    """Step 2: 意味的分割"""
+    """
+    Step 2: 意味的分割
+
+    段落を意味的な類似度に基づいて再構成する。
+    話題の転換点で分割し、形式的な改行ではなく意味のまとまりで分割する。
+
+    【Step1との違い】
+    - Step1: 物理的構造（空行のみ）で分割
+    - Step2: 意味的な類似度（話題の転換）で分割
+    - 章の変わり目（第1章→第2章）はStep2で分割
+
+    Args:
+        paragraphs: 段落のリスト（Step1の出力）
+        client: 非同期APIクライアント
+        model: 使用するLLMモデル名
+        checkpoint_manager: チェックポイント管理
+
+    Returns:
+        意味的に分割されたチャンクのリスト
+    """
     if checkpoint_manager.exists("step2"):
         logger.info("Step2: チェックポイントから再開")
         return checkpoint_manager.load("step2")
@@ -507,7 +526,33 @@ async def _step3_continuity_check(
         model: str,
         checkpoint_manager: CheckpointManager
 ) -> List[str]:
-    """Step 3: 文脈連続性チェック"""
+    """
+    Step 3: 文脈連続性チェック
+
+    隣接するチャンク間の文脈連続性を判定し、
+    連続している場合は結合、非連続の場合は分離する。
+
+    【Step2との違い】
+    - Step2: 分割（1段落→複数チャンク、チャンク数が増加）
+    - Step3: 結合（複数チャンク→少数チャンク、チャンク数が減少）
+    - Step3はStep2の「過分割」を修正する役割
+
+    【検証パターン】
+    - 前方依存: 「この」「それ」等の指示語で前を参照 → 結合（True）
+    - 後方依存: 専門用語が未定義のまま使用 → 結合（True）
+    - 話題転換: 完全に別のトピック → 分離（False）
+    - 独立判定: 話題は同じでも単独で理解可能 → 分離（False）
+    - 章構造: 章が変わった場合 → 分離（False）
+
+    Args:
+        chunks: チャンクのリスト（Step2の出力）
+        client: 非同期APIクライアント
+        model: 使用するLLMモデル名
+        checkpoint_manager: チェックポイント管理
+
+    Returns:
+        連続性に基づいて結合/分離された最終チャンクリスト
+    """
     if checkpoint_manager.exists("step3"):
         logger.info("Step3: チェックポイントから再開")
         return checkpoint_manager.load("step3")
@@ -537,15 +582,21 @@ async def _step3_continuity_check(
         total=len(tasks)
     )
 
+    # マージ処理
+    logger.debug("マージ処理...")
     final_chunks = [chunks[0]]
     for i, result_json in enumerate(results):
         if result_json:
             try:
                 result = ContinuityResult.model_validate_json(result_json)
                 if result.is_connected:
+                    # 結合: 空行（\n\n）で連結し、段落構造を保持
                     final_chunks[-1] += "\n\n" + chunks[i + 1]
+                    logger.debug(f"  チャンク{i + 1} + チャンク{i + 2} → 結合")
                 else:
+                    # 分離: 新しいチャンクとして追加
                     final_chunks.append(chunks[i + 1])
+                    logger.debug(f"  チャンク{i + 2} → 新規追加")
             except Exception as e:
                 logger.warning(f"パース失敗: {e}")
                 final_chunks.append(chunks[i + 1])
@@ -724,3 +775,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

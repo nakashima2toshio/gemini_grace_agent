@@ -32,11 +32,9 @@ from chunking.prompts import CONTINUITY_CHECK_PROMPT
 def step3_continuity_check(chunks: list[str], api_key: str) -> list[str]:
     """
     隣接チャンク間の連続性をチェックし結合/分離する（Step3のコア機能）
-
     Args:
         chunks: チャンクのリスト（Step2の出力）
         api_key: Gemini API キー
-
     Returns:
         連続性に基づいて結合/分離された最終チャンクリスト
     """
@@ -59,6 +57,7 @@ def step3_continuity_check(chunks: list[str], api_key: str) -> list[str]:
 
         # Gemini API 呼び出し（同期）
         # gemini-2.5-flash: 最新の安定版、高いレート制限
+        # # URL: https://ai.google.dev/gemini-api/docs/text-generation?lang=python
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,

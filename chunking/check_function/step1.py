@@ -32,12 +32,10 @@ from chunking.prompts import PARAGRAPH_SEPARATION_PROMPT
 def step1_hierarchical_split(text: str, api_key: str, block_size: int = 2000) -> list[str]:
     """
     テキストを段落単位に分割する（Step1のコア機能）
-
     Args:
         text: 入力テキスト
         api_key: Gemini API キー
         block_size: ブロックサイズ（文字数）
-
     Returns:
         段落のリスト
     """
@@ -57,6 +55,7 @@ def step1_hierarchical_split(text: str, api_key: str, block_size: int = 2000) ->
 
         # Gemini API 呼び出し（同期）
         # gemini-2.5-flash: 最新の安定版、高いレート制限とパフォーマンス
+        # URL: https://ai.google.dev/gemini-api/docs/text-generation?lang=python
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
@@ -166,7 +165,8 @@ HNSWやIVFなどのインデックス手法を選択することで、このバ�
     print("=" * 50)
     print("【入力テキスト】")
     print("=" * 50)
-    print(test_text)
+    # print(test_text)
+    print(test_text2)
     print()
 
     print("【期待される分割結果】")
@@ -204,7 +204,8 @@ HNSWやIVFなどのインデックス手法を選択することで、このバ�
     print("=" * 50)
     print("【Step1 実行】")
     print("=" * 50)
-    paragraphs = step1_hierarchical_split(test_text, api_key)
+    # paragraphs = step1_hierarchical_split(test_text, api_key)
+    paragraphs = step1_hierarchical_split(test_text2, api_key)
 
     # 結果表示
     print()

@@ -4,8 +4,9 @@
 
 **✨ 最新版の特徴**:
 - **スマートQ/A生成がデフォルト**：`SmartQAGenerator`による動的Q/A数決定
+- **CSV行結合オプション追加**：`--combine-rows` + `--block-size` で複数行をチャンク化
+- **テキストカラム指定**：`--text-column` で任意のカラムを指定可能
 - LLMが内容の重要度・複雑さを分析し、最適なQ/A数（0-5個）を自動決定
-- トピック明示化による高品質なQ/A生成
 - 従来方式（トークン数ベース）への切り替えも可能
 
 ---
@@ -32,12 +33,19 @@
 
 - **ファイル名**: `make_qa_register_qdrant.py`
 - **配置場所**: `qa_qdrant/make_qa_register_qdrant.py`
-- **バージョン**: v2.1（スマート生成デフォルト化版）
+- **バージョン**: v2.2（CSV処理オプション追加版）
 - **説明**: Q/A生成からQdrant登録までを完結する統合ツール
 
 ### 改修履歴
 
-**v2.1（最新）- スマート生成デフォルト化**:
+**v2.2（最新）- CSV処理オプション追加**:
+- ✨ `--text-column` オプション追加（テキストカラム名指定、デフォルト: text）
+- ✨ `--combine-rows` オプション追加（複数行を結合してチャンク化）
+- ✨ `--block-size` オプション追加（結合する行数、デフォルト: 400）
+- ✨ `combine_rows_to_chunks()` 関数を追加
+- CSV入力時の柔軟なデータ前処理が可能に
+
+**v2.1 - スマート生成デフォルト化**:
 - ✨ `SmartQAGenerator`をデフォルトで使用
 - ✨ LLMによる動的Q/A数決定（0-5個）
 - ✨ 内容の重要度・複雑さを考慮した高品質生成
@@ -67,6 +75,13 @@
   - 高速処理・低コスト
   - 大規模データセット向け
 
+✅ **柔軟なCSV入力処理** 🆕
+
+- `--text-column`：テキストを含むカラム名を指定（デフォルト: text）
+- `--combine-rows`：複数行を結合してチャンク化
+- `--block-size`：結合する行数を指定（デフォルト: 400）
+- 小さなレコードが多いCSVを効率的にQ/A生成可能
+
 ✅ **2つの入力形式に対応**
 
 - 事前定義データセット（`config.py`で定義済み）
@@ -75,11 +90,12 @@
 ✅ **インテリジェントな入力処理**
 
 - テキストファイル → 自動的にチャンク作成 + Q/A生成
-- CSV（テキストのみ）→ チャンク作成 + Q/A生成
+- CSV（テキストのみ）→ チャンク作成 + Q/A生成（行結合オプション対応）
 - CSV（Q/Aペアあり）→ Phase 1をスキップして直接登録
 
 ✅ **2フェーズの自動実行**
 
+- **Phase 0**: CSV行結合処理（`--combine-rows`指定時のみ）🆕
 - **Phase 1**: Q/Aペア生成（`QAPipeline` + `SmartQAGenerator`）
 - **Phase 2**: Qdrant登録（Embedding + インデックス化）
 
@@ -317,6 +333,12 @@ AES-256暗号化アルゴリズムは、対称鍵暗号方式の一種で、
 
 ```text
 make_qa_register_qdrant.py
+    ├─ Phase 0: CSV行結合処理（--combine-rows指定時）🆕
+    │   └─ combine_rows_to_chunks()
+    │       ├─ pandas.read_csv()
+    │       ├─ block_size行ごとに結合
+    │       └─ combined_chunks_YYYYMMDD_HHMMSS.csv 出力
+    │
     ├─ Phase 1: Q/A生成
     │   ├─ qa_generation/pipeline.py (QAPipeline)
     │   │   ├─ qa_generation/structure.py (create_document_chunks)
@@ -342,6 +364,7 @@ make_qa_register_qdrant.py
 | 関数/クラス | 説明 |
 |-----------|------|
 | `normalize_source_filename()` | ファイル名から日時サフィックスを除去 |
+| `combine_rows_to_chunks()` 🆕 | CSVの複数行を結合してチャンクCSVを作成 |
 | `run_registration()` | Phase 2（Qdrant登録）の実行 |
 | `main()` | CLIエントリーポイント |
 
@@ -397,6 +420,15 @@ make_qa_register_qdrant.py
 │            make_qa_register_qdrant.py                   │
 │                                                         │
 │  ┌───────────────────────────────────────────────┐    │
+│  │  Phase 0: CSV行結合処理（--combine-rows時のみ）🆕│    │
+│  │                                                 │    │
+│  │  --combine-rows 指定時:                         │    │
+│  │    ├─ --text-column で指定カラムを読み込み     │    │
+│  │    ├─ --block-size 行ごとに結合               │    │
+│  │    └─ combined_chunks_YYYYMMDD_HHMMSS.csv 作成 │    │
+│  └───────────────────────────────────────────────┘    │
+│                          ↓                             │
+│  ┌───────────────────────────────────────────────┐    │
 │  │  Phase 1: Q/A Generation Pipeline              │    │
 │  │                                                 │    │
 │  │  入力ファイル判定                                │    │
@@ -427,6 +459,37 @@ make_qa_register_qdrant.py
 │                          ↓                             │
 │                  ✅ 完了                                │
 └─────────────────────────────────────────────────────────┘
+```
+
+### Phase 0: CSV行結合処理の詳細フロー 🆕
+
+```
+--combine-rows 指定時のみ実行
+
+入力CSV
+    ↓
+【1】CSVロード
+    └─ pd.read_csv()
+    ↓
+【2】カラム確認
+    ├─ --text-column で指定されたカラムを使用
+    └─ カラムが存在しない場合はエラー
+    ↓
+【3】行結合処理
+    ├─ --block-size 行ごとに結合
+    ├─ 空行をフィルタリング
+    └─ 結合したテキストを "\n\n" で連結
+    ↓
+【4】チャンクCSV出力
+    ├─ chunk_id: 連番
+    ├─ text: 結合されたテキスト
+    ├─ start_row: 開始行番号
+    ├─ end_row: 終了行番号
+    └─ row_count: 結合した行数
+    ↓
+出力: combined_chunks_YYYYMMDD_HHMMSS.csv
+    ↓
+Phase 1へ（この一時CSVを入力として使用）
 ```
 
 ### Phase 1: Q/A生成の詳細フロー（スマート生成）
@@ -528,6 +591,9 @@ Q/A CSV
 ```
 1. 入力データ（テキスト/CSV）
     ↓
+1.5 行結合処理（--combine-rows時のみ）🆕
+    └─ 複数行を block_size ごとに結合
+    ↓
 2. DataFrame
     columns: [Combined_Text, title, ...]
     ↓
@@ -585,11 +651,15 @@ Q/A CSV
 └────────────────┘
         │
         ├─ .txt file
-        ├─ .csv (text)
-        ├─ .csv (Q/A)
-        └─ dataset
-        │
-        ↓
+        ├─ .csv (text)  ─────┐
+        ├─ .csv (Q/A)        │ --combine-rows 🆕
+        └─ dataset           ↓
+        │            ┌────────────────┐
+        │            │ 行結合処理      │
+        │            │ (block_size行) │
+        │            └────────────────┘
+        │                    │
+        ↓                    ↓
 ┌────────────────┐
 │   DataFrame    │
 └────────────────┘
@@ -694,6 +764,32 @@ python make_qa_register_qdrant.py \
   --recreate
 ```
 
+#### オプション: 行結合処理 🆕
+
+小さなレコードが多いCSV（例: ニュース記事1行=1レコード）を効率的に処理する場合：
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file news.csv \
+  --collection news \
+  --text-column text \
+  --combine-rows \
+  --block-size 400 \
+  --recreate
+```
+
+**処理内容**:
+1. CSVの `text` カラムを読み込み
+2. 400行ごとに結合して1つのチャンクに
+3. 結合されたチャンクからQ/A生成
+
+**行結合の効果**:
+
+| 状態 | 行数 | チャンク数 | Q/A生成効率 |
+|------|------|-----------|------------|
+| 結合前 | 10,000行 | 10,000チャンク | 低い（1行=1チャンクで内容が薄い） |
+| 結合後（block_size=400） | 10,000行 | 25チャンク | 高い（400行=1チャンクで十分な内容） |
+
 ### 3. CSVファイル（Q/Aペア既存）
 
 **形式**:
@@ -765,6 +861,9 @@ YES                    NO
 │  └→ チャンク+Q/A（スマート生成）
 │
 ├─ .csv
+│  ├─ --combine-rows 指定? 🆕
+│  │  └→ 行結合処理 → チャンク+Q/A
+│  │
 │  ├─ カラムチェック
 │  │  ├─ question & answer あり
 │  │  │  └→ Phase 1スキップ
@@ -846,7 +945,60 @@ Phase 2: Qdrant Registration
 ✅ Complete!
 ```
 
-#### パターン2: 従来方式で処理（大規模データ向け）
+#### パターン2: CSV行結合オプションの使用 🆕
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file OUTPUT/cc_news_5per.csv \
+  --collection cc_news_5per \
+  --use-celery \
+  --model gemini-2.5-flash \
+  --concurrency 4 \
+  --text-column text \
+  --combine-rows \
+  --block-size 400 \
+  --recreate
+```
+
+**実行ログ**:
+
+```
+==============================================================
+🆕 Q/A生成モード: スマート生成（デフォルト）
+   - LLMによる動的Q/A数決定（0-5個）
+   - 内容の重要度・複雑さを考慮
+   - 主要トピックを明示的にカバー
+   ※ 従来方式に戻す場合: --no-smart-generation
+==============================================================
+
+📦 CSV行結合設定:
+   - テキストカラム: text
+   - ブロックサイズ: 400 行
+==============================================================
+
+🔧 Celery並列処理設定:
+   - 並列タスク数 (concurrency): 4
+   - ワーカープロセス数チェック: 1
+   ※ start_celery.sh -c と同じ値を推奨
+==============================================================
+
+Phase 1: QA Generation Pipeline
+==============================================================
+
+📁 入力ファイル: OUTPUT/cc_news_5per.csv
+✅ CSVファイル確認: 5000 行
+   カラム: ['text', 'title', 'date']
+📦 --combine-rows が指定されました - 行結合処理を実行
+📦 行結合処理を開始
+   - テキストカラム: text
+   - ブロックサイズ: 400 行
+   - 入力行数: 5000
+   - 生成チャンク数: 13
+   - 出力ファイル: qa_output/pipeline/combined_chunks_20250124_123456.csv
+...
+```
+
+#### パターン3: 従来方式で処理（大規模データ向け）
 
 ```bash
 python make_qa_register_qdrant.py \
@@ -880,14 +1032,14 @@ Phase 1: QA Generation Pipeline
 
 ```bash
 # 1. Celeryワーカー起動（別ターミナル）
-celery -A celery_tasks worker --loglevel=info --concurrency=16
+./start_celery.sh restart -c 8 --flower
 
 # 2. 並列処理で実行
 python make_qa_register_qdrant.py \
   --input-file large_doc.txt \
   --collection large_docs \
   --use-celery \
-  --celery-workers 16 \
+  --concurrency 8 \
   --recreate
 ```
 
@@ -933,6 +1085,14 @@ python make_qa_register_qdrant.py \
 | `--dataset` | str | 事前定義されたデータセット名（`config.py`参照） |
 | `--input-file` | str | 入力ファイルのパス（`.txt`, `.csv`） |
 
+### CSV処理パラメータ（CSVファイル入力時）🆕
+
+| オプション | 型 | デフォルト | 説明 |
+|----------|---|----------|------|
+| `--text-column` | str | `text` | テキストを含むカラム名 |
+| `--combine-rows` | flag | False | 複数行を結合してチャンク化する |
+| `--block-size` | int | 400 | 結合する行数（`--combine-rows`指定時に有効） |
+
 ### Q/A生成パラメータ
 
 | オプション | 型 | デフォルト | 説明 |
@@ -942,7 +1102,8 @@ python make_qa_register_qdrant.py \
 | **✨ `--use-smart-generation`** | **flag** | **True** | **スマートQ/A生成を使用（デフォルト有効）** |
 | **✨ `--no-smart-generation`** | **flag** | **-** | **従来方式に切り替え（トークン数ベース）** |
 | `--use-celery` | flag | False | Celery並列処理を使用 |
-| `--celery-workers` | int | 8 | Celeryワーカー数 |
+| `-c`, `--concurrency` | int | 8 | 並列タスク数（start_celery.sh -c と同じ値を推奨） |
+| `--celery-workers` | int | 1 | (非推奨) Celeryワーカープロセス数チェック用 |
 | `--batch-chunks` | int | 3 | 1回のAPIで処理するチャンク数 |
 | `--merge-chunks` | flag | True | 小さいチャンクを統合（デフォルト有効） |
 | `--overlap-tokens` | int | 0 | チャンク間の重複トークン数 |
@@ -993,7 +1154,7 @@ python make_qa_register_qdrant.py \
   --max-docs 10000 \
   --no-smart-generation \
   --use-celery \
-  --celery-workers 16 \
+  --concurrency 16 \
   --recreate
 ```
 
@@ -1024,7 +1185,7 @@ python make_qa_register_qdrant.py \
   --collection wiki_ja \
   --max-docs 500 \
   --use-celery \
-  --celery-workers 16 \
+  --concurrency 16 \
   --recreate
 ```
 
@@ -1066,6 +1227,43 @@ python make_qa_register_qdrant.py \
   --no-smart-generation \
   --recreate
 ```
+
+### 例7: CSV行結合オプションの使用 🆕
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file OUTPUT/cc_news_5per.csv \
+  --collection cc_news_5per \
+  --use-celery \
+  --model gemini-2.5-flash \
+  --concurrency 4 \
+  --text-column text \
+  --combine-rows \
+  --block-size 400 \
+  --recreate
+```
+
+**期待される動作**:
+- ✅ CSVの `text` カラムから400行ずつ結合
+- ✅ 結合されたテキストからQ/A生成
+- ✅ 小さなレコードが多いCSVを効率的に処理
+
+### 例8: カスタムテキストカラムの指定 🆕
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file articles.csv \
+  --collection articles \
+  --text-column content \
+  --combine-rows \
+  --block-size 200 \
+  --recreate
+```
+
+**期待される動作**:
+- ✅ `content` カラムをテキストとして使用
+- ✅ 200行ごとに結合してチャンク化
+- ✅ デフォルトの `text` カラム以外にも対応
 
 ---
 
@@ -1136,7 +1334,7 @@ python make_qa_register_qdrant.py \
   --max-docs 50000 \
   --no-smart-generation \
   --use-celery \
-  --celery-workers 24 \
+  --concurrency 24 \
   --recreate
 ```
 
@@ -1164,7 +1362,7 @@ python make_qa_register_qdrant.py \
   --collection news \
   --no-smart-generation \
   --use-celery \
-  --celery-workers 16 \
+  --concurrency 16 \
   --recreate
 ```
 
@@ -1178,6 +1376,23 @@ python make_qa_register_qdrant.py \
   --input-file production_data.csv \
   --collection production \
   --no-smart-generation \
+  --recreate
+```
+
+### CSV行結合を使うべき場合 🆕
+
+#### シナリオ: 小さなレコードが多いCSV
+
+- **使用例**: ニュース記事、ツイート、短文データ
+- **理由**: 1行=1レコードでは内容が薄すぎてQ/A生成の効率が悪い
+
+```bash
+python make_qa_register_qdrant.py \
+  --input-file news_articles.csv \
+  --collection news \
+  --text-column text \
+  --combine-rows \
+  --block-size 400 \
   --recreate
 ```
 
@@ -1235,6 +1450,12 @@ python make_qa_register_qdrant.py \
 
 - スマート生成の場合、`--batch-chunks=1`を推奨（各チャンクを個別に分析）
 - 従来方式の場合、`--batch-chunks=3`（デフォルト）で問題なし
+
+### 5. CSV行結合時の注意 🆕
+
+- `--combine-rows` は `--input-file` が CSV の場合のみ有効
+- `--text-column` で指定したカラムが存在しない場合はエラー
+- `--block-size` が大きすぎると1チャンクあたりのテキスト量が多くなりすぎる可能性
 
 ---
 
@@ -1305,7 +1526,7 @@ RuntimeError: Celery workers are not running
 **解決策**:
 ```bash
 # 1. ワーカーを起動（別ターミナル）
-celery -A celery_tasks worker --loglevel=info --concurrency=8
+./start_celery.sh restart -c 8 --flower
 
 # 2. ワーカー数を確認
 celery -A celery_tasks inspect active
@@ -1380,6 +1601,54 @@ head -n 1 your_file.csv
 # - question と answer （Q/Aペアの場合）
 ```
 
+### 問題8: 「カラム 'xxx' が見つかりません」エラー 🆕
+
+**症状**:
+```
+ValueError: カラム 'text' が見つかりません。利用可能: ['content', 'title', ...]
+```
+
+**原因**:
+- `--text-column` で指定したカラム名がCSVに存在しない
+
+**解決策**:
+```bash
+# CSVのカラムを確認
+head -n 1 your_file.csv
+
+# 正しいカラム名を指定
+python make_qa_register_qdrant.py \
+  --input-file your_file.csv \
+  --text-column content \
+  --combine-rows \
+  --collection my_docs \
+  --recreate
+```
+
+### 問題9: 行結合後のチャンク数が少なすぎる 🆕
+
+**症状**:
+```
+📦 行結合処理を開始
+   - 入力行数: 10000
+   - 生成チャンク数: 2
+```
+
+**原因**:
+- `--block-size` が大きすぎる
+
+**解決策**:
+```bash
+# block-size を小さくする
+python make_qa_register_qdrant.py \
+  --input-file your_file.csv \
+  --text-column text \
+  --combine-rows \
+  --block-size 200 \  # 400 → 200 に変更
+  --collection my_docs \
+  --recreate
+```
+
 ---
 
 ## 📚 関連ドキュメント
@@ -1396,13 +1665,14 @@ head -n 1 your_file.csv
 
 | バージョン | 日付 | 変更内容 |
 |----------|------|---------|
-| **v2.1** | 2025-01-20 | ✨ スマート生成デフォルト化、`--use-smart-generation`/`--no-smart-generation`追加 |
+| **v2.2** | 2025-01-24 | ✨ CSV処理オプション追加（`--text-column`, `--combine-rows`, `--block-size`） |
+| v2.1 | 2025-01-20 | ✨ スマート生成デフォルト化、`--use-smart-generation`/`--no-smart-generation`追加 |
 | v2.0 | 2025-01-19 | 入力処理統一、`--input-file`追加、CSVカラム自動判定 |
 | v1.0 | 2025-01-15 | 初版リリース |
 
 ---
 
 **作成日**: 2025-01-20
-**最終更新**: 2025-01-20
-**バージョン**: v2.1
+**最終更新**: 2025-01-24
+**バージョン**: v2.2
 **作成者**: AI Assistant

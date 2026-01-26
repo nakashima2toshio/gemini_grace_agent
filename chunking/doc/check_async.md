@@ -1,5 +1,9 @@
 # Python 非同期処理（async/await）解説
 
+**バージョン:** v3.1.0
+**対象ファイル:** `check_async.py`
+**共通モジュール:** `chunking/models.py`, `chunking/prompts.py`
+
 ## 対象読者
 ソフトウェア開発の初級〜中級者で、Pythonの基本文法は理解している方
 
@@ -116,37 +120,107 @@ main()
         └── step3_continuity_check()    # チャンク → 最終チャンク
 ```
 
-### Step1: 基本的な非同期関数
+### 各Stepの役割と違い
+
+| Step | 入力 | 出力 | 変化 | スキーマ |
+|:----:|------|------|:----:|---------|
+| Step1 | テキスト | 段落リスト | 構造化 | StructuralResult |
+| Step2 | 段落リスト | チャンクリスト | 増加 | StructuralResult |
+| Step3 | チャンクリスト | 最終チャンク | 減少 | ContinuityResult |
+
+### Step1: 階層構造化（段落分割）
 
 ```python
-async def step1_hierarchical_split(text: str, client: genai.Client) -> list[str]:
+async def step1_hierarchical_split(text: str, client: genai.Client, block_size: int = 2000) -> list[str]:
     """
-    async def で非同期関数として定義
+    テキストを段落単位に分割する
+
+    【目的】
+    テキストを段落単位に分割する。
+    見出し（第X章など）と本文は分離せず、1つの段落としてまとめる。
+
+    【分割ルール】
+    - 空行（\\n\\n）が存在する箇所のみで分割
+    - 見出しと直後の本文は空行がなければ同じ段落に
+    - 章が変わっても空行がなければ分割しない
+    - 改行（\\n）だけでは分割しない
     """
-    # プロンプト作成（通常の同期処理）
-    prompt = f"{PARAGRAPH_SEPARATION_PROMPT}\n\n【入力テキスト】\n{text}"
+    # テキストをブロックに分割
+    blocks = [text[i:i + block_size] for i in range(0, len(text), block_size)]
 
-    # API呼び出し（ここでは同期的に実行される）
-    response = client.models.generate_content(...)
+    paragraphs = []
+    for i, block in enumerate(blocks):
+        # プロンプト作成
+        prompt = f"{PARAGRAPH_SEPARATION_PROMPT}\n\n【入力テキスト】\n{block}"
 
-    # 結果を返す
+        # Gemini API 呼び出し（同期だが、awaitで他の処理に制御を渡せる）
+        # gemini-2.5-flash: 最新の安定版、高いレート制限とパフォーマンス
+        # URL: https://ai.google.dev/gemini-api/docs/text-generation?lang=python
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=StructuralResult
+            )
+        )
+
+        # パース
+        result = StructuralResult.model_validate_json(response.text)
+
+        # 段落を抽出
+        for para in result.paragraphs:
+            paragraphs.append(para.full_text)
+
+        # 非同期のポイント: 他のタスクに制御を渡す
+        await asyncio.sleep(0)
+
     return paragraphs
 ```
 
-**ポイント**: この関数自体は同期的なAPI呼び出しをしていますが、
-`async def`で定義することで、呼び出し元が`await`で待てるようになります。
+**ポイント**:
+- テキストを2000文字単位のブロックに分割して処理
+- `async def`で定義することで、呼び出し元が`await`で待てるようになる
+- 空行（`\n\n`）のみを分割基準とする
 
-### Step2: ループ内での非同期
+### Step2: 意味的分割
 
 ```python
 async def step2_semantic_chunking(paragraphs: list[str], client: genai.Client) -> list[str]:
+    """
+    段落を意味的なチャンクに分割する
+
+    【目的】
+    段落を意味的な類似度に基づいて再構成する。
+    話題の転換点で分割し、形式的な改行ではなく意味のまとまりで分割する。
+
+    【Step1との違い】
+    - Step1: 物理的構造（空行のみ）で分割
+    - Step2: 意味的な類似度（話題の転換）で分割
+    - 章の変わり目（第1章→第2章）はStep2で分割
+    """
     chunks = []
 
+    # Step1との違い: Step1はブロック（2000文字）単位、Step2は段落単位で処理
     for i, para in enumerate(paragraphs):
-        # 各段落を処理
-        response = client.models.generate_content(...)
+        # プロンプト作成
+        prompt = f"{SEMANTIC_CHUNKING_PROMPT}\n\n【入力テキスト】\n{para}"
 
-        # パースしてチャンクを追加
+        # Gemini API 呼び出し（同期）
+        # gemini-2.5-flash: 最新の安定版、高いレート制限
+        # URL: https://ai.google.dev/gemini-api/docs/text-generation?lang=python
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=StructuralResult
+            )
+        )
+
+        # パース
+        result = StructuralResult.model_validate_json(response.text)
+
         for chunk_para in result.paragraphs:
             chunks.append(chunk_para.full_text)
 
@@ -161,31 +235,79 @@ async def step2_semantic_chunking(paragraphs: list[str], client: genai.Client) -
 - しかし、イベントループに「他にやることある？」と確認する
 - 長いループ処理中に、他のタスクに実行機会を与える
 
-### Step3: 条件分岐と非同期
+### Step3: 文脈連続性チェック
 
 ```python
 async def step3_continuity_check(chunks: list[str], client: genai.Client) -> list[str]:
+    """
+    隣接チャンク間の連続性をチェックし結合/分離する
+
+    【目的】
+    隣接するチャンク間の文脈連続性を判定し、
+    連続している場合は結合、非連続の場合は分離する。
+
+    【Step2との違い】
+    - Step2: 分割（1段落→複数チャンク、チャンク数が増加）
+    - Step3: 結合（複数チャンク→少数チャンク、チャンク数が減少）
+    - Step3はStep2の「過分割」を修正する役割
+
+    【検証パターン】
+    - 前方依存: 「この」「それ」等の指示語で前を参照 → 結合（True）
+    - 後方依存: 専門用語が未定義のまま使用 → 結合（True）
+    - 話題転換: 完全に別のトピック → 分離（False）
+    - 独立判定: 話題は同じでも単独で理解可能 → 分離（False）
+    - 章構造: 章が変わった場合 → 分離（False）
+    """
     # 早期リターン（チャンクが少ない場合）
     if len(chunks) <= 1:
         return chunks
 
     # 連続性判定のループ
+    continuity_flags = []
     for i in range(len(chunks) - 1):
-        response = client.models.generate_content(...)
+        # プロンプト作成
+        prompt = f"{CONTINUITY_CHECK_PROMPT}\n\n【前のテキスト】\n{chunks[i]}\n\n【次のテキスト】\n{chunks[i + 1]}"
+
+        # Gemini API 呼び出し（同期）
+        # gemini-2.5-flash: 最新の安定版、高いレート制限
+        # URL: https://ai.google.dev/gemini-api/docs/text-generation?lang=python
+        # Step1, Step2との違い: Step3はContinuityResult（ブール値のみ）を使用
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ContinuityResult  # ブール値のみを返す
+            )
+        )
+
+        result = ContinuityResult.model_validate_json(response.text)
         continuity_flags.append(result.is_connected)
 
         await asyncio.sleep(0)  # 他のタスクに制御を渡す
 
-    # マージ処理（通常の同期処理）
+    # マージ処理
+    print()
+    print("マージ処理...")
     final_chunks = [chunks[0]]
+
     for i, is_connected in enumerate(continuity_flags):
         if is_connected:
+            # 結合: 空行（\n\n）で連結し、段落構造を保持
             final_chunks[-1] += "\n\n" + chunks[i + 1]
+            print(f"  チャンク{i + 1} + チャンク{i + 2} → 結合")
         else:
+            # 分離: 新しいチャンクとして追加
             final_chunks.append(chunks[i + 1])
+            print(f"  チャンク{i + 2} → 新規追加")
 
     return final_chunks
 ```
+
+**マージ処理のポイント**:
+- `is_connected=True`: 前のチャンクに結合（空行`\n\n`で連結）
+- `is_connected=False`: 新しいチャンクとして追加
+- 結合/分離の状況をprint出力（デバッグ・学習用）
 
 ### process_text: 順次実行の例
 
@@ -222,7 +344,7 @@ async def main():
 
     # 結果表示
     for i, chunk in enumerate(final_chunks, 1):
-        print(f"--- 最終チャンク{i} ---")
+        print(f"--- 最終チャンク{i} ({len(chunk)}文字) ---")
         print(chunk)
 
 if __name__ == "__main__":
@@ -233,7 +355,7 @@ if __name__ == "__main__":
 
 ## 4. 同期版との比較
 
-### 同期版（check_step1.py）
+### 同期版（step1.py, step2.py, step3.py）
 
 ```python
 def step1_hierarchical_split(text: str, api_key: str) -> list[str]:
@@ -385,6 +507,7 @@ async def async_function():
 - 基本的な非同期関数の書き方
 - awaitを使った順次実行
 - `await asyncio.sleep(0)`でイベントループに制御を戻す方法
+- 各Stepの役割と違い（物理分割 vs 意味分割 vs 連続性判定）
 
 ### 次のステップ
 
@@ -393,9 +516,10 @@ async def async_function():
 - 非同期対応のHTTPクライアント（aiohttp, httpx）を使う
 
 ---
-## check_async.py 処理フロー図
 
-## 1. 全体処理フロー
+## 8. check_async.py 処理フロー図
+
+### 8.1 全体処理フロー
 
 ```mermaid
 flowchart TD
@@ -419,7 +543,7 @@ flowchart TD
     P5 --> F
 ```
 
-## 2. データ処理フロー
+### 8.2 データ処理フロー
 
 ```mermaid
 flowchart LR
@@ -428,17 +552,17 @@ flowchart LR
     end
 
     subgraph Step1["Step1: 階層構造化"]
-        T --> S1["段落分割"]
+        T --> S1["段落分割<br/>（空行のみで分割）"]
         S1 --> P["段落リスト<br/>[段落1, 段落2, ...]"]
     end
 
     subgraph Step2["Step2: 意味的分割"]
-        P --> S2["各段落を<br/>意味単位で分割"]
+        P --> S2["各段落を<br/>意味単位で分割<br/>（話題の転換点を検出）"]
         S2 --> C["チャンクリスト<br/>[chunk1, chunk2, ...]"]
     end
 
     subgraph Step3["Step3: 連続性チェック"]
-        C --> S3["隣接ペア判定<br/>& マージ"]
+        C --> S3["隣接ペア判定<br/>& マージ<br/>（過分割を修正）"]
         S3 --> F["最終チャンクリスト<br/>[final1, final2, ...]"]
     end
 
@@ -447,30 +571,32 @@ flowchart LR
     end
 ```
 
-## 3. 各Stepの詳細処理
+### 8.3 各Stepの詳細処理
 
-### Step1: 階層構造化（段落分割）
+#### Step1: 階層構造化（段落分割）
 
 ```mermaid
 flowchart TD
     subgraph Step1["step1_hierarchical_split()"]
-        A["入力テキスト"] --> B["プロンプト作成<br/>PARAGRAPH_SEPARATION_PROMPT"]
-        B --> C["Gemini API呼び出し<br/>model: gemini-2.0-flash"]
+        A["入力テキスト"] --> A1["ブロック分割<br/>（2000文字単位）"]
+        A1 --> B["プロンプト作成<br/>PARAGRAPH_SEPARATION_PROMPT"]
+        B --> C["Gemini API呼び出し<br/>model: gemini-2.5-flash"]
         C --> D["JSON レスポンス"]
         D --> E["StructuralResult<br/>でパース"]
         E --> F["paragraphs抽出<br/>para.full_text"]
-        F --> G["段落リスト返却"]
+        F --> G["await asyncio.sleep(0)<br/>制御を戻す"]
+        G --> H["段落リスト返却"]
     end
 ```
 
-### Step2: 意味的分割
+#### Step2: 意味的分割
 
 ```mermaid
 flowchart TD
     subgraph Step2["step2_semantic_chunking()"]
         A["段落リスト"] --> B{"各段落を<br/>ループ処理"}
         B --> C["プロンプト作成<br/>SEMANTIC_CHUNKING_PROMPT"]
-        C --> D["Gemini API呼び出し<br/>model: gemini-2.0-flash-exp"]
+        C --> D["Gemini API呼び出し<br/>model: gemini-2.5-flash"]
         D --> E["StructuralResult<br/>でパース"]
         E --> F["チャンク抽出"]
         F --> G["await asyncio.sleep(0)<br/>制御を戻す"]
@@ -479,7 +605,7 @@ flowchart TD
     end
 ```
 
-### Step3: 文脈連続性チェック
+#### Step3: 文脈連続性チェック
 
 ```mermaid
 flowchart TD
@@ -488,21 +614,20 @@ flowchart TD
         B -->|Yes| C["そのまま返却"]
         B -->|No| D{"隣接ペアを<br/>ループ処理"}
         D --> E["プロンプト作成<br/>CONTINUITY_CHECK_PROMPT"]
-        E --> F["Gemini API呼び出し"]
-        F --> G["ContinuityResult<br/>でパース"]
-        G --> H["is_connected<br/>フラグ保存"]
-        H --> I["await asyncio.sleep(0)"]
-        I --> D
+        E --> F["Gemini API呼び出し<br/>ContinuityResult使用"]
+        F --> G["is_connected<br/>フラグ保存"]
+        G --> H["await asyncio.sleep(0)"]
+        H --> D
         D -->|完了| J["マージ処理"]
         J --> K{"is_connected?"}
-        K -->|True| L["結合:<br/>前チャンク += 次チャンク"]
-        K -->|False| M["分離:<br/>新チャンクとして追加"]
+        K -->|True| L["結合:<br/>空行で連結<br/>print出力"]
+        K -->|False| M["分離:<br/>新チャンクとして追加<br/>print出力"]
         L --> N["最終チャンクリスト返却"]
         M --> N
     end
 ```
 
-## 4. 非同期処理の流れ
+### 8.4 非同期処理の流れ
 
 ```mermaid
 sequenceDiagram
@@ -516,8 +641,11 @@ sequenceDiagram
     M->>P: await process_text()
 
     P->>S1: await step1_hierarchical_split()
-    S1->>API: generate_content()
-    API-->>S1: response
+    loop 各ブロック
+        S1->>API: generate_content()
+        API-->>S1: response
+        S1->>S1: await asyncio.sleep(0)
+    end
     S1-->>P: paragraphs
 
     P->>S2: await step2_semantic_chunking()
@@ -534,66 +662,101 @@ sequenceDiagram
         API-->>S3: response
         S3->>S3: await asyncio.sleep(0)
     end
-    S3->>S3: マージ処理
+    S3->>S3: マージ処理（print出力付き）
     S3-->>P: final_chunks
 
     P-->>M: final_chunks
     M->>M: 結果表示
 ```
 
-## 5. データ変換の具体例
+### 8.5 データ変換の具体例
 
 ```mermaid
 flowchart TD
-    subgraph Input
-        I1[第1章AI]
-        I2[第2章ML+ラーメン]
-        I3[第3章DL]
+    subgraph Input["入力（test_text）"]
+        I1["段落1: RAG説明"]
+        I2["段落2: チャンキング説明"]
+        I3["段落3: 観光情報"]
+        I4["段落4: ベクトルDB説明"]
+        I5["段落5: 章構造"]
     end
 
-    subgraph Step1Out
-        P1[段落1]
-        P2[段落2]
-        P3[段落3]
+    subgraph Step1Out["Step1出力: 5段落"]
+        P1["段落1"]
+        P2["段落2"]
+        P3["段落3"]
+        P4["段落4"]
+        P5["段落5"]
     end
 
-    subgraph Step2Out
-        C1[chunk1:AI]
-        C2[chunk2:ML]
-        C3[chunk3:ラーメン]
-        C4[chunk4:DL]
+    subgraph Step2Out["Step2出力: 10チャンク"]
+        C1["chunk1: RAG定義"]
+        C2["chunk2: RAG利点"]
+        C3["chunk3: 用語定義"]
+        C4["chunk4: 用語使用"]
+        C5["chunk5: 京都観光"]
+        C6["chunk6: 沖縄観光"]
+        C7["chunk7: ベクトルDB定義"]
+        C8["chunk8: ベクトルDB活用"]
+        C9["chunk9: 第1章"]
+        C10["chunk10: 第2章"]
     end
 
-    subgraph Step3Out
-        F1[final1:AI+ML]
-        F2[final2:ラーメン]
-        F3[final3:DL]
+    subgraph Step3Out["Step3出力: 7チャンク"]
+        F1["final1: RAG（定義+利点）"]
+        F2["final2: チャンキング（定義+使用）"]
+        F3["final3: 京都観光"]
+        F4["final4: 沖縄観光"]
+        F5["final5: ベクトルDB（定義+活用）"]
+        F6["final6: 第1章"]
+        F7["final7: 第2章"]
     end
 
     I1 --> P1
     I2 --> P2
     I3 --> P3
+    I4 --> P4
+    I5 --> P5
+
     P1 --> C1
-    P2 --> C2
+    P1 --> C2
     P2 --> C3
-    P3 --> C4
-    C1 --> F1
-    C2 --> F1
-    C3 --> F2
-    C4 --> F3
+    P2 --> C4
+    P3 --> C5
+    P3 --> C6
+    P4 --> C7
+    P4 --> C8
+    P5 --> C9
+    P5 --> C10
+
+    C1 -->|前方依存で結合| F1
+    C2 -->|前方依存で結合| F1
+    C3 -->|後方依存で結合| F2
+    C4 -->|後方依存で結合| F2
+    C5 -->|独立| F3
+    C6 -->|独立| F4
+    C7 -->|後方依存で結合| F5
+    C8 -->|後方依存で結合| F5
+    C9 -->|章構造で独立| F6
+    C10 -->|章構造で独立| F7
 ```
 
-## 6. 使用するPydanticモデル
+### 8.6 使用するPydanticモデル
 
 ```mermaid
 classDiagram
     class StructuralResult {
-        paragraphs: List
+        paragraphs: List[ParagraphUnit]
     }
 
     class ParagraphUnit {
-        full_text: str
-        sentences: List
+        id: int
+        sentences: List[SentenceUnit]
+        +full_text: str
+    }
+
+    class SentenceUnit {
+        text: str
     }
 
     class ContinuityResult {
@@ -601,13 +764,52 @@ classDiagram
     }
 
     StructuralResult --> ParagraphUnit
+    ParagraphUnit --> SentenceUnit
+
+    note for StructuralResult "Step1, Step2で使用"
+    note for ContinuityResult "Step3で使用\n（ブール値のみ）"
 ```
 
-## 7. async/await のポイント
+### 8.7 async/await のポイント
 
 | 要素 | 役割 | 使用箇所 |
 |------|------|----------|
 | `async def` | 非同期関数を定義 | 全関数 |
 | `await` | 非同期関数の完了を待つ | 関数呼び出し時 |
 | `asyncio.run()` | イベントループ起動 | `__main__` |
-| `await asyncio.sleep(0)` | 制御をイベントループに戻す | Step2, Step3のループ内 |
+| `await asyncio.sleep(0)` | 制御をイベントループに戻す | Step1, Step2, Step3のループ内 |
+
+---
+
+## 9. 検証パターン一覧
+
+### Step3での判定基準
+
+| パターン | 説明 | 判定 | 例 |
+|----------|------|:----:|-----|
+| **前方依存** | 「この」「それ」等の指示語で前を参照 | 結合（True） | 「**この手法**の利点は...」 |
+| **後方依存** | 専門用語が未定義のまま使用される | 結合（True） | 「**チャンク**サイズは...」 |
+| **独立判定** | 話題は同じでも単独で理解可能 | 分離（False） | 京都観光と沖縄観光 |
+| **章構造** | 章が変わった場合 | 分離（False） | 第1章 → 第2章 |
+
+### 期待される処理結果
+
+| ステップ | 入力 | 出力 | 変化 |
+|:--------:|:----:|:----:|:----:|
+| Step1 | 1テキスト | 5段落 | 構造化 |
+| Step2 | 5段落 | 10チャンク | 増加 |
+| Step3 | 10チャンク | 7チャンク | 減少 |
+
+### Step3の詳細判定
+
+| ペア | 判定 | 理由 |
+|------|:----:|------|
+| チャンク1→2 | **True** | 前方依存: 「この手法」「それ」 |
+| チャンク2→3 | False | 話題転換: RAG → チャンキング |
+| チャンク3→4 | **True** | 後方依存: 「チャンク」「埋め込み」未定義 |
+| チャンク4→5 | False | 話題転換: チャンキング → 京都観光 |
+| チャンク5→6 | False | 独立: 同じ「観光」だが単独で理解可能 |
+| チャンク6→7 | False | 話題転換: 沖縄観光 → ベクトルDB |
+| チャンク7→8 | **True** | 後方依存: 「ANN」「ベクトルDB」未定義 |
+| チャンク8→9 | False | 話題転換: ベクトルDB → 機械学習 |
+| チャンク9→10 | False | 章構造: 第1章 → 第2章 |
