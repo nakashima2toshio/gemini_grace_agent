@@ -1,17 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-celery_tasks.py - Celeryタスク定義（修正版 v2.7）
+celery_tasks.py - Celeryタスク定義（修正版 v3.0）
+
+修正内容（v3.0）:
+- ★重要★ generation.py への依存を削除
+- SmartQAGenerator を直接使用
+- generate_qa_dataset() の呼び出しを廃止
 
 修正内容（v2.7）:
-- ★新規★ 並列数（concurrency）指定への対応
+- 並列数（concurrency）指定への対応
 - check_celery_workers() の戻り値を拡張（Dict形式）
 - get_total_concurrency() ヘルパー関数の追加
 - get_worker_info() 詳細情報取得関数の追加
-
-修正内容（v2.6）:
-- generate_qa_dataset() の呼び出しを正しいシグネチャに修正
-- 削除: provider 引数（存在しない）
 """
 
 import os
@@ -67,7 +68,6 @@ def submit_unified_qa_generation(
 
     task_list = []
     for chunk in chunks:
-        # ★ 正しい引数のみを渡す（provider は渡さない）
         task = generate_qa_for_chunk_task.apply_async(
             args=(chunk, config, model, use_smart_generation)
         )
@@ -94,19 +94,21 @@ def generate_qa_for_chunk_task(
         use_smart_generation: bool = True
 ) -> List[Dict]:
     """
-    単一チャンクのQ/A生成タスク
+    単一チャンクのQ/A生成タスク（SmartQAGenerator使用版）
 
     Args:
         self: Celeryタスクインスタンス
         chunk: チャンク
         config: データセット設定
         model: 使用するモデル
-        use_smart_generation: スマート生成を使用するか
+        use_smart_generation: スマート生成を使用するか（常にTrue推奨）
 
     Returns:
         Q/Aペアのリスト
     """
     chunk_id = chunk.get('id', 'unknown')
+    chunk_text = chunk.get('text', '')
+    dataset_type = config.get("type", "unknown")
 
     logger.info("=" * 60)
     logger.info(f"[ワーカー] タスク開始")
@@ -114,33 +116,35 @@ def generate_qa_for_chunk_task(
     logger.info(f"  chunk_id: {chunk_id}")
     logger.info(f"  model: {model}")
     logger.info(f"  use_smart_generation: {use_smart_generation}")
-    logger.info(f"  sys.path[0]: {sys.path[0]}")
-
-    # qa_gen_pathを事前に定義
-    qa_gen_path = project_root / 'qa_generation'
+    logger.info(f"  text_length: {len(chunk_text)} 文字")
 
     try:
-        # インポート
-        logger.info(f"[ワーカー] qa_generation.generationをインポート中...")
-        from qa_generation.generation import generate_qa_dataset
+        # ✅ 修正: SmartQAGeneratorをインポート（generation.py不要）
+        logger.info(f"[ワーカー] SmartQAGeneratorをインポート中...")
+        from qa_generation.smart_qa_generator import SmartQAGenerator
         logger.info(f"[ワーカー] ✅ インポート成功")
 
-        # ★★★ 修正ポイント: 正しいシグネチャで呼び出し ★★★
-        # generate_qa_dataset(chunks, dataset_type, model, ..., use_smart_generation)
+        # 空テキストチェック
+        if not chunk_text.strip():
+            logger.warning(f"[ワーカー] ⚠️ 空のチャンク: {chunk_id}")
+            return []
+
+        # ✅ 修正: SmartQAGeneratorでQ/A生成
         logger.info(f"[ワーカー] Q/A生成開始: chunk={chunk_id}")
 
-        qa_pairs = generate_qa_dataset(
-            chunks=[chunk],
-            dataset_type=config.get("type", "unknown"),
-            model=model,
-            chunk_batch_size=1,  # 単一チャンク処理
-            merge_chunks=False,  # マージ不要（既に1チャンク）
-            min_tokens=150,
-            max_tokens=400,
-            config=config,
-            client=None,  # 自動生成させる
-            use_smart_generation=use_smart_generation
-        )
+        generator = SmartQAGenerator(model=model)
+        result = generator.process_chunk(chunk_text)
+
+        qa_pairs = []
+        if result['success'] and result['qa_pairs']:
+            for qa in result['qa_pairs']:
+                qa_pairs.append({
+                    'question'    : qa['question'],
+                    'answer'      : qa['answer'],
+                    'chunk_id'    : chunk_id,
+                    'topic'       : qa.get('topic', ''),
+                    'dataset_type': dataset_type
+                })
 
         logger.info(f"[ワーカー] ✅ タスク完了: chunk={chunk_id}, Q/A数={len(qa_pairs)}")
         logger.info("=" * 60)
@@ -156,7 +160,7 @@ def generate_qa_for_chunk_task(
         logger.error("=" * 60)
 
         raise ImportError(
-            f"qa_generation.generationのインポート失敗: {exc}\n"
+            f"qa_generation.smart_qa_generatorのインポート失敗: {exc}\n"
             f"sys.path[0]={sys.path[0]}"
         )
 
@@ -262,11 +266,11 @@ def get_worker_info() -> Dict:
             print(f"並列処理能力: {info['total_concurrency']}")
     """
     result = {
-        'available': False,
-        'worker_count': 0,
+        'available'        : False,
+        'worker_count'     : 0,
         'total_concurrency': 0,
-        'workers': {},
-        'error': None
+        'workers'          : {},
+        'error'            : None
     }
 
     try:
@@ -274,39 +278,34 @@ def get_worker_info() -> Dict:
         stats = inspect.stats()
 
         if stats is None:
-            result['error'] = "Celeryワーカーが応答しません"
+            result['error'] = "Celeryワーカーが応答しません（stats=None）"
             return result
 
-        total_concurrency = 0
-        workers_info = {}
-
-        for worker_name, worker_stats in stats.items():
-            pool_info = worker_stats.get('pool', {})
-            concurrency = pool_info.get('max-concurrency', 0)
-
-            # concurrencyが文字列の場合は整数に変換
-            if isinstance(concurrency, str):
-                try:
-                    concurrency = int(concurrency)
-                except ValueError:
-                    concurrency = 0
-
-            workers_info[worker_name] = {
-                'concurrency': concurrency,
-                'pool': pool_info.get('implementation', 'unknown'),
-                'processes': pool_info.get('processes', [])
-            }
-            total_concurrency += concurrency
+        if not stats:
+            result['error'] = "アクティブなワーカーがありません"
+            return result
 
         result['available'] = True
         result['worker_count'] = len(stats)
-        result['total_concurrency'] = total_concurrency
-        result['workers'] = workers_info
 
+        total_concurrency = 0
+        for worker_name, worker_stats in stats.items():
+            pool = worker_stats.get('pool', {})
+            concurrency = pool.get('max-concurrency', 1)
+            total_concurrency += concurrency
+
+            result['workers'][worker_name] = {
+                'concurrency': concurrency,
+                'pool_type'  : pool.get('implementation', 'unknown'),
+                'pid'        : worker_stats.get('pid', 'N/A')
+            }
+
+        result['total_concurrency'] = total_concurrency
         return result
 
     except Exception as e:
-        result['error'] = str(e)
+        result['error'] = f"ワーカー情報取得エラー: {e}"
+        logger.error(result['error'])
         return result
 
 
@@ -368,13 +367,13 @@ def check_celery_workers(
 
         if required_concurrency is not None:
             return {
-                'ok': False,
-                'worker_count': 0,
-                'total_concurrency': 0,
-                'required_concurrency': required_concurrency,
+                'ok'                   : False,
+                'worker_count'         : 0,
+                'total_concurrency'    : 0,
+                'required_concurrency' : required_concurrency,
                 'available_concurrency': 0,
-                'workers': {},
-                'message': error_msg
+                'workers'              : {},
+                'message'              : error_msg
             }
         return False
 
@@ -396,13 +395,13 @@ def check_celery_workers(
 
         if required_concurrency is not None:
             return {
-                'ok': False,
-                'worker_count': worker_count,
-                'total_concurrency': total_concurrency,
-                'required_concurrency': required_concurrency,
+                'ok'                   : False,
+                'worker_count'         : worker_count,
+                'total_concurrency'    : total_concurrency,
+                'required_concurrency' : required_concurrency,
                 'available_concurrency': 0,
-                'workers': info['workers'],
-                'message': error_msg
+                'workers'              : info['workers'],
+                'message'              : error_msg
             }
         return False
 
@@ -425,13 +424,13 @@ def check_celery_workers(
         ok = True  # 制限付きだが実行は可能
 
     return {
-        'ok': ok,
-        'worker_count': worker_count,
-        'total_concurrency': total_concurrency,
-        'required_concurrency': required_concurrency,
+        'ok'                   : ok,
+        'worker_count'         : worker_count,
+        'total_concurrency'    : total_concurrency,
+        'required_concurrency' : required_concurrency,
         'available_concurrency': available_concurrency,
-        'workers': info['workers'],
-        'message': message
+        'workers'              : info['workers'],
+        'message'              : message
     }
 
 
@@ -444,7 +443,7 @@ def validate_concurrency(requested: int) -> Dict:
 
     Returns:
         Dict: {
-            'valid': bool,           # 実行可能か
+            'valid': bool,          # 実行可能か
             'requested': int,        # 要求された並列数
             'available': int,        # 利用可能な並列数
             'effective': int,        # 実際に使用する並列数
@@ -452,8 +451,8 @@ def validate_concurrency(requested: int) -> Dict:
         }
 
     Example:
-        >>> result = validate_concurrency(8)
-        >>> if result['valid']:
+        result = validate_concurrency(8)
+        if result['valid']:
         ...     effective = result['effective']
         ...     print(f"並列数 {effective} で実行します")
     """
@@ -461,11 +460,11 @@ def validate_concurrency(requested: int) -> Dict:
 
     if total == 0:
         return {
-            'valid': False,
+            'valid'    : False,
             'requested': requested,
             'available': 0,
             'effective': 0,
-            'message': "Celeryワーカーが起動していません"
+            'message'  : "Celeryワーカーが起動していません"
         }
 
     effective = min(requested, total)
@@ -478,11 +477,11 @@ def validate_concurrency(requested: int) -> Dict:
         logger.warning(f"⚠️ {message}")
 
     return {
-        'valid': True,
+        'valid'    : True,
         'requested': requested,
         'available': total,
         'effective': effective,
-        'message': message
+        'message'  : message
     }
 
 
@@ -513,34 +512,28 @@ def purge_queue(queue_name: str = 'celery') -> int:
 
 
 # ================================================================
-# デバッグ用
+# デバッグ用（v3.0 修正版）
 # ================================================================
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Celeryタスクモジュール - 修正版 v2.7")
+    print("Celeryタスクモジュール - 修正版 v3.0")
     print("=" * 60)
     print(f"プロジェクトルート: {project_root}")
     print(f"アプリケーション: {app.main}")
     print(f"ブローカー: {app.conf.broker_url}")
     print()
 
-    # インポートテスト
-    print("generate_qa_datasetのインポートテスト...")
+    # ✅ 修正: SmartQAGeneratorのインポートテスト
+    print("SmartQAGeneratorのインポートテスト...")
     try:
-        from qa_generation.generation import generate_qa_dataset
-        import inspect as py_inspect
+        from qa_generation.smart_qa_generator import SmartQAGenerator
 
         print("✅ インポート成功")
 
-        # シグネチャ確認
-        sig = py_inspect.signature(generate_qa_dataset)
-        print(f"シグネチャ: {sig}")
-        print()
-        print("パラメータ一覧:")
-        for name, param in sig.parameters.items():
-            default = param.default if param.default != py_inspect.Parameter.empty else "(必須)"
-            print(f"  - {name}: {default}")
+        # クラスメソッド確認
+        print(f"クラス: {SmartQAGenerator}")
+        print(f"メソッド: __init__, analyze_chunk, generate_qa_pairs, process_chunk")
 
     except ImportError as e:
         print(f"❌ インポート失敗: {e}")

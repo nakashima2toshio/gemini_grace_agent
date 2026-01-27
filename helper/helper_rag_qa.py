@@ -525,7 +525,7 @@ class QACountOptimizer:
 
         Args:
             document: 対象文書
-            mode: 決定モード ("auto", "evaluation", "learning", "search_test", "faq")
+            mode: 決定モード ("auto", "evaluation", "00_learning.md", "search_test", "faq")
 
         Returns:
             最適なQ/A数と決定根拠を含む辞書
@@ -537,7 +537,7 @@ class QACountOptimizer:
         if mode == "evaluation":
             # 評価用：網羅性重視（文書長の5-10%）
             base_count = int(metrics['sentence_count'] * 0.075)
-        elif mode == "learning":
+        elif mode == "00_learning.md":
             # 学習用：主要概念をカバー（10-20個）
             base_count = min(20, max(10, metrics['keyword_count'] // 2))
         elif mode == "search_test":
@@ -678,7 +678,7 @@ class QACountOptimizer:
         mode_descriptions = {
             'auto': '自動決定モード',
             'evaluation': '評価用（網羅性重視）',
-            'learning': '学習用（主要概念重視）',
+            '00_learning.md': '学習用（主要概念重視）',
             'search_test': '検索テスト用（多様性重視）',
             'faq': 'FAQ生成用（実用性重視）'
         }
@@ -1061,7 +1061,7 @@ class QAOptimizedExtractor(SmartKeywordSelector):
         Args:
             text: 分析対象テキスト
             qa_count: 生成するQ&Aペアの目標数（Noneで自動決定）
-            mode: Q/A数決定モード ("auto", "evaluation", "learning", "search_test", "faq")
+            mode: Q/A数決定モード ("auto", "evaluation", "00_learning.md", "search_test", "faq")
             difficulty_distribution: 難易度の分布
             return_details: 詳細情報を返すか
             use_progressive: 段階的生成を使用するか

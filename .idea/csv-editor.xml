@@ -73,6 +73,13 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="/output_chunked/cc_news_5per_chunks_20260124_005716.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
       </map>
     </option>
   </component>

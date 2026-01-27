@@ -1,8 +1,10 @@
 ## Step1: 階層構造化（Hierarchical Split）
 
-本番チャンクは、「csv_text_to_chunks_text_csv.py」のコマンドです。
-ここでは、上記コマンドの
-RAGの[チャンク分割]の4つのステージのStep1(階層構造化)の説明をします。
+本プロジェクトは、現在のLLM開発における最先端かつ最も需要のある課題のAgent, RAGのプロジェクトを
+LangChainなどのライブラリを使わず、「自律型エージェントの制御（Plan-and-Execute）」や「信頼度評価」、RAGデータ作成、ベクトルDBへの登録、検索システムを実現しています。
+
+本番のチャンク分割は、「csv_text_to_chunks_text_csv.py」のコマンドで実行されます。
+ここでは、上記コマンドのRAGの[チャンク分割]の4つのステージのStep1(階層構造化)の説明をします。
 
 - Step1（階層構造化）
 - Step2（意味的分割）
@@ -10,19 +12,20 @@ RAGの[チャンク分割]の4つのステージのStep1(階層構造化)の説�
 - 非同期・並列処理
 
 ##### 全ソースは： GitHubにあります。
+
 - URL: https://github.com/nakashima2toshio/gemini_grace_agent
-[環境準備（超簡易版）]：
+  [環境準備（超簡易版）]：
 - 上記リポジトリーを自環境にcloneし、
 - [ライブラリー]pip install -r requirements.txt　でライブラリを入れてください。
-- [docker compose]プロジェクト・ルートのdocker-compose/ 以下で
-memo.txt を参考として、docker composeで、Redis, Qdrantを立ち上げてください。
+- step2以降で利用：[docker compose]プロジェクト・ルートのdocker-compose/ 以下で
+  memo.txt を参考として、docker composeで、Redis, Qdrantを立ち上げてください。
 - Gemini APIのKeyを取得し、.evn と環境変数に登録してください。
 
 ---
 
-##### 開発環境（確認環境）：他の環境の方は、Anthropic(Claude code)やGemini, ChatGPTに確認してください。
+##### 開発環境（確認環境）：他の環境の方は、Anthropic(Claude code)やGemini, ChatGPTで確認してください。
 
-- Macbook air M2, 24Gバイトメモリー
+- Macbook air M2, 24Gバイトメモリー（次は、M6が欲しいですね。）
 - PyCharm pro, Gemini API, Python, Streamlit, docker compose(Redis, Qdrant)
 
 ---
@@ -42,7 +45,15 @@ memo.txt を参考として、docker composeで、Redis, Qdrantを立ち上げ�
 ### はじめに
 
 チャンク処理はRAGの検索精度を左右する重要な前処理工程です。
-チャンクは本番コードの「csv_text_to_chunks_text_csv.py」では、step1, step2, step3の3段階で実施されます。
+チャンクは本番コードの「csv_text_to_chunks_text_csv.py」も、step1, step2, step3の3段階で実施されます。
+#### [超重要]
+チャンクはLLM(Gemini API)で分割していますので、最重要は、prompts.pyのプロンプトです。
+機能、性能はこのプロンプトで決まります。
+
+```prompts.py
+# プロンプト 1: 階層分割（改修版）
+PARAGRAPH_SEPARATION_PROMPT
+```
 
 処理は3段階構成：
 
@@ -57,9 +68,9 @@ memo.txt を参考として、docker composeで、Redis, Qdrantを立ち上げ�
 機能確認の方法：各ステップの確認プログラムで、機能を確認しましょう。
 [確認]:
 
-- 本番チャンクは、「csv_text_to_chunks_text_csv.py」のCLIでバッチ処理です。
+- 本番チャンクは、「csv_text_to_chunks_text_csv.py」のCLIのコマンド形式です。
 - 最終確認は、[agent_rag.py]のstreamlit[GUI]で、実施します。
-- 機能を確認するため「csv_text_to_chunks_text_csv.py」プログラムのstep1, step2, step3の処理を抜き出し、
+- 機能を確認するため「csv_text_to_chunks_text_csv.py」プログラムのstep1, step2, step3の街頭処理を抜き出し、
 - ステップ別の機能を確認用に「step1.py, step2.py, step3.py」を作成しました。
 - また、step1, step2, step3 を通しての実行は、非同期・並列処理の check_async.py を準備しました。
 - このプログラムで各ステップの処理、方式を確認します。
@@ -137,6 +148,7 @@ graph TD
   ここでは、後の拡張性、改善を考慮し（LLM）を利用し分割しています。
 
 #### [重要な前提]：
+
 - 入力文章はCSV形式をデフォルトとしています。
 - 人がこのCSVを作成した時に、「csvの行には、なんらかの意味があるはずだ」、が前提となっています。
 - 全く改行のないテキストも(オプションで指定)入力できますが、
@@ -401,6 +413,14 @@ def step1_hierarchical_split(text: str, api_key: str, block_size: int = 2000) ->
 ```
 
 ### 3.5 API呼び出しの詳細
+- 利用するモデルのデフォルトはコスパから”gemini-2.5-flash”としていますが、
+最新モデルも利用し、結果を比較してみましょう。（段落分けではあまりない。）
+
+| モデル (Model ID) | Input (1M tokens) | Output (1M tokens) | 傾向・コスト特性 |
+| :--- | :--- | :--- | :--- |
+| **gemini-2.5-flash** | **$0.075** | **$0.30** | **【最安】**<br>従来の1.5 Flashと同等の価格帯。大量のドキュメント処理やRAGの検索フェーズなど、数で勝負する処理に最適です。 |
+| **gemini-3-flash** | **$0.15** | **$0.60** | **【バランス】**<br>2.5 Flashの約2倍のコストですが、3 Proに近い認識能力を持ちます。複雑なAgentの「判断役」としては非常にコスパが良いです。 |
+| **gemini-3-pro** | **$2.00** | **$12.00** | **【高コスト・高性能】**<br>単価が高い上に、**思考トークン（Thinking process）**が出力としてカウントされるため、実質的な課金額はFlash系の20〜50倍になる可能性があります。ここぞという最終推論に絞って利用すべきです。 |
 
 ```python
 response = client.models.generate_content(
@@ -423,6 +443,8 @@ response = client.models.generate_content(
 ---
 
 ## 4. 具体例
+- step1.py を実行して結果を見て理解を深めましょう。
+- step1 〜 step3 の通しのテストは「check_async.py」です。
 
 ### 4.1 テスト用入力テキスト
 

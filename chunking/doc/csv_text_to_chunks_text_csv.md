@@ -1,8 +1,6 @@
 # csv_text_to_chunks_text_csv.py 詳細設計書
 
-**バージョン:** v3.2.0
-**最終更新:** 2026-01-26
-**ファイル名の意味:** `csv_text` (CSV/テキスト入力) → `to_chunks` (チャンク化) → `text_csv` (テキスト/CSV出力)
+本プロジェクトは、現在のLLM開発における最先端かつ最も需要のある課題のAgent, RAGのプロジェクトをLangChainなどのライブラリを使わず、「自律型エージェントの制御（Plan-and-Execute）」や「信頼度評価」RAGデータ作成、ベクトルDBへの登録、検索システムを実現しています。
 
 ## 📋 目次
 
@@ -31,7 +29,7 @@ LLM（Gemini API）を活用し、形式的な区切りではなく、**文脈�
 - 3.2 関数呼び出しの階層構造: step1:(階層構造化), step2(意味的分割), step3(連続性判定)
 - 5.3段階チャンク化戦略 + 6-関数別詳細設計
 - 具体例で、チャンクしてみる。step1.py, step2.py, step3.py
-- 9. async並列処理の詳細（並列処理を確認する。）
+- 9.async並列処理の詳細（並列処理を確認する。）
 
 ### 1.2 主要機能一覧
 
@@ -40,8 +38,10 @@ LLM（Gemini API）を活用し、形式的な区切りではなく、**文脈�
 | `chunks_all_async()` | 3段階でテキストをチャンク化（非同期・並列処理） | v1.0.0 |
 | `load_text_from_csv()` | CSVファイルからテキスト読み込み | v1.2.0 |
 | `save_chunks_as_csv()` | チャンクをCSV保存（改行正規化対応） | v1.2.0 / v2.0.0 |
+| `save_chunks_as_text()` | チャンクをテキスト形式で保存（後方互換性） | v1.2.0 |
 | `generate_output_filename()` | 出力ファイル名の自動生成 | v2.0.0 |
 | `_normalize_whitespace()` | テキスト正規化（改行・空白削除） | v2.0.0 |
+| `_split_sentences_simple()` | 簡易的な文分割（日本語対応、内部関数） | v2.0.0 |
 
 ### 1.3 技術スタック
 
@@ -53,7 +53,7 @@ LLM（Gemini API）を活用し、形式的な区切りではなく、**文脈�
 | 並列制御 | asyncio.Semaphore（デフォルト: 8並列） |
 | データ検証 | Pydantic v2 |
 | 進捗表示 | tqdm.asyncio |
-| トークン計算 | tiktoken |
+| トークン計算 | tiktoken (`cl100k_base`エンコーディング) |
 
 ### 1.4 基本的な使用方法
 
@@ -144,24 +144,38 @@ python -m chunking.csv_text_to_chunks_text_csv \
 
 ### 2.4 コマンドライン引数（継続）
 
-| 引数・オプション | 説明 |
-|---------|---------|
-| `--input-file` | 入力ファイル（.txt, .csv） |
-| `--output` | 出力ディレクトリ（デフォルト: chunks_output） |
-| `--model` | 使用するLLMモデル（デフォルト: gemini-2.5-flash） |
-| `--workers` | 並列ワーカー数（デフォルト: 8） |
-| `--block-size` | バッチサイズ（デフォルト: 2000文字） |
-| `--verbose` | 詳細ログ出力 |
-| `--resume` | 再開するジョブID |
-| `--text-column` | CSVのテキストカラム名 |
-| `--max-rows` | 最大処理行数（CSV用） |
-| `--combine-rows` | CSV全行を結合 |
+| 引数・オプション | 説明 | デフォルト値 |
+|---------|---------|---------|
+| `--input-file` | 入力ファイル（.txt, .csv）【必須】 | - |
+| `--output` | 出力ディレクトリ | `chunks_output` |
+| `--model` | 使用するLLMモデル | `gemini-2.5-flash` |
+| `--workers` | 並列ワーカー数 | `8` |
+| `--block-size` | バッチサイズ（文字数） | `2000` |
+| `--verbose` | 詳細ログ出力 | `False` |
+| `--resume` | 再開するジョブID | `None` |
+| `--text-column` | CSVのテキストカラム名 | 自動検出 |
+| `--max-rows` | 最大処理行数（CSV用） | `None`（全行） |
+| `--combine-rows` | CSV全行を結合 | `False` |
 
 ### 2.5 使用例
 
 ```bash
+# CSVファイル → チャンクCSV
 python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file input.txt --output chunks_output --model gemini-2.5-flash --workers 8
+  --input-file OUTPUT/cc_news_5per.csv \
+  --output output_chunked \
+  --model gemini-2.5-flash \
+  --workers 4 \
+  --text-column text \
+  --combine-rows \
+  --block-size 1000
+
+# テキストファイル → チャンクCSV
+python -m chunking.csv_text_to_chunks_text_csv \
+  --input-file ./data/document.txt \
+  --output chunks_output \
+  --model gemini-2.5-flash \
+  --workers 8
 ```
 
 ### 2.6 出力方式
@@ -221,6 +235,7 @@ graph TB
 | | → `CheckpointManager.save("step3")` | |
 | 1.3.4 | `save_chunks_as_csv()` | CSV保存 |
 | | → `_normalize_whitespace()` × チャンク数 | |
+| | → `_split_sentences_simple()` × チャンク数 | |
 
 ---
 
@@ -479,7 +494,7 @@ async def chunks_all_async(
 
 | ステップ | 処理内容 |
 |:--------:|----------|
-| 1 | AsyncAPIClientの初期化（Semaphoreで並列数を制御、リトライロジックを内包） |
+| 1 | AsyncAPIClientの初期化（Semaphoreで並列数を制御、リトライロジック内包、max_output_tokens=4096） |
 | 2 | Step1: 階層構造化（テキストをblock_sizeで分割、各ブロックを並列でLLM処理、段落リストを生成・保存） |
 | 3 | Step2: 意味的分割（各段落を並列でLLM処理、チャンクリストを生成・保存）<br>※ v3.2.0でdocstring詳細化（Step1との違いを明記） |
 | 4 | Step3: 連続性判定（隣接チャンクペアを並列でLLM処理、最終チャンクリストを生成・保存）<br>※ v3.2.0でdocstring詳細化（Step2との違い、検証パターンを明記）<br>※ v3.2.0でマージ処理のlogger.debug出力を追加 |
@@ -544,11 +559,11 @@ def save_chunks_as_csv(
 |---------|------|-----|
 | chunk_id | チャンクID | `document_chunk_0` |
 | text | チャンクテキスト（正規化済み） | `"第1章 はじめに このドキュメントでは..."` |
-| tokens | トークン数（tiktoken） | `245` |
+| tokens | トークン数（tiktoken `cl100k_base`） | `245` |
 | chunk_idx | チャンクインデックス | `0` |
 | dataset_type | データセット種別 | `document` |
 | type | チャンク種別（固定値） | `llm_chunk` |
-| sentence_count | 文の数 | `5` |
+| sentence_count | 文の数（`_split_sentences_simple()`で計算） | `5` |
 | source_file | 元ファイル名 | `document.txt` |
 
 #### 改行正規化の効果
@@ -560,7 +575,29 @@ def save_chunks_as_csv(
 
 ---
 
-### 6.4 `generate_output_filename()` - 出力ファイル名の自動生成
+### 6.4 `save_chunks_as_text()` - テキスト出力処理（後方互換性）
+
+#### シグネチャ
+
+```python
+def save_chunks_as_text(chunks: List[str], output_file: str) -> str:
+```
+
+#### 処理内容
+
+各チャンクを `---` 区切りでテキストファイルに保存します。
+
+```python
+with open(output_file, 'w', encoding='utf-8') as f:
+    for chunk in chunks:
+        f.write(chunk + '\n---\n')
+```
+
+**注意**: CSV出力が推奨されます。テキスト出力は後方互換性のために維持されています。
+
+---
+
+### 6.5 `generate_output_filename()` - 出力ファイル名の自動生成
 
 #### シグネチャ
 
@@ -581,7 +618,13 @@ def generate_output_filename(
 
 ---
 
-### 6.5 `_normalize_whitespace()` - テキスト正規化
+### 6.6 `_normalize_whitespace()` - テキスト正規化
+
+#### シグネチャ
+
+```python
+def _normalize_whitespace(text: str) -> str:
+```
 
 #### 処理内容
 
@@ -589,8 +632,8 @@ def generate_output_filename(
 |:--------:|------|
 | 1 | 改行（`\n`, `\r`）を半角スペースに変換 |
 | 2 | タブ（`\t`）を半角スペースに変換 |
-| 3 | 連続する空白を1つに統合 |
-| 4 | 先頭・末尾の空白を削除 |
+| 3 | 連続する空白を1つに統合（正規表現: `\s+` → ` `） |
+| 4 | 先頭・末尾の空白を削除（`strip()`） |
 
 #### 具体例
 
@@ -598,6 +641,50 @@ def generate_output_filename(
 |------|----------|
 | 入力 | `"第1章\n\nはじめに\n  基本的な    概念を\t説明します。  "` |
 | 出力 | `"第1章 はじめに 基本的な 概念を 説明します。"` |
+
+---
+
+### 6.7 `_split_sentences_simple()` - 簡易的な文分割（内部関数）
+
+#### シグネチャ
+
+```python
+def _split_sentences_simple(text: str) -> List[str]:
+```
+
+#### 処理内容
+
+日本語テキストを句点や記号で文単位に分割します。
+
+| 分割対象 | 対応する記号 |
+|----------|-------------|
+| 句点 | 。、．、. |
+| 感嘆符 | ！、! |
+| 疑問符 | ？、? |
+
+#### アルゴリズム
+
+```python
+# 正規表現で文末記号を含む文を抽出
+sentences = re.findall(r'[^。．.！？!?]+[。．.！？!?]\s*', text)
+
+# 文が見つからない場合は全体を1文として扱う
+if not sentences:
+    sentences = [text.strip()] if text.strip() else []
+else:
+    # 最後の文末記号以降に残りのテキストがあれば追加
+    last_pos = text.rfind(sentences[-1]) + len(sentences[-1])
+    if last_pos < len(text):
+        remaining = text[last_pos:].strip()
+        if remaining:
+            sentences.append(remaining)
+
+return [s.strip() for s in sentences if s.strip()]
+```
+
+#### 使用箇所
+
+`save_chunks_as_csv()` 内で `sentence_count` の計算に使用されます。
 
 ---
 
@@ -644,6 +731,19 @@ python -m chunking.csv_text_to_chunks_text_csv \
   --model gemini-2.5-flash \
   --workers 12 \
   --block-size 3000
+```
+
+#### CSV全行を結合して処理
+
+```bash
+python -m chunking.csv_text_to_chunks_text_csv \
+  --input-file OUTPUT/wikipedia_ja_5per.csv \
+  --output output_chunked \
+  --model gemini-2.5-flash \
+  --workers 4 \
+  --text-column text \
+  --combine-rows \
+  --block-size 1000
 ```
 
 ---
@@ -720,6 +820,7 @@ asyncio.run(process_csv())
 | 処理が遅い | 並列数が少ない | `--workers 12` に増やす |
 | APIキーエラー | 環境変数未設定 | `export GOOGLE_API_KEY='your-key'` |
 | CSV読み込みエラー | カラム名が見つからない | `--text-column` で明示的に指定 |
+| 不完全なJSON | レスポンスが切断された | 自動リトライ（3回）が実行される |
 
 ### 8.2 チェックポイントからの再開
 
@@ -743,7 +844,15 @@ python -m chunking.csv_text_to_chunks_text_csv \
 | `asyncio.to_thread()` | 同期APIを非同期でラップ |
 | `tqdm.asyncio.gather()` | 並列実行 + 進捗表示 |
 
-### 9.2 各Stepの並列化
+### 9.2 AsyncAPIClientの主要設定
+
+| 設定項目 | デフォルト値 | 説明 |
+|----------|------------|------|
+| max_workers | 8 | 並列実行数（Semaphoreで制御） |
+| max_retries | 3 | リトライ回数 |
+| max_output_tokens | 4096 | 出力トークン制限 |
+
+### 9.3 各Stepの並列化
 
 | Step | 並列対象 | 並列数 |
 |:----:|----------|:------:|
@@ -751,7 +860,7 @@ python -m chunking.csv_text_to_chunks_text_csv \
 | Step2 | 段落 | 段落数 |
 | Step3 | 隣接ペア | チャンク数 - 1 |
 
-### 9.3 速度比較（参考値）
+### 9.4 速度比較（参考値）
 
 | 並列数 | 処理時間（相対） | 備考 |
 |:------:|:---------------:|------|
@@ -761,7 +870,7 @@ python -m chunking.csv_text_to_chunks_text_csv \
 | 12 | 12% | 速度重視 |
 | 16 | 10% | 最大速度（レート制限注意） |
 
-### 9.4 推奨設定
+### 9.5 推奨設定
 
 ```bash
 # 標準的な設定（推奨）
@@ -823,3 +932,15 @@ python -m chunking.csv_text_to_chunks_text_csv \
 | 効果 | 各Stepの役割と違いが明確になり、コードの保守性・可読性が向上 |
 | 追加内容 | Step1との違い、Step2との違い、検証パターン、マージ処理のログ出力 |
 
+---
+
+## 変更履歴
+
+| バージョン | 日付 | 変更内容 |
+|-----------|------|----------|
+| v1.0.0 | - | 初版リリース |
+| v1.2.0 | - | CSV入力対応、CSV/テキスト出力機能追加 |
+| v2.0.0 | - | 改行正規化、出力ファイル名自動生成機能追加 |
+| v3.1.0 | - | デフォルトモデルを`gemini-2.5-flash`に変更 |
+| v3.2.0 | - | docstring詳細化、Step3マージ処理のログ出力追加 |
+| v3.2.1 | 2026-01-27 | ドキュメント最新化：`_split_sentences_simple()`追記、`save_chunks_as_text()`追記、AsyncAPIClient設定詳細化 |

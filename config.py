@@ -28,8 +28,9 @@ class ModelConfig:
     # 利用可能なモデル一覧
     AVAILABLE_MODELS: List[str] = [
         "gemini-2.5-flash",           # デフォルト
-        "gemini-3-pro-preview",       # 最新Pro（思考モード対応）
-        "gemini-2.5-flash-preview",   # 高速・思考対応
+        "gemini-3-pro",               # 最新Pro（思考モード対応）
+        "gemini-3-flash",
+        "gemini-2.5-flash",           # 高速・思考対応
         "gemini-2.0-flash",           # 安定版
         "gemini-1.5-pro",             # レガシー
         "gemini-1.5-flash",           # レガシー高速
