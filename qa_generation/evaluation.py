@@ -1,30 +1,36 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-'''
-qa_generation/evaluation.py - カバレッジ分析モジュール
-'''
+"""
+qa_generation/evaluation.py - カバレッジ分析モジュール（v3.0 - config.py依存削除版）
 
+改修内容 (v3.0):
+- qa_generation/config.py への依存を削除
+- データセット別の決め打ち閾値を廃止し、統一デフォルト値を使用
+"""
 import logging
 import numpy as np
 import tiktoken
 from typing import List, Dict, Optional
 from qa_generation.semantic import SemanticCoverage
-from qa_generation.config import OPTIMAL_THRESHOLDS
 
 logger = logging.getLogger(__name__)
 
-def get_optimal_thresholds(dataset_type: str) -> Dict[str, float]:
-    '''データセット別の最適閾値を取得
+
+def get_optimal_thresholds(dataset_type: str = None) -> Dict[str, float]:
+    '''カバレージ分析用の閾値を取得
+
     Args:
-        dataset_type: データセットタイプ
+        dataset_type: データセットタイプ（現在は未使用、後方互換性のため残す）
+
     Returns:
         閾値辞書 {strict, standard, lenient}
     '''
-    return OPTIMAL_THRESHOLDS.get(dataset_type, {
+    # 統一デフォルト値を使用（データセット別の決め打ち値を廃止）
+    return {
         "strict": 0.8,
         "standard": 0.7,
         "lenient": 0.6
-    })
+    }
 
 
 def multi_threshold_coverage(coverage_matrix: np.ndarray, chunks: List[Dict],
@@ -170,7 +176,7 @@ def analyze_chunk_characteristics_coverage(chunks: List[Dict], coverage_matrix: 
 
 def analyze_coverage(chunks: List[Dict], qa_pairs: List[Dict], dataset_type: str = "wikipedia_ja",
                      custom_threshold: Optional[float] = None) -> Dict:
-    '''生成されたQ/Aペアのカバレージを分析（多段階カバレージ分析対応）
+    """生成されたQ/Aペアのカバレージを分析（多段階カバレージ分析対応）
     Args:
         chunks: チャンクリスト
         qa_pairs: Q/Aペアリスト
@@ -178,7 +184,7 @@ def analyze_coverage(chunks: List[Dict], qa_pairs: List[Dict], dataset_type: str
         custom_threshold: カスタム閾値（指定時はこれを使用）
     Returns:
         カバレージ分析結果（多段階評価、チャンク特性分析を含む）
-    '''
+    """
     analyzer = SemanticCoverage()
 
     # 埋め込み生成（バッチAPI最適化版）
@@ -305,3 +311,4 @@ def analyze_coverage(chunks: List[Dict], qa_pairs: List[Dict], dataset_type: str
             logger.info(f"  • {insight}")
 
     return results
+

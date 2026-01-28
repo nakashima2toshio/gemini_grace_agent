@@ -83,12 +83,6 @@ def map_collection_to_csv(collection_name: str, qa_output_dir: str = "qa_output"
 
     logger.debug(f"⚠️ CSVファイル未発見: {exact_match}")
 
-    # ❌ パターン2を削除: 'qa_' 接頭辞除外ロジックを廃止
-    # 以前のコード:
-    # if collection_name.startswith("qa_"):
-    #     stripped_name = collection_name[3:]
-    #     ...
-
     return None
 
 

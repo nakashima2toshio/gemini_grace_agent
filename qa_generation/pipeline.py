@@ -39,7 +39,6 @@ from pathlib import Path
 
 from config import DATASET_CONFIGS
 from helper.helper_llm import LLMClient
-from qa_generation.config import LOCAL_DATASET_EXTENSIONS
 from qa_generation.smart_qa_generator import SmartQAGenerator
 from qa_generation.evaluation import analyze_coverage
 from celery_tasks import submit_unified_qa_generation, collect_results, check_celery_workers
