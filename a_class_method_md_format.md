@@ -1,6 +1,6 @@
 # Pythonモジュール ドキュメント フォーマット仕様書
 
-**Version 1.2** | 最終更新: 2025-01-28
+**Version 1.3** | 最終更新: 2025-01-29
 
 ---
 
@@ -16,10 +16,10 @@
    - [主な責務の記述規則](#23-主な責務の記述規則)
    - [主要機能一覧の記述規則](#24-主要機能一覧の記述規則)
 4. [アーキテクチャ構成図](#3-アーキテクチャ構成図)
-   - [システム全体構成](#31-システム全体構成)
+   - [システム全体構成（Mermaid）](#31-システム全体構成mermaid)
    - [データフロー](#32-データフロー)
 5. [モジュール構成図](#4-モジュール構成図)
-   - [内部モジュール構成](#41-内部モジュール構成)
+   - [内部モジュール構成（Mermaid）](#41-内部モジュール構成mermaid)
    - [依存関係テーブル](#42-依存関係テーブル)
 6. [クラス・関数一覧表](#5-クラス関数一覧表)
    - [クラス一覧](#51-クラス一覧)
@@ -54,20 +54,27 @@
 14. [エクスポートセクション](#13-エクスポートセクション)
 15. [変更履歴セクション](#14-変更履歴セクション)
 16. [付録セクション](#15-付録セクション)
-    - [依存関係図](#151-依存関係図)
-17. [Markdown記法ルール](#16-markdown記法ルール)
-    - [見出しレベル](#161-見出しレベル)
-    - [コードブロック](#162-コードブロック)
-    - [テーブル](#163-テーブル)
-    - [区切り線](#164-区切り線)
-18. [チェックリスト](#17-チェックリスト)
-19. [変更履歴](#変更履歴)
+    - [依存関係図（Mermaid）](#151-依存関係図mermaid)
+17. [Mermaid記法ガイド](#16-mermaid記法ガイド)
+    - [基本構文](#161-基本構文)
+    - [ノード形状](#162-ノード形状)
+    - [矢印スタイル](#163-矢印スタイル)
+    - [サブグラフ](#164-サブグラフ)
+18. [Markdown記法ルール](#17-markdown記法ルール)
+    - [見出しレベル](#171-見出しレベル)
+    - [コードブロック](#172-コードブロック)
+    - [テーブル](#173-テーブル)
+    - [区切り線](#174-区切り線)
+19. [チェックリスト](#18-チェックリスト)
+20. [変更履歴](#変更履歴)
 
 ---
 
 ## 概要
 
 本仕様書は、Pythonモジュールのドキュメントを統一されたフォーマットで作成するための規約を定義します。IPO（Input-Process-Output）形式を採用し、シグネチャ・戻り値例・使用例を含む実用的なドキュメントを目指します。
+
+**図表について**: 本仕様書ではMermaid v9フローチャートを使用します（PyCharm Pro対応）。
 
 ---
 
@@ -101,15 +108,15 @@
 |-----------|:----:|------|
 | 目次 | ✅ | ドキュメント内のセクションへのリンク一覧 |
 | 概要 | ✅ | モジュールの目的、主な責務、主要機能一覧 |
-| アーキテクチャ構成図 | ✅ | システム全体の位置づけとデータフロー |
-| モジュール構成図 | ✅ | 内部構造と依存関係 |
+| アーキテクチャ構成図 | ✅ | システム全体の位置づけとデータフロー（Mermaid） |
+| モジュール構成図 | ✅ | 内部構造と依存関係（Mermaid） |
 | クラス・関数一覧表 | ✅ | 全要素のクイックリファレンス |
 | クラス・関数 IPO詳細 | ✅ | 各要素の詳細仕様（概要・シグネチャ・IPO・戻り値例・使用例） |
 | 設定・定数 | ⚪ | 設定値や定数がある場合 |
 | 使用例 | ✅ | 典型的なワークフロー |
 | エクスポート | ⚪ | `__all__`の内容 |
 | 変更履歴 | ✅ | バージョン履歴 |
-| 付録 | ⚪ | 補足情報 |
+| 付録 | ⚪ | 補足情報（依存関係図等） |
 
 ---
 
@@ -210,39 +217,71 @@
 
 ## 3. アーキテクチャ構成図
 
-### 3.1 システム全体構成
+### 3.1 システム全体構成（Mermaid）
 
-ASCII罫線を使用して3層構造で表現します。
+Mermaid v9 フローチャートを使用して3層構造で表現します。
 
 ```markdown
 ## 1. アーキテクチャ構成図
 
 ### 1.1 システム全体構成
 
+```mermaid
+flowchart TB
+    subgraph CLIENT["クライアント層"]
+        CA[Component A]
+        CB[Component B]
+        CC[Component C]
+    end
+
+    subgraph MODULE["対象モジュール"]
+        MA[クラス・機能グループ A]
+        MB[クラス・機能グループ B]
+    end
+
+    subgraph EXTERNAL["外部サービス層"]
+        EA[Service A]
+        EB[Service B]
+        EC[Service C]
+    end
+
+    CA --> MODULE
+    CB --> MODULE
+    CC --> MODULE
+    MODULE --> EA
+    MODULE --> EB
+    MODULE --> EC
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        クライアント層                            │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │
-│  │   Component A    │  │   Component B    │  │  Component C │  │
-│  └────────┬─────────┘  └────────┬─────────┘  └──────┬───────┘  │
-└───────────┼─────────────────────┼───────────────────┼──────────┘
-            │                     │                   │
-            └──────────────────┬──┴───────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      対象モジュール                              │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  クラス・機能グループ A   │  クラス・機能グループ B        │ │
-│  └────────────────────────────────────────────────────────────┘ │
-└───────────────────────────────┬─────────────────────────────────┘
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       外部サービス層                             │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐    │
-│  │   Service A    │  │   Service B    │  │   Service C    │    │
-│  └────────────────┘  └────────────────┘  └────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
 ```
+
+**具体例（Plannerモジュール）**:
+
+```mermaid
+flowchart TB
+    subgraph CLIENT["クライアント層"]
+        AGENT[Executor Agent]
+        API[API Endpoints]
+        CLI[CLI Tools]
+    end
+
+    subgraph MODULE["planner.py"]
+        PLANNER[Planner Class]
+        FACTORY[create_planner]
+    end
+
+    subgraph EXTERNAL["外部サービス層"]
+        LLM[Gemini API]
+        QDRANT[Qdrant Vector DB]
+        CONFIG[Config Service]
+    end
+
+    AGENT --> PLANNER
+    API --> PLANNER
+    CLI --> FACTORY
+    FACTORY --> PLANNER
+    PLANNER --> LLM
+    PLANNER --> QDRANT
+    PLANNER --> CONFIG
 ```
 
 ### 3.2 データフロー
@@ -262,40 +301,79 @@ ASCII罫線を使用して3層構造で表現します。
 
 ## 4. モジュール構成図
 
-### 4.1 内部モジュール構成
+### 4.1 内部モジュール構成（Mermaid）
 
-ツリー構造でモジュールの内部構成を表現します。
+Mermaid フローチャートでモジュールの内部構成を表現します。
 
 ```markdown
 ## 2. モジュール構成図
 
 ### 2.1 内部モジュール構成
 
+```mermaid
+flowchart LR
+    subgraph CONFIG["設定・定数"]
+        C1[CONFIG_NAME]
+        C2[CONSTANT_NAME]
+    end
+
+    subgraph CLASS1["ClassName1"]
+        M1A[method_a]
+        M1B[method_b]
+    end
+
+    subgraph CLASS2["ClassName2"]
+        M2A[method_c]
+        M2B[method_d]
+    end
+
+    subgraph FUNC_A["カテゴリA関数"]
+        FA1[function_a]
+        FA2[function_b]
+    end
+
+    subgraph FUNC_B["カテゴリB関数"]
+        FB1[function_c]
+    end
+
+    CONFIG --> CLASS1
+    CONFIG --> CLASS2
+    CLASS1 --> FUNC_A
+    CLASS2 --> FUNC_B
 ```
-{module_name}.py
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-[設定・定数]
-  • CONFIG_NAME              - 設定の説明
-  • CONSTANT_NAME            - 定数の説明
-
-[クラス]
-  ├── ClassName1             - クラスの説明
-  │     ├── method_a()
-  │     └── method_b()
-  │
-  └── ClassName2             - クラスの説明
-        ├── method_c()
-        └── method_d()
-
-[関数グループ]
-  ├── カテゴリA関数
-  │     ├── function_a()
-  │     └── function_b()
-  │
-  └── カテゴリB関数
-        └── function_c()
 ```
+
+**具体例（Plannerモジュール）**:
+
+```mermaid
+flowchart TB
+    subgraph CONST["定数・設定"]
+        PROMPT[PLAN_PROMPT_TEMPLATE]
+        KEYWORDS[COMPLEXITY_KEYWORDS]
+    end
+
+    subgraph PLANNER["Planner クラス"]
+        INIT["__init__()"]
+        CREATE["create_plan()"]
+        EST["estimate_complexity()"]
+        EST_LLM["estimate_complexity_with_llm()"]
+        REFINE["refine_plan()"]
+        GET_COLL["_get_available_collections()"]
+        FALLBACK["_create_fallback_plan()"]
+    end
+
+    subgraph FACTORY["ファクトリ関数"]
+        CREATE_P["create_planner()"]
+    end
+
+    CONST --> PLANNER
+    CREATE_P --> INIT
+    INIT --> CREATE
+    CREATE --> EST
+    CREATE --> EST_LLM
+    CREATE --> GET_COLL
+    CREATE --> FALLBACK
+    CREATE --> REFINE
 ```
 
 ### 4.2 依存関係テーブル
@@ -788,31 +866,152 @@ __all__ = [
 
 ## 15. 付録セクション
 
-### 15.1 依存関係図
+### 15.1 依存関係図（Mermaid）
+
+Mermaid フローチャートを使用して依存関係を表現します。
 
 ```markdown
 ## 付録: 依存関係図
 
+```mermaid
+flowchart LR
+    MODULE[module_name.py]
+
+    subgraph EXT["外部ライブラリ"]
+        EXT1[external-library]
+        EXT2[another-library]
+    end
+
+    subgraph INT["内部モジュール"]
+        INT1[internal.module]
+    end
+
+    MODULE --> EXT1
+    MODULE --> EXT2
+    MODULE --> INT1
+
+    EXT1 --> E1C[module.Class]
+    EXT1 --> E1F[module.function]
+    EXT2 --> E2C[submodule.Class]
+    INT1 --> I1F[helper_function]
 ```
-{module_name}.py
-    │
-    ├──► external-library
-    │        └── module.Class
-    │        └── module.function
-    │
-    ├──► another-library
-    │        └── submodule.Class
-    │
-    └──► internal.module (内部)
-             └── helper_function()
+```
+
+**具体例（Plannerモジュール）**:
+
+```mermaid
+flowchart LR
+    PLANNER[planner.py]
+
+    subgraph GOOGLE["google-genai"]
+        GENAI[genai.Client]
+        TYPES[genai.types]
+    end
+
+    subgraph QDRANT["qdrant-client"]
+        QC[QdrantClient]
+    end
+
+    subgraph INTERNAL["内部モジュール"]
+        CONFIG[services.config_service]
+        QDRANT_SVC[services.qdrant_service]
+    end
+
+    PLANNER --> GENAI
+    PLANNER --> TYPES
+    PLANNER --> QC
+    PLANNER --> CONFIG
+    PLANNER --> QDRANT_SVC
+```
+
+---
+
+## 16. Mermaid記法ガイド
+
+### 16.1 基本構文
+
+```markdown
+```mermaid
+flowchart TB
+    A[ノードA] --> B[ノードB]
+    B --> C[ノードC]
+```
+```
+
+**方向指定**:
+
+| 指定 | 方向 |
+|------|------|
+| `TB` / `TD` | 上から下（Top to Bottom） |
+| `BT` | 下から上（Bottom to Top） |
+| `LR` | 左から右（Left to Right） |
+| `RL` | 右から左（Right to Left） |
+
+### 16.2 ノード形状
+
+| 構文 | 形状 |
+|------|------|
+| `A[テキスト]` | 四角形（デフォルト） |
+| `A(テキスト)` | 角丸四角形 |
+| `A([テキスト])` | スタジアム形 |
+| `A[[テキスト]]` | サブルーチン形 |
+| `A[(テキスト)]` | データベース形 |
+| `A((テキスト))` | 円形 |
+| `A>テキスト]` | 非対称形 |
+| `A{テキスト}` | ひし形（判断） |
+| `A{{テキスト}}` | 六角形 |
+| `A[/テキスト/]` | 平行四辺形 |
+
+### 16.3 矢印スタイル
+
+| 構文 | 説明 |
+|------|------|
+| `A --> B` | 矢印 |
+| `A --- B` | 線のみ |
+| `A -.-> B` | 点線矢印 |
+| `A ==> B` | 太い矢印 |
+| `A --テキスト--> B` | ラベル付き矢印 |
+| `A -->|テキスト| B` | ラベル付き矢印（代替構文） |
+
+### 16.4 サブグラフ
+
+```markdown
+```mermaid
+flowchart TB
+    subgraph GROUP1["グループ1のタイトル"]
+        A[ノードA]
+        B[ノードB]
+    end
+
+    subgraph GROUP2["グループ2のタイトル"]
+        C[ノードC]
+        D[ノードD]
+    end
+
+    A --> C
+    B --> D
+```
+```
+
+**スタイル適用**:
+
+```markdown
+```mermaid
+flowchart TB
+    subgraph GROUP["グループ"]
+        A[ノードA]
+    end
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style GROUP fill:#bbf,stroke:#333
 ```
 ```
 
 ---
 
-## 16. Markdown記法ルール
+## 17. Markdown記法ルール
 
-### 16.1 見出しレベル
+### 17.1 見出しレベル
 
 | レベル | 用途 |
 |-------|------|
@@ -821,14 +1020,15 @@ __all__ = [
 | `###` (H3) | サブセクション |
 | `####` (H4) | クラス名、関数名、メソッド名 |
 
-### 16.2 コードブロック
+### 17.2 コードブロック
 
 | 言語指定 | 用途 |
 |---------|------|
 | ` ```python ` | Pythonコード、シグネチャ、使用例 |
-| ` ``` ` (指定なし) | ASCII図、構成図 |
+| ` ```mermaid ` | Mermaidフローチャート、図表 |
+| ` ``` ` (指定なし) | その他のテキストブロック |
 
-### 16.3 テーブル
+### 17.3 テーブル
 
 ```markdown
 | 列1 | 列2 | 列3 |
@@ -836,7 +1036,7 @@ __all__ = [
 | 値1 | 値2 | 値3 |
 ```
 
-### 16.4 区切り線
+### 17.4 区切り線
 
 ```markdown
 ---
@@ -846,7 +1046,7 @@ __all__ = [
 
 ---
 
-## 17. チェックリスト
+## 18. チェックリスト
 
 ドキュメント作成時の確認項目:
 
@@ -855,8 +1055,8 @@ __all__ = [
 - [ ] 概要セクションにモジュールの目的が記載されている
 - [ ] 主な責務が箇条書きで記載されている
 - [ ] 主要機能一覧がテーブル形式で記載されている
-- [ ] アーキテクチャ構成図が作成されている
-- [ ] モジュール構成図が作成されている
+- [ ] アーキテクチャ構成図がMermaidで作成されている
+- [ ] モジュール構成図がMermaidで作成されている
 - [ ] 全クラス・関数が一覧表に含まれている
 - [ ] 各クラス・関数に「**概要**:」ラベル付きの説明がある
 - [ ] 各クラス・関数にIPOテーブルがある
@@ -865,7 +1065,7 @@ __all__ = [
 - [ ] 使用例が記載されている
 - [ ] 設定・定数が文書化されている
 - [ ] 変更履歴が更新されている
-- [ ] 依存関係図が作成されている
+- [ ] 依存関係図がMermaidで作成されている
 
 ---
 
@@ -876,3 +1076,4 @@ __all__ = [
 | 1.0 | 初版作成 |
 | 1.1 | 概要セクションに「主な責務」「主要機能一覧」を追加、IPO詳細に「**概要**:」ラベルを追加 |
 | 1.2 | 目次セクションを追加、チェックリストに目次確認項目を追加 |
+| 1.3 | ASCII図をMermaid v9フローチャートに変更（PyCharm Pro対応）、Mermaid記法ガイドセクションを追加 |

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 def show_agent_chat_page():
     st.title("🤖 エージェント対話 (Agent Chat)")
-    st.caption("Gemini 2.0 Flash + ReAct + Qdrant Hybrid RAG (Dense + Sparse)")
+    st.caption("Gemini 3.0 Flash + ReAct + Qdrant Hybrid RAG (Dense + Sparse)")
 
     # -------------------------------------------------------------------------
     # コレクションデータの表示エリア (Modified)
