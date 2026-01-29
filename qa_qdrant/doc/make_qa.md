@@ -1,357 +1,263 @@
-# make_qa.py 完全ガイド（v3.0）
+# make_qa.py - Q/Aペア生成 CLIエントリーポイント ドキュメント
 
-## 概要
-
-`qa_qdrant/make_qa.py` は、**Q/Aペア生成のCLIエントリーポイント**です。チャンク済みCSVファイルまたは事前定義データセットからQ/Aペアを自動生成します。Celery並列処理に対応し、大規模データの効率的な処理が可能です。
+**Version 1.0** | 最終更新: 2025-01-29
 
 ---
 
 ## 目次
 
-1. [v3.0の変更点](#v30の変更点)
-2. [モジュール構成](#モジュール構成)
-3. [アーキテクチャ](#アーキテクチャ)
-4. [関数一覧](#関数一覧)
-5. [IPO詳細（Input/Process/Output）](#ipo詳細inputprocessoutput)
-6. [コマンドライン引数](#コマンドライン引数)
-7. [使用方法](#使用方法)
-8. [関連ツール](#関連ツール)
+1. [概要](#概要)
+2. [アーキテクチャ構成図](#1-アーキテクチャ構成図)
+3. [モジュール構成図](#2-モジュール構成図)
+4. [クラス・関数一覧表](#3-クラス関数一覧表)
+5. [クラス・関数 IPO詳細](#4-クラス関数-ipo詳細)
+6. [CLI引数仕様](#5-cli引数仕様)
+7. [使用例](#6-使用例)
+8. [変更履歴](#7-変更履歴)
+9. [付録: 依存関係図](#付録-依存関係図)
 
 ---
 
-## v3.0の変更点
+## 概要
 
-| 項目 | v2.x | v3.0 |
-|-----|------|------|
-| 入力方式 | `--input-chunks` と `--input-file` 分離 | `--input-file` に統一 |
-| チャンク処理 | 内部でチャンク化 | **外部で事前チャンク化必須** |
-| 並列制御 | `--celery-workers` | `-c, --concurrency` 追加 |
-| Q/A生成 | 固定数 | **スマート生成（動的Q/A数）** |
+`make_qa.py`は、チャンク済みCSVファイルからQ/Aペアを自動生成するCLIエントリーポイント。`QAPipeline`を呼び出し、Celery並列処理またはシンク処理でQ/Aペアを生成する。
 
-### 削除された引数
+### 主な責務
 
-```
---input-chunks        → --input-file に統合
---merge-chunks        → 削除（外部チャンク化で対応）
---min-tokens          → 削除
---max-tokens          → 削除
---overlap-tokens      → 削除
---use-similarity      → 削除
---similarity-threshold → 削除
-```
+- CLI引数の解析と検証
+- 入力ファイル/データセットの検証
+- `QAPipeline`の初期化と実行
+- 実行結果のログ出力
 
-### 追加された引数
+### 主要機能一覧
 
-```
--c, --concurrency          # 並列タスク数
---use-smart-generation     # スマートQ/A生成（デフォルト有効）
---no-smart-generation      # 従来方式に切り替え
-```
+| 機能 | 説明 |
+|------|------|
+| `main()` | CLIエントリーポイント関数 |
+
+### 前提条件
+
+- 入力CSVは既にチャンク済み（`csv_text_to_chunks_text_csv.py`で処理済み）
+- `GOOGLE_API_KEY` 環境変数が設定されていること
 
 ---
 
-## モジュール構成
+## 1. アーキテクチャ構成図
 
-```
-qa_qdrant/
-├── make_qa.py                    # Q/A生成CLIエントリーポイント ← このドキュメント
-├── make_qa_register_qdrant.py    # Q/A生成 + Qdrant登録 統合ツール
-└── register_to_qdrant.py         # Qdrant登録専用ツール
-
-qa_generation/
-├── pipeline.py                   # Q/A生成パイプライン（コア）
-├── smart_qa_generator.py         # スマートQ/A生成エンジン
-├── evaluation.py                 # カバレッジ分析
-├── semantic.py                   # セマンティック分析
-├── data_io.py                    # データ入出力
-└── models.py                     # データモデル
-
-chunking/
-└── csv_text_to_chunks_text_csv.py  # テキスト→チャンクCSV変換（前処理）
-```
-
----
-
-## アーキテクチャ
-
-### 全体構成図
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│                        make_qa.py                              │
-│                    (CLIエントリーポイント)                        │
-├────────────────────────────────────────────────────────────────┤
-│  main()                                                        │
-│    ├── 引数解析 (argparse)                                      │
-│    ├── 入力検証                                                 │
-│    ├── QAPipeline初期化                                         │
-│    └── pipeline.run() 実行                                      │
-└────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌────────────────────────────────────────────────────────────────┐
-│                    qa_generation/pipeline.py                   │
-│                        (QAPipeline)                            │
-├────────────────────────────────────────────────────────────────┤
-│  ├── チャンクCSV読み込み                                         │
-│  ├── Q/A生成（Celery並列 or 同期）                               │
-│  ├── カバレッジ分析（オプション）                                  │
-│  └── 結果保存（JSON/CSV）                                        │
-└────────────────────────────────────────────────────────────────┘
-                              │
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
-│ SmartQAGenerator │ │    evaluation    │ │     data_io      │
-│  (Q/A生成)        │ │  (カバレッジ)      │ │   (入出力)       │
-└──────────────────┘ └──────────────────┘ └──────────────────┘
-```
-
-### 処理フロー
-
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│ テキスト     │     │ チャンクCSV   │     │ Q/Aペア     │
-│ ファイル     │────▶│ (前処理済み)  │────▶│ JSON/CSV    │
-└─────────────┘     └─────────────┘     └─────────────┘
-       │                   │                   │
-       │                   │                   │
-       ▼                   ▼                   ▼
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│ csv_text_to │     │  make_qa.py │     │ register_to │
-│ _chunks_... │     │             │     │ _qdrant.py  │
-└─────────────┘     └─────────────┘     └─────────────┘
-   (前処理)          (Q/A生成)          (Qdrant登録)
-```
-
-### Mermaid図
+### 1.1 システム全体構成
 
 ```mermaid
 flowchart TB
-    subgraph Input
-        A[テキストファイル]
-        B[チャンク済みCSV]
-        C[データセット名]
+    subgraph CLI["CLIレイヤー"]
+        USER[ユーザー]
+        TERMINAL[ターミナル]
     end
 
-    subgraph Preprocessing
-        D[csv_text_to_chunks_text_csv.py]
+    subgraph ENTRY["エントリーポイント"]
+        MAKE_QA[make_qa.py]
     end
 
-    subgraph make_qa_py[make_qa.py]
-        E[引数解析]
-        F[入力検証]
-        G[QAPipeline初期化]
-        H[pipeline.run実行]
+    subgraph PIPELINE["パイプライン層"]
+        QA_PIPELINE[QAPipeline]
+        SMART_GEN[SmartQAGenerator]
     end
 
-    subgraph QAPipeline
-        I[チャンク読み込み]
-        J{Celery使用?}
-        K[並列Q/A生成]
-        L[同期Q/A生成]
-        M[カバレッジ分析]
-        N[結果保存]
+    subgraph WORKER["ワーカー層（オプション）"]
+        CELERY[Celery Workers]
     end
 
-    subgraph Output
-        O[Q/A JSON]
-        P[Q/A CSV]
-        Q[サマリーJSON]
+    subgraph EXTERNAL["外部サービス層"]
+        GEMINI[Gemini API]
     end
 
-    A --> D
-    D --> B
-    B --> E
-    C --> E
-    E --> F
-    F --> G
-    G --> H
-    H --> I
-    I --> J
-    J -->|Yes| K
-    J -->|No| L
-    K --> M
-    L --> M
-    M --> N
-    N --> O
-    N --> P
-    N --> Q
+    subgraph STORAGE["ストレージ層"]
+        INPUT_CSV[チャンク済みCSV]
+        OUTPUT[qa_output/pipeline]
+    end
+
+    USER --> TERMINAL
+    TERMINAL --> MAKE_QA
+    MAKE_QA --> QA_PIPELINE
+    QA_PIPELINE --> SMART_GEN
+    QA_PIPELINE -.->|use_celery| CELERY
+    CELERY --> GEMINI
+    SMART_GEN --> GEMINI
+    INPUT_CSV --> MAKE_QA
+    QA_PIPELINE --> OUTPUT
 ```
 
----
+### 1.2 データフロー
 
-## 関数一覧
-
-| 関数名 | 機能概要 |
-|-------|---------|
-| `main()` | CLIエントリーポイント。引数解析、検証、パイプライン実行を統括 |
-
-### 使用する外部クラス・関数
-
-| モジュール | クラス/関数 | 用途 |
-|-----------|-----------|------|
-| `qa_generation.pipeline` | `QAPipeline` | Q/A生成パイプラインのコアクラス |
-| `config` | `DATASET_CONFIGS` | 事前定義データセットの設定辞書 |
+1. ユーザーがCLI引数を指定して`make_qa.py`を実行
+2. 引数解析・検証後、`QAPipeline`を初期化
+3. パイプラインがCSVを読み込み、Q/Aペアを生成
+4. 結果を`qa_output/pipeline`に保存
+5. サマリーをログ出力
 
 ---
 
-## IPO詳細（Input/Process/Output）
+## 2. モジュール構成図
 
-### main()
-
-#### IPO
-
-| 区分 | 内容 |
-|-----|------|
-| **Input** | コマンドライン引数（argparse経由）<br>環境変数: `GOOGLE_API_KEY` |
-| **Process** | 1. 引数解析<br>2. APIキー確認<br>3. 入力ファイル検証<br>4. 設定ログ表示<br>5. QAPipeline初期化<br>6. pipeline.run()実行<br>7. 結果表示 |
-| **Output** | 終了コード: 0（成功）/ 1（失敗）<br>ファイル出力: Q/A JSON, CSV, サマリー |
-
-#### プロセスフロー
+### 2.1 内部モジュール構成
 
 ```mermaid
-flowchart TD
-    A[開始] --> B[argparse引数解析]
-    B --> C{GOOGLE_API_KEY?}
-    C -->|No| D[エラー終了]
-    C -->|Yes| E{input-file指定?}
+flowchart TB
+    subgraph MAKE_QA["make_qa.py"]
+        MAIN[main]
+    end
 
-    E -->|Yes| F[ファイル存在確認]
-    F --> G{CSV?}
-    G -->|No| H[エラー: CSVのみ対応]
-    G -->|Yes| I[設定ログ表示]
+    subgraph MAIN_FLOW["main() 処理フロー"]
+        ARGPARSE[argparse 引数解析]
+        VALIDATE[入力検証]
+        INIT_PIPE[QAPipeline 初期化]
+        RUN_PIPE[pipeline.run 実行]
+        LOG_RESULT[結果ログ出力]
+    end
 
-    E -->|No| J[dataset指定確認]
-    J --> I
-
-    I --> K[QAPipeline初期化]
-    K --> L[pipeline.run実行]
-    L --> M{成功?}
-    M -->|Yes| N[結果表示]
-    M -->|No| O[エラー表示]
-    N --> P[終了コード0]
-    O --> Q[終了コード1]
-    H --> Q
-    D --> Q
+    MAIN --> ARGPARSE
+    ARGPARSE --> VALIDATE
+    VALIDATE --> INIT_PIPE
+    INIT_PIPE --> RUN_PIPE
+    RUN_PIPE --> LOG_RESULT
 ```
 
-#### 入力パラメータ（コマンドライン）
+### 2.2 外部依存関係
 
-| パラメータ | 型 | 必須 | デフォルト | 説明 |
-|----------|---|:---:|----------|------|
-| `--dataset` | str | ※1 | - | 事前定義データセット名 |
-| `--input-file` | str | ※1 | - | チャンク済みCSVファイルパス |
-| `--model` | str | No | gemini-2.0-flash | 使用するGeminiモデル |
-| `--output` | str | No | qa_output/pipeline | 出力ディレクトリ |
-| `--max-docs` | int | No | None | 処理する最大チャンク数 |
-| `--analyze-coverage` | flag | No | False | カバレッジ分析を実行 |
-| `--coverage-threshold` | float | No | None | カバレッジ判定閾値 |
-| `--batch-chunks` | int | No | 3 | 1回のAPIで処理するチャンク数 |
-| `--use-smart-generation` | flag | No | True | スマートQ/A生成を使用 |
-| `--no-smart-generation` | flag | No | - | 従来方式を使用 |
-| `--use-celery` | flag | No | False | Celery並列処理を使用 |
-| `-c, --concurrency` | int | No | 8 | 並列タスク数 |
-| `--celery-workers` | int | No | 1 | (非推奨) ワーカー数チェック用 |
+| ライブラリ | バージョン | 用途 |
+|-----------|-----------|------|
+| `argparse` | 標準 | CLI引数解析 |
+| `logging` | 標準 | ログ出力 |
+| `os` | 標準 | 環境変数・パス操作 |
+| `sys` | 標準 | パス追加・終了コード |
 
-※1: `--dataset` と `--input-file` はいずれか一方が必須（排他的）
+### 2.3 内部依存モジュール
 
-#### 出力構造
+| モジュール | 用途 |
+|-----------|------|
+| `qa_generation.pipeline.QAPipeline` | Q/A生成パイプライン |
+| `config.DATASET_CONFIGS` | 事前定義データセット設定 |
+
+---
+
+## 3. クラス・関数一覧表
+
+### 3.1 関数一覧
+
+#### エントリーポイント関数
+
+| 関数名 | 概要 |
+|-------|------|
+| `main()` | CLIエントリーポイント。引数解析・検証・パイプライン実行を行う |
+
+---
+
+## 4. クラス・関数 IPO詳細
+
+### 4.1 エントリーポイント関数
+
+#### `main`
+
+**概要**: CLI引数を解析し、`QAPipeline`を初期化・実行するエントリーポイント関数。
 
 ```python
-# pipeline.run()の戻り値
-{
-    'qa_pairs': [...],           # 生成されたQ/Aペアリスト
-    'qa_count': 250,             # 生成Q/A数
-    'saved_files': {
-        'summary': 'qa_output/pipeline/qa_pairs_xxx_summary.json',
-        'qa_csv': 'qa_output/pipeline/qa_pairs_xxx.csv',
-        'qa_json': 'qa_output/pipeline/qa_pairs_xxx.json'
-    },
-    'coverage_results': {        # --analyze-coverage時のみ
-        'coverage_rate': 0.85,
-        'covered_chunks': 85,
-        'total_chunks': 100,
-        ...
-    }
-}
+def main() -> None
 ```
 
----
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| - | - | - | パラメータなし（CLI引数から取得） |
 
-## コマンドライン引数
+| 項目 | 内容 |
+|------|------|
+| **Input** | CLI引数（`sys.argv`経由） |
+| **Process** | 1. `argparse`で引数を解析<br>2. `GOOGLE_API_KEY`環境変数を確認<br>3. 入力ファイルの存在・形式を検証<br>4. 設定内容をログ出力<br>5. `QAPipeline`を初期化<br>6. `pipeline.run()`を実行<br>7. 結果サマリーをログ出力<br>8. エラー時は`sys.exit(1)` |
+| **Output** | `None`（標準出力へのログ、ファイル出力は`QAPipeline`が担当） |
 
-### 入力ソース（排他的・必須）
+**終了コード**:
 
-| 引数 | 説明 |
-|-----|------|
-| `--dataset` | 事前定義データセット（DATASET_CONFIGSのキー） |
-| `--input-file` | チャンク済みCSVファイルのパス |
-
-### 共通パラメータ
-
-| 引数 | デフォルト | 説明 |
-|-----|----------|------|
-| `--model` | gemini-2.0-flash | 使用するGeminiモデル |
-| `--output` | qa_output/pipeline | 出力ディレクトリ |
-| `--max-docs` | None | 処理する最大チャンク数 |
-
-### カバレッジ分析
-
-| 引数 | デフォルト | 説明 |
-|-----|----------|------|
-| `--analyze-coverage` | False | カバレッジ分析を実行 |
-| `--coverage-threshold` | None | カバレッジ判定の類似度閾値 |
-
-### Q/A生成パラメータ
-
-| 引数 | デフォルト | 説明 |
-|-----|----------|------|
-| `--batch-chunks` | 3 | 1回のAPIで処理するチャンク数（1-5） |
-| `--use-smart-generation` | True | スマートQ/A生成を使用 |
-| `--no-smart-generation` | - | 従来方式を使用 |
-
-### Celery並列処理
-
-| 引数 | デフォルト | 説明 |
-|-----|----------|------|
-| `--use-celery` | False | Celery並列処理を使用 |
-| `-c, --concurrency` | 8 | 並列タスク数 |
-| `--celery-workers` | 1 | (非推奨) ワーカープロセス数チェック用 |
+| コード | 説明 |
+|--------|------|
+| `0` | 正常終了 |
+| `1` | エラー終了（APIキー未設定、ファイル不在、実行エラー等） |
 
 ---
 
-## 使用方法
+## 5. CLI引数仕様
 
-### 基本的な使用例
+### 5.1 入力ソース（排他的・必須）
+
+| 引数 | 型 | 説明 |
+|------|------|------|
+| `--dataset` | str | 事前定義データセット名（`DATASET_CONFIGS`のキー） |
+| `--input-file` | str | チャンク済みCSVファイルのパス |
+
+> 📝 **注意**: `--dataset` と `--input-file` は排他的。いずれか一方を必ず指定。
+
+### 5.2 共通パラメータ
+
+| 引数 | 型 | デフォルト | 説明 |
+|------|------|-----------|------|
+| `--model` | str | `gemini-2.0-flash` | 使用するGeminiモデル |
+| `--output` | str | `{PROJECT_ROOT}/qa_output/pipeline` | 出力ディレクトリ |
+| `--max-docs` | int | `None` | 処理する最大チャンク数 |
+
+### 5.3 カバレージ分析パラメータ
+
+| 引数 | 型 | デフォルト | 説明 |
+|------|------|-----------|------|
+| `--analyze-coverage` | flag | `False` | カバレージ分析を実行 |
+| `--coverage-threshold` | float | `None` | カバレージ判定の類似度閾値 |
+
+### 5.4 Q/A生成パラメータ
+
+| 引数 | 型 | デフォルト | 説明 |
+|------|------|-----------|------|
+| `--batch-chunks` | int | `3` | 1回のAPIで処理するチャンク数（1-5） |
+| `--use-smart-generation` | flag | `True` | スマートQ/A生成を使用（LLMによる動的Q/A数決定） |
+| `--no-smart-generation` | flag | - | 従来方式のQ/A生成を使用（トークン数ベース） |
+
+### 5.5 Celery並列処理パラメータ
+
+| 引数 | 型 | デフォルト | 説明 |
+|------|------|-----------|------|
+| `--use-celery` | flag | `False` | Celeryによる非同期並列処理を使用 |
+| `-c`, `--concurrency` | int | `8` | 並列タスク数 |
+| `--celery-workers` | int | `1` | ⚠️ 非推奨。`--concurrency`を使用 |
+
+### 5.6 削除された引数（v3.0）
+
+> ⚠️ **非推奨**: 以下の引数はv3.0で削除されました。
+
+| 削除された引数 | 代替方法 |
+|---------------|---------|
+| `--input-chunks` | `--input-file`に統一 |
+| `--merge-chunks` | 削除（前段のchunkingで完了） |
+| `--min-tokens` | 削除 |
+| `--max-tokens` | 削除 |
+| `--overlap-tokens` | 削除 |
+| `--use-similarity` | 削除 |
+| `--similarity-threshold` | 削除 |
+
+---
+
+## 6. 使用例
+
+### 6.1 基本的なワークフロー（同期処理）
 
 ```bash
 # チャンク済みCSVからQ/A生成（同期処理）
 python qa_qdrant/make_qa.py \
   --input-file output_chunked/data_chunks.csv \
   --analyze-coverage
-
-# Celery並列処理を使用
-python qa_qdrant/make_qa.py \
-  --input-file output_chunked/data_chunks.csv \
-  --use-celery \
-  -c 8 \
-  --analyze-coverage
-
-# 事前定義データセットを使用
-python qa_qdrant/make_qa.py \
-  --dataset wikipedia_ja \
-  --use-celery \
-  -c 4
 ```
 
-### Celery使用時の手順
+### 6.2 Celery並列処理
 
 ```bash
-# 1. Celeryワーカー起動（別ターミナル）
-./start_celery.sh restart -c 8 --flower
+# Celeryワーカーを起動（別ターミナル）
+./start_celery.sh -c 8
 
-# 2. make_qa.py実行
+# Celery並列処理でQ/A生成
 python qa_qdrant/make_qa.py \
   --input-file output_chunked/data_chunks.csv \
   --use-celery \
@@ -360,7 +266,27 @@ python qa_qdrant/make_qa.py \
   --analyze-coverage
 ```
 
-### 従来方式のQ/A生成
+### 6.3 事前定義データセットを使用
+
+```bash
+# wikipedia_ja データセットを処理
+python qa_qdrant/make_qa.py \
+  --dataset wikipedia_ja \
+  --use-celery \
+  -c 4
+```
+
+### 6.4 処理チャンク数を制限
+
+```bash
+# 最初の100チャンクのみ処理（テスト用）
+python qa_qdrant/make_qa.py \
+  --input-file output_chunked/large_data.csv \
+  --max-docs 100 \
+  --analyze-coverage
+```
+
+### 6.5 従来方式のQ/A生成
 
 ```bash
 # スマート生成を無効化
@@ -370,107 +296,71 @@ python qa_qdrant/make_qa.py \
   --analyze-coverage
 ```
 
-### テキストファイルからの処理（前処理必要）
+---
 
-```bash
-# Step 1: テキストファイルをチャンクCSVに変換
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file data/document.txt \
-  --output output_chunked
+## 7. 変更履歴
 
-# Step 2: Q/A生成
-python qa_qdrant/make_qa.py \
-  --input-file output_chunked/document_chunks.csv \
-  --use-celery \
-  -c 8
+| バージョン | 変更内容 |
+|-----------|---------|
+| 1.0 | 初版作成 |
+| 3.0 | pipeline.py v3.0対応、チャンク関連引数を削除、`-c, --concurrency`引数を追加、`--use-smart-generation`引数を追加 |
+
+---
+
+## 付録: 依存関係図
+
+```mermaid
+flowchart LR
+    MAKE_QA[make_qa.py]
+
+    subgraph STDLIB["標準ライブラリ"]
+        SYS[sys]
+        OS[os]
+        ARGPARSE[argparse]
+        LOGGING[logging]
+    end
+
+    subgraph INTERNAL["内部モジュール"]
+        PIPELINE[qa_generation.pipeline]
+        CONFIG[config]
+    end
+
+    MAKE_QA --> SYS
+    MAKE_QA --> OS
+    MAKE_QA --> ARGPARSE
+    MAKE_QA --> LOGGING
+    MAKE_QA --> PIPELINE
+    MAKE_QA --> CONFIG
+
+    PIPELINE --> QA_PIPE[QAPipeline]
+    CONFIG --> DATASET[DATASET_CONFIGS]
 ```
 
 ---
 
-## 関連ツール
+## 付録: 実行フローチャート
 
-### make_qa_register_qdrant.py
+```mermaid
+flowchart TD
+    START([開始]) --> PARSE[引数解析]
+    PARSE --> CHECK_KEY{GOOGLE_API_KEY?}
+    CHECK_KEY -->|未設定| ERROR1[エラー終了]
+    CHECK_KEY -->|設定済| CHECK_INPUT{入力ファイル検証}
 
-Q/A生成とQdrant登録を一括実行する統合ツール。
+    CHECK_INPUT -->|ファイル不在| ERROR2[エラー終了]
+    CHECK_INPUT -->|CSV以外| ERROR3[エラー終了]
+    CHECK_INPUT -->|OK| LOG_CONFIG[設定ログ出力]
 
-```bash
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-file output_chunked/data_chunks.csv \
-  --collection my_collection \
-  --use-celery \
-  -c 8 \
-  --recreate
+    LOG_CONFIG --> INIT[QAPipeline初期化]
+    INIT --> RUN[pipeline.run実行]
+    RUN --> CHECK_RESULT{成功?}
+
+    CHECK_RESULT -->|エラー| ERROR4[エラー終了]
+    CHECK_RESULT -->|成功| LOG_RESULT[結果ログ出力]
+    LOG_RESULT --> END([正常終了])
+
+    ERROR1 --> EXIT1([exit 1])
+    ERROR2 --> EXIT1
+    ERROR3 --> EXIT1
+    ERROR4 --> EXIT1
 ```
-
-### register_to_qdrant.py
-
-Q/AペアCSVをQdrantに登録する専用ツール。
-
-```bash
-python qa_qdrant/register_to_qdrant.py \
-  --input-file qa_output/pipeline/qa_pairs.csv \
-  --collection my_collection \
-  --recreate
-```
-
-### csv_text_to_chunks_text_csv.py
-
-テキストファイルをチャンクCSVに変換する前処理ツール。
-
-```bash
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file data/document.txt \
-  --output output_chunked \
-  --max-tokens 200 \
-  --min-tokens 50
-```
-
----
-
-## エラーハンドリング
-
-### よくあるエラーと対処法
-
-| エラー | 原因 | 対処法 |
-|-------|------|-------|
-| `GOOGLE_API_KEYが設定されていません` | 環境変数未設定 | `export GOOGLE_API_KEY=xxx` |
-| `入力ファイルが見つかりません` | パスが間違っている | ファイルパスを確認 |
-| `CSVファイル以外は直接処理できません` | txt等を直接指定 | `csv_text_to_chunks_text_csv.py`で前処理 |
-| `Celeryタスクがタイムアウト` | ワーカー未起動 | `./start_celery.sh restart -c 8` |
-
----
-
-## ベストプラクティス
-
-### 1. 並列数の設定
-
-```bash
-# CPUコア数に合わせて設定
-# M2 MacBook Air (8 vCPU): -c 8
-# M1 Pro (10 vCPU): -c 10
-# サーバー (32 vCPU): -c 16〜24
-```
-
-### 2. バッチチャンク数の調整
-
-```bash
-# 短いチャンク: --batch-chunks 5
-# 長いチャンク: --batch-chunks 1-2
-# 標準: --batch-chunks 3（デフォルト）
-```
-
-### 3. スマート生成の活用
-
-```bash
-# 推奨: スマート生成（デフォルト）
---use-smart-generation
-
-# メタ情報の多いデータ: スマート生成で0個判定を活用
-# 技術文書: スマート生成で4-5個の詳細Q/A生成
-```
-
----
-
-**作成日**: 2025-01-27
-**対象ファイル**: `qa_qdrant/make_qa.py`
-**バージョン**: v3.0（pipeline.py v3.0対応版）

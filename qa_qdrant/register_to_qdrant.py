@@ -14,25 +14,25 @@ register_csv_to_qdrant.py と register_qdrant.py を統合した最終版
 
 使用例:
     # 基本的な使い方
-    python register_to_qdrant.py \\
-      --input-file qa_output/qa_pairs.csv \\
-      --collection my_collection \\
+    python register_to_qdrant.py \
+      --input-file qa_output/qa_pairs.csv \
+      --collection my_collection \
       --recreate
 
     # フル機能
-    python register_to_qdrant.py \\
-      --input-file qa_output/pipeline/qa_pairs_fineweb_edu_ja_20251230_123456.csv \\
-      --collection qa_fineweb_edu_ja \\
-      --recreate \\
-      --batch-size 100 \\
-      --normalize-filename \\
-      --create-ui-csv \\
+    python register_to_qdrant.py \
+      --input-file qa_output/pipeline/qa_pairs_fineweb_edu_ja_20251230_123456.csv \
+      --collection qa_fineweb_edu_ja \
+      --recreate \
+      --batch-size 100 \
+      --normalize-filename \
+      --create-ui-csv \
       --ui-output-dir qa_output
 
     # テスト用
-    python register_to_qdrant.py \\
-      --input-file test.csv \\
-      --collection test \\
+    python register_to_qdrant.py \
+      --input-file test.csv \
+      --collection test \
       --max-docs 10
 """
 

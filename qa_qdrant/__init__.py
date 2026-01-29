@@ -188,7 +188,7 @@ def main():
         pipeline = QAPipeline(
             dataset_name=args.dataset,
             input_file=args.input_file,
-            input_chunks=args.input_chunks,
+            # input_chunks=args.input_chunks,
             model=args.model,
             output_dir=args.output,
             max_docs=args.max_docs
@@ -201,14 +201,14 @@ def main():
             use_celery=args.use_celery,
             celery_workers=args.celery_workers,
             batch_chunks=args.batch_chunks,
-            merge_chunks=args.merge_chunks,
-            min_tokens=args.min_tokens,
-            max_tokens=args.max_tokens,
+            # merge_chunks=args.merge_chunks,
+            # min_tokens=args.min_tokens,
+            # max_tokens=args.max_tokens,
             analyze_coverage=args.analyze_coverage,
             coverage_threshold=args.coverage_threshold,
-            overlap_tokens=args.overlap_tokens,
-            use_similarity=args.use_similarity,
-            similarity_threshold=args.similarity_threshold
+            # overlap_tokens=args.overlap_tokens,
+            # use_similarity=args.use_similarity,
+            # similarity_threshold=args.similarity_threshold
         )
 
         # ================================================================
