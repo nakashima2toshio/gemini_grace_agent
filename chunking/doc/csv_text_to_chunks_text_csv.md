@@ -1,193 +1,117 @@
-# csv_text_to_chunks_text_csv.py 詳細設計書
+# csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキング ドキュメント
 
-本プロジェクトは、現在のLLM開発における最先端かつ最も需要のある課題のAgent, RAGのプロジェクトをLangChainなどのライブラリを使わず、「自律型エージェントの制御（Plan-and-Execute）」や「信頼度評価」RAGデータ作成、ベクトルDBへの登録、検索システムを実現しています。
-
-## 📋 目次
-
-1. [概要](#1-概要)
-2. [v3.2.0での主要な変更点](#2-v320での主要な変更点)
-3. [処理フロー全体図](#3-処理フロー全体図)
-4. [データの流れ詳細](#4-データの流れ詳細)
-5. [3段階チャンク化戦略](#5-3段階チャンク化戦略)
-6. [関数別詳細設計](#6-関数別詳細設計)
-7. [使用例](#7-使用例)
-8. [トラブルシューティング](#8-トラブルシューティング)
-9. [async並列処理の詳細](#9-async並列処理の詳細)
+**Version 1.2** | 最終更新: 2025-01-29
 
 ---
 
-## 1. 概要
+## 目次
 
-### 1.1 システムの目的
+1. [概要](#概要)
+2. [アーキテクチャ構成図](#1-アーキテクチャ構成図)
+3. [モジュール構成図](#2-モジュール構成図)
+4. [クラス・関数一覧表](#3-クラス関数一覧表)
+5. [クラス・関数 IPO詳細](#4-クラス関数-ipo詳細)
+6. [設定・定数](#5-設定定数)
+7. [使用例](#6-使用例)
+8. [エクスポート](#7-エクスポート)
+9. [変更履歴](#8-変更履歴)
+10. [付録: 依存関係図](#付録-依存関係図)
 
-長文テキストを **意味的なまとまり（セマンティックチャンク）** に分割するシステム。
-LLM（Gemini API）を活用し、形式的な区切りではなく、**文脈・トピックに基づいた高品質な分割** を実現。
-チャンク方式は：step1:(階層構造化), step2(意味的分割), step3(連続性判定)とこれらの処理の並列化で実践向けとしました。
+---
 
-#### 速習コース：
-- 3.1 システム全体の流れ： mermaid図で全体の処理を把握する（step1, step2, step3）
-- 3.2 関数呼び出しの階層構造: step1:(階層構造化), step2(意味的分割), step3(連続性判定)
-- 5.3段階チャンク化戦略 + 6-関数別詳細設計
-- 具体例で、チャンクしてみる。step1.py, step2.py, step3.py
-- 9.async並列処理の詳細（並列処理を確認する。）
+## 概要
 
-### 1.2 主要機能一覧
+`csv_text_to_chunks_text_csv.py`は、テキストまたはCSVファイルをLLMを使用して意味的なチャンクに分割するパイプラインモジュールです。3段階の処理（階層構造化→意味的分割→文脈連続性チェック）により、高品質なセマンティックチャンキングを実現します。非同期・並列処理による高速化、チェックポイント機能による中断再開をサポートします。
 
-| 機能 | 説明 | バージョン |
-|------|------|-----------|
-| `chunks_all_async()` | 3段階でテキストをチャンク化（非同期・並列処理） | v1.0.0 |
-| `load_text_from_csv()` | CSVファイルからテキスト読み込み | v1.2.0 |
-| `save_chunks_as_csv()` | チャンクをCSV保存（改行正規化対応） | v1.2.0 / v2.0.0 |
-| `save_chunks_as_text()` | チャンクをテキスト形式で保存（後方互換性） | v1.2.0 |
-| `generate_output_filename()` | 出力ファイル名の自動生成 | v2.0.0 |
-| `_normalize_whitespace()` | テキスト正規化（改行・空白削除） | v2.0.0 |
-| `_split_sentences_simple()` | 簡易的な文分割（日本語対応、内部関数） | v2.0.0 |
+### 主な責務
 
-### 1.3 技術スタック
+- CSVファイルまたはテキストファイルからのテキスト読み込み
+- LLMを使用した3段階セマンティックチャンキング処理
+- 非同期・並列処理による高速化（asyncio + Semaphore）
+- チェックポイントによる中断・再開機能
+- CSV/テキスト形式でのチャンク出力（改行正規化対応）
+- 出力ファイル名の自動生成（タイムスタンプ付き）
 
-| 項目 | 技術 |
+### 主要機能一覧
+
+| 機能 | 説明 |
 |------|------|
-| 言語 | Python 3.10+ |
-| LLM | Google Gemini API (`gemini-2.5-flash`) |
-| 非同期処理 | asyncio + asyncio.to_thread() |
-| 並列制御 | asyncio.Semaphore（デフォルト: 8並列） |
-| データ検証 | Pydantic v2 |
-| 進捗表示 | tqdm.asyncio |
-| トークン計算 | tiktoken (`cl100k_base`エンコーディング) |
-
-### 1.4 基本的な使用方法
-
-```bash
-# テキストファイルをチャンク化してCSV出力
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file ./data/document.txt \
-  --output chunks_output
-
-# 出力: chunks_output/document_chunks_20260123_123456.csv
-```
-
-## 2. v3.2.0での主要な変更点
-
-### 2.1 docstringの詳細化
-
-v3.2.0では、Step2とStep3のdocstringが詳細化され、各Stepの役割と違いが明確になりました。
-
-#### Step2: 意味的分割
-```python
-"""
-Step 2: 意味的分割
-
-段落を意味的な類似度に基づいて再構成する。
-話題の転換点で分割し、形式的な改行ではなく意味のまとまりで分割する。
-
-【Step1との違い】
-- Step1: 物理的構造（空行のみ）で分割
-- Step2: 意味的な類似度（話題の転換）で分割
-- 章の変わり目（第1章→第2章）はStep2で分割
-"""
-```
-
-#### Step3: 連続性判定
-```python
-"""
-Step 3: 文脈連続性チェック
-
-隣接するチャンク間の文脈連続性を判定し、
-連続している場合は結合、非連続の場合は分離する。
-
-【Step2との違い】
-- Step2: 分割（1段落→複数チャンク、チャンク数が増加）
-- Step3: 結合（複数チャンク→少数チャンク、チャンク数が減少）
-- Step3はStep2の「過分割」を修正する役割
-
-【検証パターン】
-- 前方依存: 「この」「それ」等の指示語で前を参照 → 結合（True）
-- 後方依存: 専門用語が未定義のまま使用 → 結合（True）
-- 話題転換: 完全に別のトピック → 分離（False）
-- 独立判定: 話題は同じでも単独で理解可能 → 分離（False）
-- 章構造: 章が変わった場合 → 分離（False）
-"""
-```
-
-### 2.2 Step3マージ処理のログ出力追加
-
-v3.2.0では、Step3のマージ処理に`logger.debug`出力が追加され、結合/分離の詳細が確認できるようになりました。
-
-```python
-# マージ処理
-logger.debug("マージ処理...")
-if result.is_connected:
-    # 結合: 空行（\n\n）で連結し、段落構造を保持
-    final_chunks[-1] += "\n\n" + chunks[i + 1]
-    logger.debug(f"  チャンク{i + 1} + チャンク{i + 2} → 結合")
-else:
-    # 分離: 新しいチャンクとして追加
-    final_chunks.append(chunks[i + 1])
-    logger.debug(f"  チャンク{i + 2} → 新規追加")
-```
-
-**確認方法:**
-```bash
-# --verbose オプションでdebugログを有効化
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file document.txt \
-  --output chunks_output \
-  --verbose
-```
-
-### 2.3 デフォルトモデル（継続）
-
-| 項目 | v2.0.0 | v3.1.0〜 |
-|------|--------|----------|
-| デフォルトモデル | `gemini-2.0-flash` | `gemini-2.5-flash` |
-| 理由 | - | 高いレート制限とパフォーマンス |
-
-### 2.4 コマンドライン引数（継続）
-
-| 引数・オプション | 説明 | デフォルト値 |
-|---------|---------|---------|
-| `--input-file` | 入力ファイル（.txt, .csv）【必須】 | - |
-| `--output` | 出力ディレクトリ | `chunks_output` |
-| `--model` | 使用するLLMモデル | `gemini-2.5-flash` |
-| `--workers` | 並列ワーカー数 | `8` |
-| `--block-size` | バッチサイズ（文字数） | `2000` |
-| `--verbose` | 詳細ログ出力 | `False` |
-| `--resume` | 再開するジョブID | `None` |
-| `--text-column` | CSVのテキストカラム名 | 自動検出 |
-| `--max-rows` | 最大処理行数（CSV用） | `None`（全行） |
-| `--combine-rows` | CSV全行を結合 | `False` |
-
-### 2.5 使用例
-
-```bash
-# CSVファイル → チャンクCSV
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file OUTPUT/cc_news_5per.csv \
-  --output output_chunked \
-  --model gemini-2.5-flash \
-  --workers 4 \
-  --text-column text \
-  --combine-rows \
-  --block-size 1000
-
-# テキストファイル → チャンクCSV
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file ./data/document.txt \
-  --output chunks_output \
-  --model gemini-2.5-flash \
-  --workers 8
-```
-
-### 2.6 出力方式
-- **ディレクトリ指定**: `--output`でディレクトリを指定
-- **ファイル名自動生成**: `入力ファイル名_chunks_タイムスタンプ.csv`
-- **CSV出力推奨**: テキスト出力は非推奨（後方互換性のみ）
+| `chunks_all_async()` | テキストを3段階で意味的にチャンク化（メイン関数） |
+| `load_text_from_csv()` | CSVファイルからテキストを読み込み |
+| `save_chunks_as_csv()` | チャンクをCSV形式で保存（メタデータ付き） |
+| `save_chunks_as_text()` | チャンクをテキスト形式で保存（後方互換） |
+| `generate_output_filename()` | 出力ファイル名を自動生成 |
+| `_step1_hierarchical_split()` | Step1: 階層構造化（段落分割） |
+| `_step2_semantic_chunking()` | Step2: 意味的分割（話題転換点検出） |
+| `_step3_continuity_check()` | Step3: 文脈連続性チェック（過分割修正） |
+| `_normalize_whitespace()` | テキストの改行・空白を正規化 |
+| `_split_sentences_simple()` | 簡易的な文分割（日本語対応） |
 
 ---
 
-## 3. 処理フロー全体図
+## 1. アーキテクチャ構成図
 
-### 3.1 システム全体の流れ
+### 1.1 システム全体構成
+
+```mermaid
+flowchart TB
+    subgraph CLIENT["クライアント層"]
+        CLI[CLI: python -m chunking.csv_text_to_chunks_text_csv]
+        IMPORT[Pythonモジュールインポート]
+    end
+
+    subgraph MODULE["csv_text_to_chunks_text_csv.py"]
+        MAIN[main / chunks_all_async]
+
+        subgraph PIPELINE["3段階パイプライン"]
+            STEP1[Step1: 階層構造化]
+            STEP2[Step2: 意味的分割]
+            STEP3[Step3: 連続性チェック]
+        end
+
+        subgraph IO["入出力処理"]
+            LOAD[load_text_from_csv]
+            SAVE_CSV[save_chunks_as_csv]
+            SAVE_TXT[save_chunks_as_text]
+        end
+    end
+
+    subgraph INTERNAL["内部モジュール"]
+        API_CLIENT[AsyncAPIClient]
+        CHECKPOINT[CheckpointManager]
+        MODELS[models.py]
+        PROMPTS[prompts.py]
+        UTILS[utils.py]
+    end
+
+    subgraph EXTERNAL["外部サービス層"]
+        GEMINI[Google Gemini API]
+        FS[ファイルシステム]
+    end
+
+    CLI --> MAIN
+    IMPORT --> MAIN
+    MAIN --> LOAD
+    MAIN --> PIPELINE
+    PIPELINE --> SAVE_CSV
+    PIPELINE --> SAVE_TXT
+
+    STEP1 --> STEP2
+    STEP2 --> STEP3
+
+    PIPELINE --> API_CLIENT
+    PIPELINE --> CHECKPOINT
+    PIPELINE --> MODELS
+    PIPELINE --> PROMPTS
+
+    API_CLIENT --> GEMINI
+    LOAD --> FS
+    SAVE_CSV --> FS
+    SAVE_TXT --> FS
+    CHECKPOINT --> FS
+```
+
+処理フロー全体図 - システム全体の流れ
 
 ```mermaid
 graph TB
@@ -216,253 +140,168 @@ graph TB
     O --> P[出力ファイル]
 ```
 
-### 3.2 関数呼び出しの階層構造
+### 1.2 データフロー
 
-| 階層 | 関数 | 説明 |
-|:----:|------|------|
-| 1 | `main()` | エントリーポイント |
-| 1.1 | `load_text_from_csv()` | CSV読み込み（CSV入力時） |
-| 1.2 | `generate_output_filename()` | 出力ファイル名自動生成 |
-| 1.3 | `chunks_all_async()` | メイン処理 |
-| 1.3.1 | `_step1_hierarchical_split()` | Step1: 階層構造化 |
-| | → `AsyncAPIClient.generate_content()` × N回（並列） | |
-| | → `CheckpointManager.save("step1")` | |
-| 1.3.2 | `_step2_semantic_chunking()` | Step2: 意味的分割 |
-| | → `AsyncAPIClient.generate_content()` × M回（並列） | |
-| | → `CheckpointManager.save("step2")` | |
-| 1.3.3 | `_step3_continuity_check()` | Step3: 連続性判定 |
-| | → `AsyncAPIClient.generate_content()` × (M-1)回（並列） | |
-| | → `CheckpointManager.save("step3")` | |
-| 1.3.4 | `save_chunks_as_csv()` | CSV保存 |
-| | → `_normalize_whitespace()` × チャンク数 | |
-| | → `_split_sentences_simple()` × チャンク数 | |
+1. CLI引数またはAPI経由で入力ファイル（CSV/TXT）を受け取る
+2. `load_text_from_csv()`でCSVからテキストを抽出（またはTXTを直接読み込み）
+3. `chunks_all_async()`で3段階のチャンキング処理を実行
+   - Step1: 空行ベースで階層構造化（段落分割）
+   - Step2: LLMで意味的な話題転換点を検出して分割
+   - Step3: LLMで隣接チャンクの連続性を判定、過分割を修正
+4. 各ステップ完了時にチェックポイントを保存（再開可能）
+5. `save_chunks_as_csv()`または`save_chunks_as_text()`で出力
 
----
+### 1.3 3段階パイプライン詳細
 
-## 4. データの流れ詳細
+```mermaid
+flowchart TB
+    subgraph INPUT["入力"]
+        TEXT["テキスト (数千〜数万文字)"]
+    end
 
-### 4.1 データ変換の全体像
+    subgraph STEP1["Step1: 階層構造化"]
+        S1_IN["ブロック分割 (block_size単位)"]
+        S1_LLM["LLM: PARAGRAPH_SEPARATION_PROMPT"]
+        S1_OUT["段落リスト"]
+        S1_IN --> S1_LLM --> S1_OUT
+    end
 
-| 段階 | データ形式 |
-|------|-----------|
-| **入力** | CSV/テキストファイル |
-| ↓ | |
-| **統一テキスト** | `"第1章 はじめに\n\nこのドキュメントでは...\n\n第2章 基本操作\n\n..."` |
-| ↓ | |
-| **Step1: 階層構造化** | `["第1章 はじめに\n\nこのドキュメントでは...", "第2章 基本操作\n\n..."]` |
-| ↓ | |
-| **Step2: 意味的分割** | `["第1章 はじめに", "このドキュメントでは...", "第2章 基本操作", "..."]` |
-| ↓ | |
-| **Step3: 連続性判定** | `["第1章 はじめに\n\nこのドキュメントでは...", "第2章 基本操作\n\n..."]` |
-| ↓ | |
-| **CSV出力（正規化済み）** | `chunk_id,text,tokens,...` |
+    subgraph STEP2["Step2: 意味的分割"]
+        S2_IN["段落入力"]
+        S2_LLM["LLM: SEMANTIC_CHUNKING_PROMPT"]
+        S2_OUT["チャンクリスト (増加傾向)"]
+        S2_IN --> S2_LLM --> S2_OUT
+    end
 
-### 4.2 具体的な処理例
+    subgraph STEP3["Step3: 連続性チェック"]
+        S3_IN["隣接ペア検証"]
+        S3_LLM["LLM: CONTINUITY_CHECK_PROMPT"]
+        S3_OUT["最終チャンク (結合により減少)"]
+        S3_IN --> S3_LLM --> S3_OUT
+    end
 
-#### 入力テキストの例
+    subgraph OUTPUT["出力"]
+        CSV["CSV/TXTファイル"]
+    end
 
-```text
-第1章 人工知能の基礎
-
-人工知能（AI）は、コンピュータに人間のような知能を持たせる技術です。
-機械学習やディープラーニングがその中核をなしています。
-
-第2章 機械学習の手法
-
-教師あり学習では、ラベル付きデータから学習します。
-代表的な手法には、ランダムフォレストやサポートベクターマシンがあります。
-
-ところで、昨日食べたラーメンが美味しかったです。
-次回も同じ店に行きたいと思います。
-```
-
-### 4.3 各Stepの出力
-
-**【Step1の出力（階層構造化）】**
-
-| 段落 | 内容 |
-|:----:|------|
-| 段落1 | `"第1章 人工知能の基礎\n\n人工知能（AI）は...機械学習やディープラーニングがその中核をなしています。"` |
-| 段落2 | `"第2章 機械学習の手法\n\n教師あり学習では...ところで、昨日食べたラーメンが美味しかったです。次回も同じ店に行きたいと思います。"` |
-
-**【Step2の出力（意味的分割）】**
-
-| チャンク | 内容 | 備考 |
-|:--------:|------|------|
-| 1 | `"第1章 人工知能の基礎\n\n人工知能（AI）は..."` | AI関連 |
-| 2 | `"第2章 機械学習の手法\n\n教師あり学習では..."` | 機械学習関連 |
-| 3 | `"ところで、昨日食べたラーメンが美味しかったです..."` | 話題転換を検出 |
-
-**【Step3の出力（連続性判定）】**
-
-| 最終チャンク | 内容 | 処理 |
-|:------------:|------|------|
-| 1 | `"第1章 人工知能の基礎...\n\n第2章 機械学習の手法..."` | AI+機械学習を結合（連続トピック） |
-| 2 | `"ところで、昨日食べたラーメンが美味しかったです..."` | 独立（話題転換） |
-
-**【CSV出力（正規化後）】**
-
-```csv
-chunk_id,text,tokens,chunk_idx,dataset_type,type,sentence_count,source_file
-document_chunk_0,"第1章 人工知能の基礎 人工知能（AI）は...",156,0,document,llm_chunk,6,document.txt
-document_chunk_1,"ところで、昨日食べたラーメンが美味しかったです...",38,1,document,llm_chunk,2,document.txt
+    TEXT --> S1_IN
+    S1_OUT --> S2_IN
+    S2_OUT --> S3_IN
+    S3_OUT --> CSV
 ```
 
 ---
 
-## 5. 3段階チャンク化戦略
+## 2. モジュール構成図
 
-### 5.1 なぜ3段階が必要なのか？
+### 2.1 内部モジュール構成
 
-| 問題 | 原因 | 解決するStep |
-|------|------|:------------:|
-| 見出しの分断 | 文字数で切ると見出しが途切れる | Step1 |
-| 意味的混在 | 同じ段落内で話題が変わる | Step2 |
-| 文脈の欠落 | 過剰に細分化すると代名詞の参照先が不明 | Step3 |
+```mermaid
+flowchart TB
+    subgraph MAIN_FUNC["メイン処理"]
+        CHUNKS_ALL["chunks_all_async()"]
+        MAIN["main()"]
+    end
 
-→ **3つの異なる視点を組み合わせることで、これらの問題を解決**
+    subgraph PIPELINE["3段階パイプライン（プライベート）"]
+        STEP1["_step1_hierarchical_split()"]
+        STEP2["_step2_semantic_chunking()"]
+        STEP3["_step3_continuity_check()"]
+    end
 
-### 5.2 Step1: 階層構造化（Hierarchical Split）
+    subgraph IO_FUNC["入出力関数"]
+        LOAD_CSV["load_text_from_csv()"]
+        SAVE_CSV["save_chunks_as_csv()"]
+        SAVE_TXT["save_chunks_as_text()"]
+        GEN_NAME["generate_output_filename()"]
+    end
 
-#### 目的
-文章の **論理構造（章・節・段落）** を尊重した分割
+    subgraph UTIL_FUNC["ユーティリティ（プライベート）"]
+        NORM["_normalize_whitespace()"]
+        SPLIT["_split_sentences_simple()"]
+    end
 
-#### アルゴリズム
+    MAIN --> LOAD_CSV
+    MAIN --> CHUNKS_ALL
+    MAIN --> GEN_NAME
 
-| ステップ | 処理内容 |
-|:--------:|----------|
-| 1 | 入力テキストを`block_size`（デフォルト2000文字）ごとに分割 |
-| 2 | 各ブロックをLLMに送信（並列処理） |
-| 3 | LLMが構造化:<br>・空行（`\n\n`）で段落を分割<br>・句点（。）で文を分割<br>・見出しと本文は分離せず、1つの段落として保持 |
-| 4 | 全ブロックの結果を結合して段落リストを生成 |
+    CHUNKS_ALL --> STEP1
+    CHUNKS_ALL --> STEP2
+    CHUNKS_ALL --> STEP3
+    CHUNKS_ALL --> SAVE_CSV
+    CHUNKS_ALL --> SAVE_TXT
 
-#### Step1の効果
+    STEP1 --> STEP2
+    STEP2 --> STEP3
 
-| 問題 | Step1がない場合 | Step1適用後 |
-|------|----------------|------------|
-| 見出しの分断 | 「第2章：SQL最」「適化」のように分割 | 「第2章 SQL最適化\n\n...」として完全に保持 |
-| 文脈の断絶 | 途中で文が切れる | 必ず句点で分割 |
-| 構造の喪失 | 章立てが不明確 | 章・段落の構造を維持 |
-
----
-
-### 5.3 Step2: 意味的分割（Semantic Chunking）
-
-#### 目的
-**話題の転換点** を意味的に検出し、トピックごとに分割
-
-#### Step1との違い
-
-| 観点 | Step1 | Step2 |
-|------|-------|-------|
-| **分割基準** | 物理的構造（空行のみ） | 意味的な類似度（話題の転換） |
-| **入力** | 生テキスト | 段落リスト（Step1の出力） |
-| **処理単位** | 2000文字ブロック | 段落単位 |
-| **章の扱い** | 空行がなければ分割しない | 章の変わり目で分割 |
-| **改行の扱い** | 空行（`\n\n`）のみで分割 | 改行を無視し、意味で分割 |
-
-#### アルゴリズム
-
-| ステップ | 処理内容 |
-|:--------:|----------|
-| 1 | Step1の各段落をLLMに送信（並列処理） |
-| 2 | LLMが段落内の文を分析:<br>・文の「意味的な距離」を判定<br>・話題が転換する箇所で分割<br>・物理的な改行は無視し、意味の純度を優先 |
-| 3 | 分割されたチャンクを収集 |
-
-#### RAGでの効果
-
-| 状況 | Step2なし | Step2あり |
-|------|-----------|-----------|
-| 質問 | 「Gemini 2.0の主な特徴は？」 | 「Gemini 2.0の主な特徴は？」 |
-| 検索チャンク | 「Gemini 2.0は...Bluetoothスピーカーの音質が...」 | 「Gemini 2.0は推論速度が向上し...」 |
-| 回答品質 | ❌ 無関係な情報が混入 | ✅ 正確な回答 |
-
----
-
-### 5.4 Step3: 連続性判定（Continuity Check）
-
-#### 目的
-過剰に分割されたチャンクを **文脈の連続性** に基づいて再結合
-
-#### Step2との違い
-
-| 観点 | Step2 | Step3 |
-|------|-------|-------|
-| **処理方向** | 分割（増加） | 結合（減少） |
-| **入力** | 段落リスト | チャンクリスト（Step2の出力） |
-| **出力** | チャンクリスト（数が増加） | 最終チャンクリスト（数が減少） |
-| **役割** | 話題の転換点を検出 | Step2の「過分割」を修正 |
-| **スキーマ** | StructuralResult | ContinuityResult（ブール値のみ） |
-
-#### アルゴリズム
-
-| ステップ | 処理内容 |
-|:--------:|----------|
-| 1 | Step2の隣接する2つのチャンクをペアでLLMに送信（並列処理） |
-| 2 | LLMが判定:<br>・`is_connected = True` → 結合<br>・`is_connected = False` → 分離 |
-| 3 | 全てのペアを判定し、結果を反映してチャンクを再構成 |
-
-#### 判定基準（検証パターン）
-
-| パターン | 判定 | 条件 | 例 |
-|----------|:----:|------|-----|
-| **前方依存** | True（結合） | 指示語で前を参照 | 「**この手法**の利点は...」「**それ**により...」 |
-| **後方依存** | True（結合） | 専門用語が未定義で使用 | 「**チャンク**サイズは...」「**ANN**の精度は...」 |
-| **同一トピック継続** | True（結合） | 同じトピックの説明が続く | 定義→活用の流れ |
-| **話題転換** | False（分離） | 全く別の話題に転換 | RAG説明 → 京都観光 |
-| **独立判定** | False（分離） | 独立して理解可能 | 京都観光と沖縄観光（同じ「観光」だが独立） |
-| **章構造** | False（分離） | 章が変わった | 第1章 → 第2章 |
-
-#### マージ処理の詳細（v3.2.0追加）
-
-```python
-# マージ処理
-logger.debug("マージ処理...")
-final_chunks = [chunks[0]]
-for i, result_json in enumerate(results):
-    if result.is_connected:
-        # 結合: 空行（\n\n）で連結し、段落構造を保持
-        final_chunks[-1] += "\n\n" + chunks[i + 1]
-        logger.debug(f"  チャンク{i + 1} + チャンク{i + 2} → 結合")
-    else:
-        # 分離: 新しいチャンクとして追加
-        final_chunks.append(chunks[i + 1])
-        logger.debug(f"  チャンク{i + 2} → 新規追加")
+    SAVE_CSV --> NORM
+    SAVE_CSV --> SPLIT
 ```
 
+### 2.2 外部依存関係
+
+| ライブラリ | バージョン | 用途 |
+|-----------|-----------|------|
+| `pandas` | >= 1.5.0 | CSV読み書き、DataFrame操作 |
+| `tiktoken` | >= 0.5.0 | トークン数カウント（cl100k_base） |
+| `tqdm` | >= 4.65.0 | 非同期進捗バー表示 |
+
+### 2.3 標準ライブラリ依存
+
+| モジュール | 用途 |
+|-----------|------|
+| `asyncio` | 非同期処理 |
+| `argparse` | CLI引数パース |
+| `logging` | ログ出力 |
+| `pathlib` | パス操作 |
+| `re` | 正規表現（文分割、空白正規化） |
+| `datetime` | タイムスタンプ生成 |
+| `os` | 環境変数、ディレクトリ操作 |
+
+### 2.4 内部依存モジュール
+
+| モジュール | インポート | 用途 |
+|-----------|-----------|------|
+| `chunking.async_api_client` | `AsyncAPIClient` | Gemini API非同期クライアント |
+| `chunking.checkpoint_manager` | `CheckpointManager` | チェックポイント保存・読込 |
+| `chunking.models` | `StructuralResult`, `ContinuityResult` | Pydanticスキーマ |
+| `chunking.prompts` | `PARAGRAPH_SEPARATION_PROMPT`, `SEMANTIC_CHUNKING_PROMPT`, `CONTINUITY_CHECK_PROMPT` | LLMプロンプト |
+| `chunking.utils` | `setup_logging`, `format_time`, `format_size` | ユーティリティ |
+
 ---
 
-### 5.5 3段階処理の比較表
+## 3. クラス・関数一覧表
 
-| 項目 | Step1: 階層構造化 | Step2: 意味的分割 | Step3: 連続性判定 |
-|------|------------------|-----------------|------------------|
-| **英語名** | Hierarchical Split | Semantic Chunking | Continuity Check |
-| **判断基準** | 物理構造（空行・句点） | 意味的距離（トピック） | 文脈の連続性 |
-| **LLMの役割** | 構造解析 | 話題転換検出 | 文脈判定 |
-| **入力** | 生テキスト | 段落リスト | チャンクリスト |
-| **出力** | 段落リスト | チャンクリスト | 最終チャンクリスト |
-| **変化方向** | 構造化 | **増加**（分割） | **減少**（結合） |
-| **API呼び出し数** | テキスト長/2000 | 段落数 | チャンク数-1 |
-| **解決する問題** | 見出しの分断 | トピック混在 | 文脈の欠落（過分割修正） |
-| **スキーマ** | StructuralResult | StructuralResult | ContinuityResult |
-| **ログ出力** | 段落数 | チャンク数 | 結合/分離の詳細（debug） |
+### 3.1 公開関数（エクスポート対象）
+
+| 関数名 | 概要 |
+|-------|------|
+| `chunks_all_async(text, model, max_workers, ...)` | テキストを3段階で意味的にチャンク化（メイン処理） |
+| `load_text_from_csv(csv_path, text_column, ...)` | CSVファイルからテキストを読み込み |
+| `save_chunks_as_csv(chunks, output_file, ...)` | チャンクをCSV形式で保存（メタデータ付き） |
+| `save_chunks_as_text(chunks, output_file)` | チャンクをテキスト形式で保存（後方互換） |
+
+### 3.2 その他の関数
+
+| 関数名 | 概要 |
+|-------|------|
+| `generate_output_filename(input_file, output_dir, ...)` | 出力ファイル名を自動生成（タイムスタンプ付き） |
+| `_normalize_whitespace(text)` | テキストの改行・空白を正規化（プライベート） |
+| `_split_sentences_simple(text)` | 簡易的な文分割・日本語対応（プライベート） |
+| `_step1_hierarchical_split(text, client, ...)` | Step1: 階層構造化（プライベート） |
+| `_step2_semantic_chunking(paragraphs, client, ...)` | Step2: 意味的分割（プライベート） |
+| `_step3_continuity_check(chunks, client, ...)` | Step3: 文脈連続性チェック（プライベート） |
+| `main()` | CLI用メイン関数 |
 
 ---
 
-### 5.6 なぜ「Chunk Overlap」ではなく「Continuity Check」なのか？
+## 4. クラス・関数 IPO詳細
 
-| 方式 | 説明 | 問題点/利点 |
-|------|------|-------------|
-| **従来: Chunk Overlap** | 一部重複させる<br>`チャンク1: "ABCDE"`<br>`チャンク2: "CDEFG"` | ❌ ストレージ効率が悪い<br>❌ 重複部分の長さ調整が困難<br>❌ 無駄な情報の重複 |
-| **本システム: Continuity Check** | 連続性を判定して結合<br>`1↔2: 連続 → 結合`<br>`2↔3: 非連続 → 分離` | ✅ 重複なし<br>✅ LLMが文脈を判断<br>✅ 自然で冗長性の少ないチャンク |
+### 4.1 メイン処理関数
 
----
+#### `chunks_all_async`
 
-## 6. 関数別詳細設計
-
-### 6.1 `chunks_all_async()` - メイン処理
-
-#### シグネチャ
+**概要**: テキストを3段階（階層構造化→意味的分割→連続性チェック）で意味的にチャンク化する。非同期・並列処理対応。
 
 ```python
 async def chunks_all_async(
@@ -474,38 +313,66 @@ async def chunks_all_async(
     output_file: Optional[str] = None,
     dataset_type: str = "custom",
     source_file: Optional[str] = None
-) -> List[str]:
+) -> List[str]
 ```
 
-#### パラメータ詳細
-
 | パラメータ | 型 | デフォルト | 説明 |
-|-----------|-----|-----------|------|
-| text | str | - | チャンク化対象のテキスト（必須） |
-| model | str | `gemini-2.5-flash` | 使用するGeminiモデル |
-| max_workers | int | 8 | 並列実行数（Semaphoreで制御） |
-| block_size | int | 2000 | Step1のバッチサイズ（文字数） |
-| checkpoint_manager | CheckpointManager | None | チェックポイント管理（省略時は自動生成） |
-| output_file | str | None | 出力ファイルパス（省略時は保存しない） |
-| dataset_type | str | custom | データセット種別（CSV出力時のメタデータ） |
-| source_file | str | None | 元ファイル名（CSV出力時のメタデータ） |
+|------------|------|-----------|------|
+| `text` | str | - | 入力テキスト |
+| `model` | str | "gemini-2.5-flash" | 使用するLLMモデル名 |
+| `max_workers` | int | 8 | 並列ワーカー数（Semaphore制御） |
+| `block_size` | int | 2000 | Step1のブロックサイズ（文字数） |
+| `checkpoint_manager` | Optional[CheckpointManager] | None | チェックポイント管理（省略時は自動生成） |
+| `output_file` | Optional[str] | None | 出力ファイルパス（省略時は保存しない） |
+| `dataset_type` | str | "custom" | データセット種別（CSV出力のメタデータ） |
+| `source_file` | Optional[str] | None | 元ファイル名（CSV出力のメタデータ） |
 
-#### 処理フロー
+| 項目 | 内容 |
+|------|------|
+| **Input** | `text: str`, `model: str`, `max_workers: int`, `block_size: int`, `checkpoint_manager`, `output_file`, `dataset_type`, `source_file` |
+| **Process** | 1. 環境変数`GOOGLE_API_KEY`を取得<br>2. `AsyncAPIClient`を初期化<br>3. Step1: `_step1_hierarchical_split()`で階層構造化<br>4. Step2: `_step2_semantic_chunking()`で意味的分割<br>5. Step3: `_step3_continuity_check()`で連続性チェック<br>6. `output_file`指定時は`save_chunks_as_csv()`または`save_chunks_as_text()`で保存 |
+| **Output** | `List[str]`: 最終チャンクのリスト |
 
-| ステップ | 処理内容 |
-|:--------:|----------|
-| 1 | AsyncAPIClientの初期化（Semaphoreで並列数を制御、リトライロジック内包、max_output_tokens=4096） |
-| 2 | Step1: 階層構造化（テキストをblock_sizeで分割、各ブロックを並列でLLM処理、段落リストを生成・保存） |
-| 3 | Step2: 意味的分割（各段落を並列でLLM処理、チャンクリストを生成・保存）<br>※ v3.2.0でdocstring詳細化（Step1との違いを明記） |
-| 4 | Step3: 連続性判定（隣接チャンクペアを並列でLLM処理、最終チャンクリストを生成・保存）<br>※ v3.2.0でdocstring詳細化（Step2との違い、検証パターンを明記）<br>※ v3.2.0でマージ処理のlogger.debug出力を追加 |
-| 5 | 出力処理（output_fileが指定されている場合、CSV保存、改行正規化を適用） |
-| 6 | 最終チャンクリストを返す |
+**戻り値例**:
+
+```python
+[
+    "第1章 はじめに\n\nこの文書は...",
+    "1.1 背景\n\n近年、AIの発展により...",
+    "第2章 手法\n\n本研究では..."
+]
+```
+
+> 📝 **注意**: 環境変数`GOOGLE_API_KEY`が設定されていない場合、`ValueError`が発生します。
+
+```python
+# 使用例
+import asyncio
+from chunking import chunks_all_async
+
+async def main():
+    text = open("document.txt").read()
+
+    chunks = await chunks_all_async(
+        text=text,
+        model="gemini-2.5-flash",
+        max_workers=8,
+        output_file="output/chunks.csv",
+        dataset_type="wikipedia"
+    )
+
+    print(f"生成チャンク数: {len(chunks)}")
+
+asyncio.run(main())
+```
 
 ---
 
-### 6.2 `load_text_from_csv()` - CSV入力処理
+### 4.2 入出力関数
 
-#### シグネチャ
+#### `load_text_from_csv`
+
+**概要**: CSVファイルからテキストカラムを読み込み、結合したテキストを返す。テキストカラムの自動検出機能付き。
 
 ```python
 def load_text_from_csv(
@@ -513,35 +380,57 @@ def load_text_from_csv(
     text_column: Optional[str] = None,
     max_rows: Optional[int] = None,
     combine_rows: bool = False
-) -> str:
+) -> str
 ```
 
-#### パラメータ
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `csv_path` | str | - | CSVファイルパス |
+| `text_column` | Optional[str] | None | テキストカラム名（省略時は自動検出） |
+| `max_rows` | Optional[int] | None | 最大読み込み行数（省略時は全行） |
+| `combine_rows` | bool | False | 全行を1つのテキストに結合するか |
 
-| パラメータ | 説明 | 使用例 |
-|-----------|------|--------|
-| csv_path | CSVファイルパス | `"./data/articles.csv"` |
-| text_column | テキストカラム名（省略時は自動検出） | `"content"` |
-| max_rows | 最大処理行数（省略時は全行） | `1000` |
-| combine_rows | 全行結合モード | `True`/`False` |
+| 項目 | 内容 |
+|------|------|
+| **Input** | `csv_path: str`, `text_column: Optional[str]`, `max_rows: Optional[int]`, `combine_rows: bool` |
+| **Process** | 1. `pd.read_csv()`でCSV読み込み<br>2. `max_rows`指定時は先頭N行に制限<br>3. テキストカラムを特定（指定 or 自動検出）<br>4. 空でないテキストを抽出<br>5. `\n\n`で結合して返却 |
+| **Output** | `str`: 結合されたテキスト |
 
-#### テキストカラムの自動検出ロジック
+**自動検出カラム候補**:
 
-| 優先順位 | 候補 |
-|:--------:|------|
-| 1 | text, Text, TEXT |
-| 2 | content, Content, CONTENT |
-| 3 | Combined_Text, combined_text |
-| 4 | body, Body, BODY |
-| 5 | document, Document |
-| 6 | answer, Answer |
-| - | 検出できない場合: 最初のカラムを使用（警告あり） |
+```python
+['text', 'Text', 'TEXT', 'content', 'Content', 'CONTENT',
+ 'Combined_Text', 'combined_text', 'body', 'Body', 'BODY',
+ 'document', 'Document', 'answer', 'Answer']
+```
+
+**戻り値例**:
+
+```python
+"記事1の本文テキスト...\n\n記事2の本文テキスト...\n\n記事3の本文テキスト..."
+```
+
+```python
+# 使用例
+from chunking import load_text_from_csv
+
+# テキストカラム自動検出
+text = load_text_from_csv("data/articles.csv")
+
+# カラム指定 + 行数制限
+text = load_text_from_csv(
+    csv_path="data/articles.csv",
+    text_column="body",
+    max_rows=100,
+    combine_rows=True
+)
+```
 
 ---
 
-### 6.3 `save_chunks_as_csv()` - CSV出力処理
+#### `save_chunks_as_csv`
 
-#### シグネチャ
+**概要**: チャンクをCSV形式で保存する。メタデータ（トークン数、文数等）を自動付与。改行正規化オプション対応。
 
 ```python
 def save_chunks_as_csv(
@@ -550,397 +439,588 @@ def save_chunks_as_csv(
     dataset_type: str = "custom",
     source_file: Optional[str] = None,
     normalize_whitespace: bool = True
-) -> str:
+) -> str
 ```
 
-#### CSV出力カラム
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `chunks` | List[str] | - | チャンクのリスト |
+| `output_file` | str | - | 出力ファイルパス |
+| `dataset_type` | str | "custom" | データセット種別（chunk_idに使用） |
+| `source_file` | Optional[str] | None | 元ファイル名 |
+| `normalize_whitespace` | bool | True | 改行・空白を正規化するか |
 
-| カラム名 | 説明 | 例 |
-|---------|------|-----|
-| chunk_id | チャンクID | `document_chunk_0` |
-| text | チャンクテキスト（正規化済み） | `"第1章 はじめに このドキュメントでは..."` |
-| tokens | トークン数（tiktoken `cl100k_base`） | `245` |
-| chunk_idx | チャンクインデックス | `0` |
-| dataset_type | データセット種別 | `document` |
-| type | チャンク種別（固定値） | `llm_chunk` |
-| sentence_count | 文の数（`_split_sentences_simple()`で計算） | `5` |
-| source_file | 元ファイル名 | `document.txt` |
+| 項目 | 内容 |
+|------|------|
+| **Input** | `chunks: List[str]`, `output_file: str`, `dataset_type: str`, `source_file: Optional[str]`, `normalize_whitespace: bool` |
+| **Process** | 1. 各チャンクに対してトークン数を計算（tiktoken）<br>2. `normalize_whitespace=True`時は`_normalize_whitespace()`で正規化<br>3. `_split_sentences_simple()`で文数を計算<br>4. DataFrameを作成してCSV保存 |
+| **Output** | `str`: 保存したCSVファイルパス |
 
-#### 改行正規化の効果
+**CSV出力カラム**:
 
-| 状態 | テキスト |
-|------|----------|
-| 正規化前 | `"第1章\n\nこのドキュメントでは、\n基本的な概念を説明します。"` |
-| 正規化後 | `"第1章 このドキュメントでは、 基本的な概念を説明します。"` |
+| カラム | 型 | 説明 |
+|-------|-----|------|
+| `chunk_id` | str | `{dataset_type}_chunk_{i}` 形式のID |
+| `text` | str | チャンクテキスト（正規化済み） |
+| `tokens` | int | トークン数（cl100k_base） |
+| `chunk_idx` | int | チャンクインデックス |
+| `dataset_type` | str | データセット種別 |
+| `type` | str | 固定値: "llm_chunk" |
+| `sentence_count` | int | 文数 |
+| `source_file` | str | 元ファイル名 |
+
+```python
+# 使用例
+from chunking import save_chunks_as_csv
+
+chunks = ["チャンク1のテキスト...", "チャンク2のテキスト..."]
+
+output_path = save_chunks_as_csv(
+    chunks=chunks,
+    output_file="output/result.csv",
+    dataset_type="wikipedia",
+    source_file="wikipedia_ja.csv",
+    normalize_whitespace=True
+)
+# 出力: output/result.csv
+```
 
 ---
 
-### 6.4 `save_chunks_as_text()` - テキスト出力処理（後方互換性）
+#### `save_chunks_as_text`
 
-#### シグネチャ
-
-```python
-def save_chunks_as_text(chunks: List[str], output_file: str) -> str:
-```
-
-#### 処理内容
-
-各チャンクを `---` 区切りでテキストファイルに保存します。
+**概要**: チャンクをテキスト形式で保存する（後方互換性のため）。各チャンクは`---`で区切られる。
 
 ```python
-with open(output_file, 'w', encoding='utf-8') as f:
-    for chunk in chunks:
-        f.write(chunk + '\n---\n')
+def save_chunks_as_text(chunks: List[str], output_file: str) -> str
 ```
 
-**注意**: CSV出力が推奨されます。テキスト出力は後方互換性のために維持されています。
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `chunks` | List[str] | - | チャンクのリスト |
+| `output_file` | str | - | 出力ファイルパス |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `chunks: List[str]`, `output_file: str` |
+| **Process** | 各チャンクを`\n---\n`区切りでファイルに書き込み |
+| **Output** | `str`: 保存したファイルパス |
+
+**出力形式**:
+
+```
+チャンク1のテキスト...
+---
+チャンク2のテキスト...
+---
+チャンク3のテキスト...
+---
+```
 
 ---
 
-### 6.5 `generate_output_filename()` - 出力ファイル名の自動生成
+#### `generate_output_filename`
 
-#### シグネチャ
+**概要**: 入力ファイル名から出力ファイル名を自動生成する。タイムスタンプ付きで一意性を保証。
 
 ```python
 def generate_output_filename(
     input_file: str,
     output_dir: str,
     dataset_type: str = "custom"
-) -> str:
+) -> str
 ```
 
-#### 生成ルール
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `input_file` | str | - | 入力ファイルパス |
+| `output_dir` | str | - | 出力ディレクトリ |
+| `dataset_type` | str | "custom" | データセット種別（現在未使用） |
 
-| 入力 | 出力 |
+| 項目 | 内容 |
 |------|------|
-| `input_file = "data/document.txt"`<br>`output_dir = "chunks_output"` | `"chunks_output/document_chunks_20260123_123456.csv"` |
-| `input_file = "articles.csv"`<br>`output_dir = "output"` | `"output/articles_chunks_20260123_143022.csv"` |
+| **Input** | `input_file: str`, `output_dir: str`, `dataset_type: str` |
+| **Process** | 1. 入力ファイル名のstemを取得<br>2. タイムスタンプ（`%Y%m%d_%H%M%S`）を生成<br>3. 出力ディレクトリを作成（`os.makedirs`）<br>4. `{stem}_chunks_{timestamp}.csv`形式でパス生成 |
+| **Output** | `str`: 出力ファイルの絶対パス |
+
+**戻り値例**:
+
+```python
+generate_output_filename("data/input.txt", "chunks_output", "custom")
+# → 'chunks_output/input_chunks_20250129_143052.csv'
+
+generate_output_filename("data/cc_news.csv", "output", "cc_news")
+# → 'output/cc_news_chunks_20250129_143052.csv'
+```
 
 ---
 
-### 6.6 `_normalize_whitespace()` - テキスト正規化
+### 4.3 パイプライン関数（プライベート）
 
-#### シグネチャ
+#### `_step1_hierarchical_split`
+
+**概要**: Step1 - テキストを物理的な空行（`\n\n`）に基づいて段落に分割する。LLMを使用して階層構造化。
 
 ```python
-def _normalize_whitespace(text: str) -> str:
+async def _step1_hierarchical_split(
+    text: str,
+    client: AsyncAPIClient,
+    model: str,
+    block_size: int,
+    checkpoint_manager: CheckpointManager
+) -> List[str]
 ```
 
-#### 処理内容
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `text` | str | - | 入力テキスト |
+| `client` | AsyncAPIClient | - | 非同期APIクライアント |
+| `model` | str | - | LLMモデル名 |
+| `block_size` | int | - | ブロックサイズ（文字数） |
+| `checkpoint_manager` | CheckpointManager | - | チェックポイント管理 |
 
-| ステップ | 処理 |
-|:--------:|------|
-| 1 | 改行（`\n`, `\r`）を半角スペースに変換 |
-| 2 | タブ（`\t`）を半角スペースに変換 |
-| 3 | 連続する空白を1つに統合（正規表現: `\s+` → ` `） |
-| 4 | 先頭・末尾の空白を削除（`strip()`） |
+| 項目 | 内容 |
+|------|------|
+| **Input** | `text: str`, `client: AsyncAPIClient`, `model: str`, `block_size: int`, `checkpoint_manager: CheckpointManager` |
+| **Process** | 1. チェックポイント存在確認（存在すれば読み込み）<br>2. テキストを`block_size`単位でブロック分割<br>3. 各ブロックに`PARAGRAPH_SEPARATION_PROMPT`を適用<br>4. `asyncio.gather`で並列実行（tqdmで進捗表示）<br>5. `StructuralResult`をパースして段落抽出<br>6. チェックポイント保存 |
+| **Output** | `List[str]`: 段落のリスト |
 
-#### 具体例
-
-| 状態 | テキスト |
-|------|----------|
-| 入力 | `"第1章\n\nはじめに\n  基本的な    概念を\t説明します。  "` |
-| 出力 | `"第1章 はじめに 基本的な 概念を 説明します。"` |
+> 📝 **注意**: このメソッドはプライベートです。直接呼び出さず、`chunks_all_async()`を使用してください。
 
 ---
 
-### 6.7 `_split_sentences_simple()` - 簡易的な文分割（内部関数）
+#### `_step2_semantic_chunking`
 
-#### シグネチャ
-
-```python
-def _split_sentences_simple(text: str) -> List[str]:
-```
-
-#### 処理内容
-
-日本語テキストを句点や記号で文単位に分割します。
-
-| 分割対象 | 対応する記号 |
-|----------|-------------|
-| 句点 | 。、．、. |
-| 感嘆符 | ！、! |
-| 疑問符 | ？、? |
-
-#### アルゴリズム
+**概要**: Step2 - 段落を意味的な類似度に基づいて再構成する。話題の転換点で分割。
 
 ```python
-# 正規表現で文末記号を含む文を抽出
-sentences = re.findall(r'[^。．.！？!?]+[。．.！？!?]\s*', text)
-
-# 文が見つからない場合は全体を1文として扱う
-if not sentences:
-    sentences = [text.strip()] if text.strip() else []
-else:
-    # 最後の文末記号以降に残りのテキストがあれば追加
-    last_pos = text.rfind(sentences[-1]) + len(sentences[-1])
-    if last_pos < len(text):
-        remaining = text[last_pos:].strip()
-        if remaining:
-            sentences.append(remaining)
-
-return [s.strip() for s in sentences if s.strip()]
+async def _step2_semantic_chunking(
+    paragraphs: List[str],
+    client: AsyncAPIClient,
+    model: str,
+    checkpoint_manager: CheckpointManager
+) -> List[str]
 ```
 
-#### 使用箇所
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `paragraphs` | List[str] | - | 段落のリスト（Step1の出力） |
+| `client` | AsyncAPIClient | - | 非同期APIクライアント |
+| `model` | str | - | LLMモデル名 |
+| `checkpoint_manager` | CheckpointManager | - | チェックポイント管理 |
 
-`save_chunks_as_csv()` 内で `sentence_count` の計算に使用されます。
+| 項目 | 内容 |
+|------|------|
+| **Input** | `paragraphs: List[str]`, `client: AsyncAPIClient`, `model: str`, `checkpoint_manager: CheckpointManager` |
+| **Process** | 1. チェックポイント存在確認<br>2. 各段落に`SEMANTIC_CHUNKING_PROMPT`を適用<br>3. 並列実行で意味的分割を実施<br>4. チャンク数は増加傾向（1段落→複数チャンク）<br>5. チェックポイント保存 |
+| **Output** | `List[str]`: 意味的に分割されたチャンクのリスト |
+
+**Step1との違い**:
+
+| 観点 | Step1 | Step2 |
+|------|-------|-------|
+| 分割基準 | 物理的構造（空行のみ） | 意味的な話題転換 |
+| 章の扱い | 空行がなければ分割しない | 章の変わり目で分割 |
 
 ---
 
-## 7. 使用例
+#### `_step3_continuity_check`
 
-### 7.1 コマンドライン実行
+**概要**: Step3 - 隣接するチャンク間の文脈連続性を判定し、連続している場合は結合する（過分割の修正）。
 
-#### 基本的な使用（テキスト → CSV）
-
-```bash
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file ./data/document.txt \
-  --output chunks_output
-
-# 出力: chunks_output/document_chunks_20260123_123456.csv
+```python
+async def _step3_continuity_check(
+    chunks: List[str],
+    client: AsyncAPIClient,
+    model: str,
+    checkpoint_manager: CheckpointManager
+) -> List[str]
 ```
 
-#### CSV入力 → CSV出力
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `chunks` | List[str] | - | チャンクのリスト（Step2の出力） |
+| `client` | AsyncAPIClient | - | 非同期APIクライアント |
+| `model` | str | - | LLMモデル名 |
+| `checkpoint_manager` | CheckpointManager | - | チェックポイント管理 |
 
-```bash
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file ./data/articles.csv \
-  --output chunks_output \
-  --text-column content \
-  --max-rows 1000 \
-  --workers 8
+| 項目 | 内容 |
+|------|------|
+| **Input** | `chunks: List[str]`, `client: AsyncAPIClient`, `model: str`, `checkpoint_manager: CheckpointManager` |
+| **Process** | 1. チェックポイント存在確認<br>2. 隣接チャンクペアに`CONTINUITY_CHECK_PROMPT`を適用<br>3. `is_connected=True`なら結合、`False`なら分離<br>4. チャンク数は減少傾向（結合により）<br>5. チェックポイント保存 |
+| **Output** | `List[str]`: 連続性に基づいて結合/分離された最終チャンクリスト |
+
+**連続性判定パターン**:
+
+| パターン | 判定 | 処理 |
+|---------|------|------|
+| 前方依存（「この」「それ」等） | True | 結合 |
+| 後方依存（専門用語が未定義） | True | 結合 |
+| 話題転換（完全に別トピック） | False | 分離 |
+| 独立判定（単独で理解可能） | False | 分離 |
+| 章構造変化 | False | 分離 |
+
+---
+
+### 4.4 ユーティリティ関数（プライベート）
+
+#### `_normalize_whitespace`
+
+**概要**: テキストの改行・空白を正規化する。CSV出力時のクリーンなデータ作成に使用。
+
+```python
+def _normalize_whitespace(text: str) -> str
 ```
 
-#### 詳細ログを有効化
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `text` | str | - | 正規化対象テキスト |
 
-```bash
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file document.txt \
-  --output chunks_output \
-  --verbose
+| 項目 | 内容 |
+|------|------|
+| **Input** | `text: str` |
+| **Process** | 1. 改行（`\n`, `\r`）を半角スペースに置換<br>2. タブ（`\t`）を半角スペースに置換<br>3. 連続する空白を1つに正規化（`re.sub(r'\s+', ' ')`）<br>4. 先頭・末尾の空白を削除（`strip()`） |
+| **Output** | `str`: 正規化されたテキスト |
+
+**戻り値例**:
+
+```python
+_normalize_whitespace("行1\n\n行2")
+# → '行1 行2'
+
+_normalize_whitespace("  複数    空白  ")
+# → '複数 空白'
 ```
 
-#### カスタムモデルとパラメータ
+---
 
-```bash
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file large_document.txt \
-  --output chunks_output \
-  --model gemini-2.5-flash \
-  --workers 12 \
-  --block-size 3000
+#### `_split_sentences_simple`
+
+**概要**: テキストを簡易的に文に分割する（日本語対応）。句読点で分割。
+
+```python
+def _split_sentences_simple(text: str) -> List[str]
 ```
 
-#### CSV全行を結合して処理
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `text` | str | - | 分割対象テキスト |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `text: str` |
+| **Process** | 1. 正規表現で句点（`。．.！？!?`）で分割<br>2. 分割できない場合はテキスト全体を1文として扱う<br>3. 末尾の残余テキストを追加 |
+| **Output** | `List[str]`: 文のリスト |
+
+**対応する句読点**: `。`, `．`, `.`, `！`, `？`, `!`, `?`
+
+---
+
+### 4.5 CLI関数
+
+#### `main`
+
+**概要**: コマンドラインインターフェース用のメイン関数。引数をパースしてチャンキング処理を実行。
+
+```python
+async def main() -> None
+```
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | CLI引数（`argparse`でパース） |
+| **Process** | 1. 引数パース<br>2. ロギング設定<br>3. 入力ファイル読み込み（CSV or TXT）<br>4. 出力ファイル名自動生成<br>5. `chunks_all_async()`実行<br>6. 完了ログ出力 |
+| **Output** | なし（ファイル出力） |
+
+**CLI引数**:
+
+| 引数 | 型 | デフォルト | 説明 |
+|------|-----|-----------|------|
+| `--input-file` | str | (必須) | 入力ファイル（.txt, .csv） |
+| `--output` | str | "chunks_output" | 出力ディレクトリ |
+| `--model` | str | "gemini-2.5-flash" | LLMモデル名 |
+| `--workers` | int | 8 | 並列ワーカー数 |
+| `--block-size` | int | 2000 | バッチサイズ（文字数） |
+| `--verbose` | flag | False | 詳細ログ出力 |
+| `--resume` | str | None | 再開するジョブID |
+| `--text-column` | str | None | CSVのテキストカラム名 |
+| `--max-rows` | int | None | 最大処理行数（CSV用） |
+| `--combine-rows` | flag | False | CSV全行を結合 |
+
+---
+
+## 5. 設定・定数
+
+### 5.1 デフォルト設定値
+
+| 設定 | デフォルト値 | 説明 |
+|-----|-------------|------|
+| `model` | "gemini-2.5-flash" | 使用するLLMモデル |
+| `max_workers` | 8 | 並列ワーカー数 |
+| `block_size` | 2000 | Step1のブロックサイズ（文字数） |
+| `max_output_tokens` | 4096 | AsyncAPIClientの出力トークン制限 |
+| `max_retries` | 3 | AsyncAPIClientのリトライ回数 |
+
+### 5.2 テキストカラム自動検出候補
+
+```python
+text_candidates = [
+    'text', 'Text', 'TEXT',
+    'content', 'Content', 'CONTENT',
+    'Combined_Text', 'combined_text',
+    'body', 'Body', 'BODY',
+    'document', 'Document',
+    'answer', 'Answer'
+]
+```
+
+### 5.3 環境変数
+
+| 環境変数 | 必須 | 説明 |
+|---------|:----:|------|
+| `GOOGLE_API_KEY` | ✅ | Google Gemini APIキー |
+
+---
+
+## 6. 使用例
+
+### 6.1 基本的なワークフロー（CLI）
 
 ```bash
+# CSVファイルからチャンク作成
 python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file OUTPUT/wikipedia_ja_5per.csv \
+  --input-file OUTPUT/cc_news_5per.csv \
   --output output_chunked \
   --model gemini-2.5-flash \
   --workers 4 \
   --text-column text \
   --combine-rows \
   --block-size 1000
+
+# テキストファイルからチャンク作成
+python -m chunking.csv_text_to_chunks_text_csv \
+  --input-file ./data/document.txt \
+  --output chunks_output \
+  --model gemini-2.5-flash \
+  --workers 8
+
+# 詳細ログ付きで実行
+python -m chunking.csv_text_to_chunks_text_csv \
+  --input-file ./data/document.txt \
+  --verbose
 ```
 
----
-
-### 7.2 Pythonスクリプトでの使用
-
-#### 基本的な使用
+### 6.2 Pythonコードからの使用
 
 ```python
 import asyncio
-from chunking import chunks_all_async, CheckpointManager
+from chunking import (
+    chunks_all_async,
+    load_text_from_csv,
+    save_chunks_as_csv,
+)
 
-async def main():
-    # テキスト読み込み
-    with open("document.txt", "r", encoding="utf-8") as f:
-        text = f.read()
+async def process_csv():
+    # 1. CSVからテキスト読み込み
+    text = load_text_from_csv(
+        csv_path="data/articles.csv",
+        text_column="body",
+        max_rows=100,
+        combine_rows=True
+    )
 
-    # チャンク化
-    checkpoint_manager = CheckpointManager()
+    # 2. チャンキング処理
     chunks = await chunks_all_async(
         text=text,
         model="gemini-2.5-flash",
         max_workers=8,
-        block_size=2000,
-        checkpoint_manager=checkpoint_manager,
-        output_file="output/chunks.csv",
-        dataset_type="document",
-        source_file="document.txt"
+        block_size=2000
     )
 
-    print(f"チャンク数: {len(chunks)}")
-    for i, chunk in enumerate(chunks[:3]):
-        print(f"\nチャンク{i}: {chunk[:100]}...")
-
-asyncio.run(main())
-```
-
-#### CSV入力の処理
-
-```python
-import asyncio
-from chunking import load_text_from_csv, chunks_all_async, CheckpointManager
-
-async def process_csv():
-    # CSV読み込み
-    text = load_text_from_csv(
-        csv_path="dataset.csv",
-        text_column="content",
-        max_rows=500
+    # 3. CSV保存
+    save_chunks_as_csv(
+        chunks=chunks,
+        output_file="output/result.csv",
+        dataset_type="articles",
+        source_file="articles.csv"
     )
 
-    # チャンク化
-    chunks = await chunks_all_async(
-        text=text,
-        model="gemini-2.5-flash",
-        output_file="output/chunks.csv"
-    )
-
-    return chunks
+    print(f"生成チャンク数: {len(chunks)}")
 
 asyncio.run(process_csv())
 ```
 
----
+### 6.3 チェックポイントからの再開
 
-## 8. トラブルシューティング
+```python
+import asyncio
+from chunking import chunks_all_async
+from chunking.checkpoint_manager import CheckpointManager
 
-### 8.1 よくある問題と解決策
+async def resume_processing():
+    # 既存のジョブIDを指定して再開
+    checkpoint_manager = CheckpointManager(job_id="20250129_143052")
 
-| 問題 | 原因 | 解決策 |
-|------|------|--------|
-| レート制限エラー | 並列数が多すぎる | `--workers 4` に減らす |
-| メモリ不足 | 大きなテキストを処理 | `--block-size 4000` に増やす |
-| 処理が遅い | 並列数が少ない | `--workers 12` に増やす |
-| APIキーエラー | 環境変数未設定 | `export GOOGLE_API_KEY='your-key'` |
-| CSV読み込みエラー | カラム名が見つからない | `--text-column` で明示的に指定 |
-| 不完全なJSON | レスポンスが切断された | 自動リトライ（3回）が実行される |
+    text = open("data/document.txt").read()
 
-### 8.2 チェックポイントからの再開
+    # 中断したステップから自動的に再開
+    chunks = await chunks_all_async(
+        text=text,
+        checkpoint_manager=checkpoint_manager,
+        output_file="output/result.csv"
+    )
 
-```bash
-# 前回のジョブIDを指定して再開
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file document.txt \
-  --output chunks_output \
-  --resume job_20260123_123456
+    print(f"完了: {len(chunks)} チャンク")
+
+asyncio.run(resume_processing())
+```
+
+### 6.4 出力ファイル名の自動生成
+
+```python
+from chunking.csv_text_to_chunks_text_csv import generate_output_filename
+
+# タイムスタンプ付きファイル名を自動生成
+output_file = generate_output_filename(
+    input_file="data/wikipedia_ja.csv",
+    output_dir="chunks_output",
+    dataset_type="wikipedia"
+)
+# → 'chunks_output/wikipedia_ja_chunks_20250129_143052.csv'
 ```
 
 ---
 
-## 9. async並列処理の詳細
+## 7. エクスポート
 
-### 9.1 並列処理の仕組み
+`chunking/__init__.py`でエクスポートされる要素：
 
-| コンポーネント | 役割 |
-|---------------|------|
-| `asyncio.Semaphore` | 同時実行数を制限（デフォルト: 8） |
-| `asyncio.to_thread()` | 同期APIを非同期でラップ |
-| `tqdm.asyncio.gather()` | 並列実行 + 進捗表示 |
-
-### 9.2 AsyncAPIClientの主要設定
-
-| 設定項目 | デフォルト値 | 説明 |
-|----------|------------|------|
-| max_workers | 8 | 並列実行数（Semaphoreで制御） |
-| max_retries | 3 | リトライ回数 |
-| max_output_tokens | 4096 | 出力トークン制限 |
-
-### 9.3 各Stepの並列化
-
-| Step | 並列対象 | 並列数 |
-|:----:|----------|:------:|
-| Step1 | ブロック（2000文字単位） | テキスト長 ÷ 2000 |
-| Step2 | 段落 | 段落数 |
-| Step3 | 隣接ペア | チャンク数 - 1 |
-
-### 9.4 速度比較（参考値）
-
-| 並列数 | 処理時間（相対） | 備考 |
-|:------:|:---------------:|------|
-| 1（逐次） | 100% | ベースライン |
-| 4 | 30% | 安定性重視 |
-| 8 | 15% | **推奨** |
-| 12 | 12% | 速度重視 |
-| 16 | 10% | 最大速度（レート制限注意） |
-
-### 9.5 推奨設定
-
-```bash
-# 標準的な設定（推奨）
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file document.txt \
-  --output chunks_output \
-  --model gemini-2.5-flash \
-  --workers 8 \
-  --block-size 2000
+```python
+__all__ = [
+    # Main Processor
+    "chunks_all_async",
+    "load_text_from_csv",     # v1.2.0 追加
+    "save_chunks_as_csv",     # v1.2.0 追加
+    "save_chunks_as_text",    # v1.2.0 追加
+]
 ```
 
 ---
 
-## 付録: 設計上の決定事項
+## 8. 変更履歴
 
-### A. なぜ非同期・並列化？
-
-| 項目 | 内容 |
-|------|------|
-| 理由 | API呼び出しはI/Oバウンド → 並列化で劇的な高速化 |
-| 効果 | 逐次処理の6-8倍の速度 |
-
-### B. なぜSemaphore固定？
-
-| 項目 | 内容 |
-|------|------|
-| 理由 | レート制限回避 + 安定性重視 |
-| 代替案 | Rate Limiterの実装（将来的に検討） |
-
-### C. なぜチェックポイント？
-
-| 項目 | 内容 |
-|------|------|
-| 理由 | 長時間処理のクラッシュ対策 |
-| 効果 | 途中から再開可能 → 時間とコスト削減 |
-
-### D. なぜ3段階処理？
-
-| Step | 役割 |
-|:----:|------|
-| Step1 | 物理構造を維持 |
-| Step2 | 意味的に分離 |
-| Step3 | 文脈を最適化 |
-
-**効果:** 単純分割より高品質で、文脈を保持したチャンク
-
-### E. なぜ改行正規化？
-
-| 項目 | 内容 |
-|------|------|
-| 理由 | CSV形式での可読性向上、パースエラーの削減、機械学習での前処理が簡単 |
-| 効果 | クリーンで扱いやすいCSVデータセット |
-
-### F. v3.2.0でdocstringを詳細化した理由
-
-| 項目 | 内容 |
-|------|------|
-| 理由 | 学習用プログラム（step1.py, step2.py, step3.py, check_async.py）との整合性確保 |
-| 効果 | 各Stepの役割と違いが明確になり、コードの保守性・可読性が向上 |
-| 追加内容 | Step1との違い、Step2との違い、検証パターン、マージ処理のログ出力 |
+| バージョン | 変更内容 |
+|-----------|---------|
+| 1.0 | 初版作成（`chunks_all_async()`） |
+| 1.1 | チェックポイント機能追加 |
+| 1.2 | CSV入力対応（`load_text_from_csv()`）、CSV出力機能追加（`save_chunks_as_csv()`）、改行正規化対応、出力ファイル名自動生成機能追加 |
 
 ---
 
-## 変更履歴
+## 付録: 依存関係図
 
-| バージョン | 日付 | 変更内容 |
-|-----------|------|----------|
-| v1.0.0 | - | 初版リリース |
-| v1.2.0 | - | CSV入力対応、CSV/テキスト出力機能追加 |
-| v2.0.0 | - | 改行正規化、出力ファイル名自動生成機能追加 |
-| v3.1.0 | - | デフォルトモデルを`gemini-2.5-flash`に変更 |
-| v3.2.0 | - | docstring詳細化、Step3マージ処理のログ出力追加 |
-| v3.2.1 | 2026-01-27 | ドキュメント最新化：`_split_sentences_simple()`追記、`save_chunks_as_text()`追記、AsyncAPIClient設定詳細化 |
+```mermaid
+flowchart LR
+    CSV_CHUNKS[csv_text_to_chunks_text_csv.py]
+
+    subgraph INTERNAL["内部モジュール"]
+        API_CLIENT[async_api_client.py]
+        CHECKPOINT[checkpoint_manager.py]
+        MODELS[models.py]
+        PROMPTS[prompts.py]
+        UTILS[utils.py]
+    end
+
+    subgraph EXTERNAL["外部ライブラリ"]
+        PANDAS[pandas]
+        TIKTOKEN[tiktoken]
+        TQDM[tqdm.asyncio]
+    end
+
+    subgraph STDLIB["標準ライブラリ"]
+        ASYNCIO[asyncio]
+        ARGPARSE[argparse]
+        LOGGING[logging]
+        PATHLIB[pathlib]
+        RE[re]
+    end
+
+    subgraph SERVICE["外部サービス"]
+        GEMINI[Google Gemini API]
+    end
+
+    CSV_CHUNKS --> API_CLIENT
+    CSV_CHUNKS --> CHECKPOINT
+    CSV_CHUNKS --> MODELS
+    CSV_CHUNKS --> PROMPTS
+    CSV_CHUNKS --> UTILS
+
+    CSV_CHUNKS --> PANDAS
+    CSV_CHUNKS --> TIKTOKEN
+    CSV_CHUNKS --> TQDM
+
+    CSV_CHUNKS --> ASYNCIO
+    CSV_CHUNKS --> ARGPARSE
+    CSV_CHUNKS --> LOGGING
+    CSV_CHUNKS --> PATHLIB
+    CSV_CHUNKS --> RE
+
+    API_CLIENT --> GEMINI
+
+    MODELS --> PYDANTIC[pydantic]
+    API_CLIENT --> GOOGLE_GENAI[google-genai]
+```
+
+---
+
+## 付録: 処理フロー図
+
+### 全体処理フロー
+
+```mermaid
+flowchart TB
+    START(["開始"]) --> INPUT{"入力ファイル<br/>形式?"}
+
+    INPUT -->|CSV| LOAD_CSV["load_text_from_csv()"]
+    INPUT -->|TXT| LOAD_TXT["ファイル読み込み"]
+
+    LOAD_CSV --> TEXT["テキスト取得"]
+    LOAD_TXT --> TEXT
+
+    TEXT --> STEP1["Step1: 階層構造化<br/>_step1_hierarchical_split()"]
+    STEP1 --> CP1["チェックポイント保存"]
+    CP1 --> STEP2["Step2: 意味的分割<br/>_step2_semantic_chunking()"]
+    STEP2 --> CP2["チェックポイント保存"]
+    CP2 --> STEP3["Step3: 連続性チェック<br/>_step3_continuity_check()"]
+    STEP3 --> CP3["チェックポイント保存"]
+
+    CP3 --> OUTPUT{"出力形式?"}
+    OUTPUT -->|CSV| SAVE_CSV["save_chunks_as_csv()"]
+    OUTPUT -->|TXT| SAVE_TXT["save_chunks_as_text()"]
+    OUTPUT -->|なし| RETURN["チャンクリスト返却"]
+
+    SAVE_CSV --> END(["完了"])
+    SAVE_TXT --> END
+    RETURN --> END
+```
+
+### チェックポイント再開フロー
+
+```mermaid
+flowchart TB
+    START(["再開開始"]) --> CHECK1{"step3<br/>存在?"}
+
+    CHECK1 -->|Yes| LOAD3["step3読み込み"]
+    CHECK1 -->|No| CHECK2{"step2<br/>存在?"}
+
+    CHECK2 -->|Yes| LOAD2["step2読み込み"]
+    CHECK2 -->|No| CHECK3{"step1<br/>存在?"}
+
+    CHECK3 -->|Yes| LOAD1["step1読み込み"]
+    CHECK3 -->|No| FULL["最初から実行"]
+
+    LOAD3 --> DONE(["処理完了済み"])
+    LOAD2 --> STEP3["Step3から再開"]
+    LOAD1 --> STEP2["Step2から再開"]
+    FULL --> STEP1["Step1から開始"]
+```
