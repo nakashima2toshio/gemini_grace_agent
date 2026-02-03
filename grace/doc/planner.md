@@ -1,6 +1,6 @@
 # planner.py - GRACE計画生成エージェント ドキュメント
 
-**Version 1.2** | 最終更新: 2025-01-28
+**Version 1.3** | 最終更新: 2025-01-30
 
 ---
 
@@ -71,38 +71,32 @@
 
 ### 1.1 システム全体構成
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        クライアント層                            │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │
-│  │   Streamlit      │  │    FastAPI       │  │  CLI Tools   │  │
-│  │   Dashboard      │  │    Endpoints     │  │              │  │
-│  └────────┬─────────┘  └────────┬─────────┘  └──────┬───────┘  │
-└───────────┼─────────────────────┼───────────────────┼──────────┘
-            │                     │                   │
-            └──────────────────┬──┴───────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                         planner.py                              │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  Planner Class                                             │ │
-│  │  ├── create_plan()         - 計画生成                      │ │
-│  │  ├── estimate_complexity() - 複雑度推定                    │ │
-│  │  └── refine_plan()         - 計画修正                      │ │
-│  ├────────────────────────────────────────────────────────────┤ │
-│  │  Factory Function                                          │ │
-│  │  └── create_planner()      - インスタンス生成              │ │
-│  └────────────────────────────────────────────────────────────┘ │
-└───────────────────────────────┬─────────────────────────────────┘
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       外部サービス層                             │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐    │
-│  │    Qdrant      │  │    Gemini      │  │   MeCab/       │    │
-│  │    Server      │  │    API         │  │   Regex        │    │
-│  │    :6333       │  │   (LLM)        │  │  (Keyword)     │    │
-│  └────────────────┘  └────────────────┘  └────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph CLIENT["クライアント層"]
+        STREAMLIT[Streamlit Dashboard]
+        API[FastAPI Endpoints]
+        CLI[CLI Tools]
+    end
+
+    subgraph MODULE["planner.py"]
+        PLANNER[Planner Class]
+        FACTORY[create_planner]
+    end
+
+    subgraph EXTERNAL["外部サービス層"]
+        QDRANT[(Qdrant Server\n:6333)]
+        GEMINI[Gemini API\nLLM]
+        MECAB[MeCab/Regex\nKeyword]
+    end
+
+    STREAMLIT --> MODULE
+    API --> MODULE
+    CLI --> MODULE
+    FACTORY --> PLANNER
+    PLANNER --> QDRANT
+    PLANNER --> GEMINI
+    PLANNER --> MECAB
 ```
 
 ### 1.2 データフロー
@@ -119,45 +113,55 @@
 
 ### 2.1 内部モジュール構成
 
-```
-planner.py
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```mermaid
+flowchart TB
+    subgraph CONST["定数・設定"]
+        PROMPT[PLAN_GENERATION_PROMPT]
+        COMPLEXITY[COMPLEXITY_ESTIMATION_PROMPT]
+    end
 
-[設定・定数]
-  • PLAN_GENERATION_PROMPT       - 計画生成用プロンプト
-  • COMPLEXITY_ESTIMATION_PROMPT - 複雑度推定用プロンプト
+    subgraph PLANNER["Planner クラス"]
+        INIT["__init__()"]
+        CREATE["create_plan()"]
+        LEGACY["_create_plan_legacy()"]
+        GET_COLL["_get_available_collections()"]
+        FALLBACK["_create_fallback_plan()"]
+        EST["estimate_complexity()"]
+        EST_LLM["estimate_complexity_with_llm()"]
+        REFINE["refine_plan()"]
+    end
 
-[クラス]
-  └── Planner                    - 計画生成エージェント
-        ├── __init__()
-        ├── create_plan()
-        ├── _create_plan_legacy()
-        ├── _get_available_collections()
-        ├── _create_fallback_plan()
-        ├── estimate_complexity()
-        ├── estimate_complexity_with_llm()
-        └── refine_plan()
+    subgraph FACTORY_GRP["ファクトリ関数"]
+        CREATE_P["create_planner()"]
+    end
 
-[ファクトリ関数]
-  └── create_planner()           - Plannerインスタンス生成
+    CONST --> PLANNER
+    CREATE_P --> INIT
+    INIT --> CREATE
+    CREATE --> EST_LLM
+    CREATE --> GET_COLL
+    CREATE --> FALLBACK
+    EST_LLM -.->|失敗時| EST
+    CREATE --> REFINE
 ```
 
 ### 2.2 外部依存関係
 
 | ライブラリ | バージョン | 用途 |
 |-----------|-----------|------|
-| `google-genai` | - | Gemini APIクライアント |
+| `google-genai` | 1.x | Gemini APIクライアント |
 | `qdrant-client` | 1.x | Qdrant接続 |
+| `pydantic` | 2.x | データモデル検証（GraceConfig） |
 
 ### 2.3 内部依存モジュール
 
 | モジュール | 用途 |
 |-----------|------|
 | `grace.schemas` | ExecutionPlan, PlanStep等のデータモデル |
-| `grace.config` | GraceConfig設定管理 |
-| `services.qdrant_service` | コレクション取得 |
-| `services.prompts` | 検索クエリ指示テンプレート |
-| `regex_mecab` | キーワード抽出 |
+| `grace.config` | GraceConfig設定管理、get_config() |
+| `services.qdrant_service` | get_all_collections()によるコレクション取得 |
+| `services.prompts` | SEARCH_QUERY_INSTRUCTION検索クエリ指示 |
+| `regex_mecab` | KeywordExtractorによるキーワード抽出 |
 
 ---
 
@@ -213,7 +217,7 @@ Planner(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig] = None`, `model_name: Optional[str] = None` |
-| **Process** | 1. 設定オブジェクトの取得（デフォルトまたは指定）<br>2. モデル名の決定<br>3. Gemini APIクライアントの初期化<br>4. KeywordExtractorの初期化（MeCab優先） |
+| **Process** | 1. 設定オブジェクトの取得（デフォルトまたは指定）<br>2. モデル名の決定（指定またはconfig.llm.model）<br>3. Gemini APIクライアント（genai.Client）の初期化<br>4. KeywordExtractorの初期化（MeCab優先） |
 | **Output** | Plannerインスタンス |
 
 ```python
@@ -585,7 +589,7 @@ def create_planner(
 
 **戻り値例**:
 ```python
-<Planner instance with model=gemini-2.0-flash>
+<Planner instance with model=gemini-2.5-flash>
 ```
 
 ```python
@@ -660,12 +664,27 @@ COMPLEXITY_ESTIMATION_PROMPT = """
 
 ### 5.3 GraceConfigから使用される設定
 
+Plannerで使用されるGraceConfigの設定項目：
+
+#### LLMConfig（config.llm）
+
 | 設定パス | 型 | デフォルト | 説明 |
 |---------|-----|----------|------|
-| `llm.model` | str | `gemini-2.0-flash` | 使用するLLMモデル |
-| `llm.temperature` | float | 0.7 | 生成時の温度パラメータ |
-| `qdrant.url` | str | `http://localhost:6333` | QdrantサーバーURL |
-| `qdrant.search_priority` | list | `["wikipedia_ja", ...]` | デフォルトのコレクション順序 |
+| `llm.provider` | str | `"gemini"` | LLMプロバイダー |
+| `llm.model` | str | `"gemini-2.5-flash"` | 使用するLLMモデル |
+| `llm.temperature` | float | `0.7` | 生成時の温度パラメータ |
+| `llm.max_tokens` | int | `4096` | 最大出力トークン数 |
+| `llm.timeout` | int | `30` | タイムアウト秒数 |
+
+#### QdrantConfig（config.qdrant）
+
+| 設定パス | 型 | デフォルト | 説明 |
+|---------|-----|----------|------|
+| `qdrant.url` | str | `"http://localhost:6333"` | QdrantサーバーURL |
+| `qdrant.collection_name` | str | `"customer_support_faq"` | デフォルトコレクション名 |
+| `qdrant.search_limit` | int | `5` | 検索結果の最大件数 |
+| `qdrant.score_threshold` | float | `0.35` | 検索スコア閾値 |
+| `qdrant.search_priority` | list | `["wikipedia_ja", "livedoor", "cc_news", "japanese_text"]` | コレクション検索優先順序 |
 
 ---
 
@@ -784,39 +803,55 @@ __all__ = [
 | 1.0 | ドキュメント改修: フォーマット統一、IPO詳細・シグネチャ・戻り値例・使用例を追加 |
 | 1.1 | ドキュメント改修: 主な責務・主要機能一覧を追加、IPO詳細に「**概要**:」ラベルを追加 |
 | 1.2 | ドキュメント改修: 目次を追加 |
+| 1.3 | ドキュメント改修: ASCII図をMermaid v9フローチャートに変更、GraceConfig設定情報を詳細化 |
 
 ---
 
 ## 付録: 依存関係図
 
-```
-planner.py
-    │
-    ├──► google.genai
-    │        └── genai.Client
-    │        └── genai.types.GenerateContentConfig
-    │
-    ├──► qdrant_client
-    │        └── QdrantClient
-    │
-    ├──► grace.schemas (内部)
-    │        └── ExecutionPlan
-    │        └── PlanStep
-    │        └── create_plan_id()
-    │        └── validate_plan_dependencies()
-    │
-    ├──► grace.config (内部)
-    │        └── get_config()
-    │        └── GraceConfig
-    │
-    ├──► services.qdrant_service (内部)
-    │        └── get_all_collections()
-    │
-    ├──► services.prompts (内部)
-    │        └── SEARCH_QUERY_INSTRUCTION
-    │
-    └──► regex_mecab (内部)
-             └── KeywordExtractor
+```mermaid
+flowchart LR
+    PLANNER[planner.py]
+
+    subgraph GOOGLE["google-genai"]
+        GENAI[genai.Client]
+        TYPES[genai.types.GenerateContentConfig]
+    end
+
+    subgraph QDRANT["qdrant-client"]
+        QC[QdrantClient]
+    end
+
+    subgraph INTERNAL["内部モジュール"]
+        SCHEMAS[grace.schemas]
+        CONFIG[grace.config]
+        QDRANT_SVC[services.qdrant_service]
+        PROMPTS[services.prompts]
+        REGEX[regex_mecab]
+    end
+
+    PLANNER --> GENAI
+    PLANNER --> TYPES
+    PLANNER --> QC
+    PLANNER --> SCHEMAS
+    PLANNER --> CONFIG
+    PLANNER --> QDRANT_SVC
+    PLANNER --> PROMPTS
+    PLANNER --> REGEX
+
+    SCHEMAS --> S1[ExecutionPlan]
+    SCHEMAS --> S2[PlanStep]
+    SCHEMAS --> S3[create_plan_id]
+    SCHEMAS --> S4[validate_plan_dependencies]
+
+    CONFIG --> C1[get_config]
+    CONFIG --> C2[GraceConfig]
+
+    QDRANT_SVC --> Q1[get_all_collections]
+
+    PROMPTS --> P1[SEARCH_QUERY_INSTRUCTION]
+
+    REGEX --> R1[KeywordExtractor]
 ```
 
 ---

@@ -17,6 +17,13 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="/OUTPUT/fineweb_edu_ja_5per.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="/OUTPUT/fineweb_edu_ja_5per_chunked.csv">
           <value>
             <Attribute>
@@ -74,6 +81,27 @@
           </value>
         </entry>
         <entry key="/output_chunked/cc_news_5per_chunks_20260124_005716.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/qa_output/pipeline/qa_pairs_cc_news_5per_chunked_20260121_102236.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/qa_output/qa_pairs_cc_news_5per_chunked.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/qa_output/qa_pairs_wikipedia_ja_5per_chunked.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />

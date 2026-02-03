@@ -7,15 +7,11 @@ Core functionality for RAG Q&A system
 
 Module structure:
 - models.py: Pydantic data models (QAPair, QAPairsList, etc.)
-- keyword_extraction.py: Keyword extraction (BestKeywordSelector, SmartKeywordSelector)
 - semantic.py: Semantic coverage (SemanticCoverage)
-- generation.py: Q/A generation (QAGenerator, generate_qa_dataset)
-- structure.py: Chunk structure processing
+- smart_qa_generator.py: Smart Q/A generation (SmartQAGenerator)
 - evaluation.py: Q/A evaluation
-- pipeline.py: Generation pipeline
-- content.py: Content processing
+- pipeline.py: Generation pipeline (QAPipeline)
 - data_io.py: Data I/O
-- config.py: Configuration
 """
 
 # ===================================================================
@@ -33,19 +29,19 @@ from qa_generation.models import (
 )
 
 # ===================================================================
-# Keyword Extraction
-# ===================================================================
-from qa_generation.keyword_extraction import (
-    BestKeywordSelector,
-    SmartKeywordSelector,
-    get_best_keywords,
-    get_smart_keywords,
-)
-
-# ===================================================================
 # Semantic Coverage
 # ===================================================================
 from qa_generation.semantic import SemanticCoverage
+
+# ===================================================================
+# Smart QA Generator
+# ===================================================================
+from qa_generation.smart_qa_generator import SmartQAGenerator
+
+# ===================================================================
+# Pipeline
+# ===================================================================
+from qa_generation.pipeline import QAPipeline
 
 # ===================================================================
 # Export
@@ -60,11 +56,10 @@ __all__ = [
     "EnhancedQAPair",
     "EnhancedQAPairsList",
     "QAGenerationConsiderations",
-    # Keyword extraction
-    "BestKeywordSelector",
-    "SmartKeywordSelector",
-    "get_best_keywords",
-    "get_smart_keywords",
     # Semantic coverage
     "SemanticCoverage",
+    # Smart QA Generator
+    "SmartQAGenerator",
+    # Pipeline
+    "QAPipeline",
 ]

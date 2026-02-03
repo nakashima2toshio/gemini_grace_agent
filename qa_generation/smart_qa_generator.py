@@ -44,7 +44,7 @@ class SmartQAGenerator:
     コンテンツを考慮したインテリジェントQ/A生成クラス
     """
 
-    def __init__(self, model: str = "gemini-2.0-flash", api_key: Optional[str] = None):
+    def __init__(self, model: str = "gemini-3-flash", api_key: Optional[str] = None):
         """
         初期化
 
@@ -72,11 +72,9 @@ class SmartQAGenerator:
     def _generate_content(self, prompt: str, temperature: float = 0.1) -> str:
         """
         コンテンツ生成（API切り替え対応）
-
         Args:
             prompt: プロンプト
             temperature: 温度パラメータ
-
         Returns:
             生成されたテキスト
         """
@@ -85,9 +83,9 @@ class SmartQAGenerator:
             response = self.client.models.generate_content(
                 model=self.model,
                 contents=prompt,
-                config={
-                    'temperature': temperature,
-                }
+                # config={
+                #     'temperature': temperature,
+                # }
             )
             return response.text
         else:

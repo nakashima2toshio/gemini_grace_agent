@@ -1,10 +1,58 @@
 # python sample_regex_mecab.py
 # MeCab複合名詞版と正規表現版を統合したロバストなキーワード抽出システム
 # [Usage:] List: keywords = extractor.extract(sample_text_jp, top_n=10)
+# [Usage:] List: chunks = chunk_text(sample_text_jp2)
 import re
 from typing import List, Dict, Tuple
 from collections import Counter
 
+
+# =============================================================================
+# チャンク分割機能
+# =============================================================================
+
+def chunk_text(text: str, keep_delimiter: bool = True) -> List[str]:
+    """
+    テキストをチャンクに分割する
+    分割ルール:
+    - 改行が含まれる場合: 改行で分割
+    - 改行がない場合: 「。」で分割
+    Args:
+        text: 分割対象のテキスト
+        keep_delimiter: 区切り文字（。）を保持するか（デフォルト: True）
+    Returns:
+        チャンクのリスト
+    """
+    # 前後の空白を除去
+    text = text.strip()
+
+    if not text:
+        return []
+
+    # 改行が含まれているかチェック（空白のみの行は除外）
+    has_meaningful_newlines = bool(re.search(r'\n\s*\S', text))
+
+    if has_meaningful_newlines:
+        # 改行で分割
+        chunks = text.split('\n')
+    else:
+        # 「。」で分割
+        if keep_delimiter:
+            # 「。」を保持して分割（正規表現で「。」の後で分割）
+            chunks = re.split(r'(?<=。)', text)
+        else:
+            # 「。」を除去して分割
+            chunks = text.split('。')
+
+    # 空のチャンクを除去し、各チャンクをstrip
+    chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
+
+    return chunks
+
+
+# =============================================================================
+# キーワード抽出クラス
+# =============================================================================
 
 class KeywordExtractor:
     """
@@ -93,7 +141,7 @@ class KeywordExtractor:
         return self._extract_with_regex(text, top_n, use_scoring)
 
     def _extract_with_mecab(self, text: str, top_n: int,
-                           use_scoring: bool) -> List[str]:
+                            use_scoring: bool) -> List[str]:
         """MeCabを使用した複合名詞抽出"""
         import MeCab
 
@@ -134,7 +182,7 @@ class KeywordExtractor:
             return self._filter_and_count(compound_nouns, top_n)
 
     def _extract_with_regex(self, text: str, top_n: int,
-                           use_scoring: bool) -> List[str]:
+                            use_scoring: bool) -> List[str]:
         """正規表現を使用したキーワード抽出"""
         # カタカナ語、漢字複合語、英数字を抽出
         pattern = r'[ァ-ヴー]{2,}|[一-龥]{2,}|[A-Za-z]{2,}[A-Za-z0-9]*'
@@ -323,6 +371,10 @@ class KeywordExtractor:
         return min(score, 1.0)
 
 
+# =============================================================================
+# ユーティリティ関数
+# =============================================================================
+
 def compare_methods(text: str, top_n: int = 10):
     """各抽出手法を比較して結果を表示"""
     extractor = KeywordExtractor()
@@ -343,7 +395,7 @@ def compare_methods(text: str, top_n: int = 10):
 def main():
     """メイン実行関数"""
 
-    # 1. 日本語サンプル
+    # 1. 日本語サンプル（改行あり）
     sample_text_jp = """
     人工知能（AI）は、機械学習と深層学習を基盤として急速に発展しています。
     特に自然言語処理（NLP）の分野では、トランスフォーマーモデルが革命的な成果を上げました。
@@ -351,7 +403,10 @@ def main():
     AIの応用は医療診断から自動運転まで幅広く、社会に大きな影響を与えています。
     """
 
-    # 2. 英語サンプル
+    # 2. 日本語サンプル（改行なし - 句点で分割対象）
+    sample_text_jp2 = """人工知能（AI）は、機械学習と深層学習を基盤として急速に発展しています。特に自然言語処理（NLP）の分野では、トランスフォーマーモデルが革命的な成果を上げました。BERTやGPTなどの大規模言語モデルは、文脈理解能力を大幅に向上させています。AIの応用は医療診断から自動運転まで幅広く、社会に大きな影響を与えています。"""
+
+    # 3. 英語サンプル
     sample_text_en = """
     Artificial intelligence (AI) is rapidly advancing based on machine 00_learning.md and deep 00_learning.md.
     In the field of natural language processing (NLP) in particular, transformer models have achieved revolutionary results.
@@ -359,12 +414,51 @@ def main():
     AI applications span widely from medical diagnosis to autonomous driving, profoundly impacting society.
     """
 
+    sample_text_en2 = """Artificial intelligence (AI) is rapidly advancing based on machine 00_learning.md and deep 00_learning.md.In the field of natural language processing (NLP) in particular, transformer models have achieved revolutionary results.Large language models like BERT and GPT have significantly enhanced contextual understanding capabilities.AI applications span widely from medical diagnosis to autonomous driving, profoundly impacting society."""
+
+    # =========================================================================
+    # チャンク分割のデモ
+    # =========================================================================
+    print("=" * 80)
+    print("【チャンク分割機能のデモ】")
+    print("=" * 80)
+
+    # --- sample_text_jp（改行あり）のチャンク分割 ---
+    print("\n■ sample_text_jp（改行あり）のチャンク分割")
+    print("-" * 60)
+    chunks_jp = chunk_text(sample_text_jp)
+    print(f"分割方法: 改行")
+    print(f"チャンク数: {len(chunks_jp)}")
+    for i, chunk in enumerate(chunks_jp, 1):
+        print(f"  [{i}] {chunk}")
+
+    print()
+    chunks_en2 = chunk_text(sample_text_en2)
+    for i, chunk_en in enumerate(chunks_en2, 1):
+        print(f"  [{i}] {chunk_en}")
+
+    # --- sample_text_jp2（改行なし）のチャンク分割 ---
+    print("\n■ sample_text_jp2（改行なし）のチャンク分割")
+    print("-" * 60)
+    chunks_jp2 = chunk_text(sample_text_jp2)
+    print(f"分割方法: 句点（。）")
+    print(f"チャンク数: {len(chunks_jp2)}")
+    for i, chunk in enumerate(chunks_jp2, 1):
+        print(f"  [{i}] {chunk}")
+
+    # =========================================================================
+    # キーワード抽出のデモ（従来機能）
+    # =========================================================================
+    print("\n\n" + "=" * 80)
+    print("【キーワード抽出機能のデモ】")
+    print("=" * 80)
+
     extractor = KeywordExtractor()
 
-    for lang, text in [("日本語", sample_text_jp), ("英語", sample_text_en)]:
-        print("\n" + "=" * 80)
+    for lang, text in [("日本語（改行あり）", sample_text_jp), ("英語", sample_text_en)]:
+        print("\n" + "-" * 60)
         print(f"--- {lang} キーワード抽出テスト ---")
-        print("=" * 80)
+        print("-" * 60)
 
         # デフォルト抽出
         keywords = extractor.extract(text, top_n=10)
@@ -372,19 +466,26 @@ def main():
         for i, kw in enumerate(keywords, 1):
             print(f"  {i:2d}. {kw}")
 
-        # 詳細比較
-        compare_methods(text, top_n=10)
+    # =========================================================================
+    # シンプルな出力例
+    # =========================================================================
+    print("\n\n" + "=" * 80)
+    print("【シンプルな使用例】")
+    print("=" * 80)
 
-    print('\nJapanese -------------')
-    keywords = extractor.extract(sample_text_jp, top_n=10)
-    print(keywords)
-    print(type(keywords))
+    print('\n--- chunk_text() の戻り値 ---')
+    chunks = chunk_text(sample_text_jp2)
+    for i, chunk in enumerate(chunks, 1):
+        print(f"[{i}] {chunk}")
+    # print(f"chunks = {chunks}\n")
+    # print(f"type: {type(chunks)}")
 
-    print('\nEnglish -------------')
-    keywords = extractor.extract(sample_text_en, top_n=10)
-    print(keywords)
-    # print(type(keywords))
+    print('\n--- KeywordExtractor.extract() の戻り値 ---')
+    keywords = extractor.extract(sample_text_jp2, top_n=5)
+    print(f"keywords = {keywords}")
+    print(f"type: {type(keywords)}")
 
 
 if __name__ == "__main__":
     main()
+

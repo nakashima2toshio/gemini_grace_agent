@@ -32,11 +32,9 @@ from chunking.prompts import SEMANTIC_CHUNKING_PROMPT
 def step2_semantic_chunking(paragraphs: list[str], api_key: str) -> list[str]:
     """
     段落を意味的なチャンクに分割する（Step2のコア機能）
-
     Args:
         paragraphs: 段落のリスト（Step1の出力）
         api_key: Gemini API キー
-
     Returns:
         意味的に分割されたチャンクのリスト
     """
@@ -56,7 +54,7 @@ def step2_semantic_chunking(paragraphs: list[str], api_key: str) -> list[str]:
         # gemini-2.5-flash: 最新の安定版、高いレート制限
         # # URL: https://ai.google.dev/gemini-api/docs/text-generation?lang=python
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3-flash-preview",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
