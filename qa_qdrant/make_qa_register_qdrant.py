@@ -19,7 +19,7 @@ make_qa_register_qdrant.py - Q/A生成からQdrant登録までを完結する統
     --input-file output_chunked/cc_news_5per_chunks.csv \
     --collection cc_news_5per \
     --use-celery \
-    --model gemini-2.5-flash \
+    --model gemini-3-flash-preview \
     --concurrency 8 \
     --text-column text \
     --combine-rows \
@@ -31,7 +31,7 @@ make_qa_register_qdrant.py - Q/A生成からQdrant登録までを完結する統
     --input-file output_chunked/wikipedia_ja_5per_chunked.csv \
     --collection wikipedia_ja_5per \
     --use-celery \
-    --model gemini-2.5-flash \
+    --model gemini-3-flash-preview \
     --concurrency 3 \
     --text-column text \
     --combine-rows \
@@ -86,7 +86,7 @@ make_qa_register_qdrant.py - Q/A生成からQdrant登録までを完結する統
     --batch-size        Embeddingバッチサイズ（デフォルト: 100）
 
   Q/A生成:
-    --model             LLMモデル（デフォルト: gemini-2.0-flash）
+    --model             LLMモデル（デフォルト: gemini-3-flash-preview）
     --use-celery        Celery並列処理を使用
     -c, --concurrency   並列タスク数（デフォルト: 8）
     --batch-chunks      1回のAPIで処理するチャンク数（デフォルト: 3）
@@ -412,8 +412,8 @@ def main():
     group_gen.add_argument(
         "--model",
         type=str,
-        default="gemini-2.0-flash",
-        help="使用するLLMモデル（デフォルト: gemini-2.0-flash）"
+        default="gemini-3-flash-preview",
+        help="使用するLLMモデル（デフォルト: gemini-3-flash-preview）"
     )
     group_gen.add_argument(
         "--max-docs",
@@ -445,29 +445,6 @@ def main():
         type=int,
         default=3,
         help="1回のAPIで処理するチャンク数（デフォルト: 3）"
-    )
-    group_gen.add_argument(
-        "--merge-chunks",
-        action="store_true",
-        default=True,
-        help="小さいチャンクを統合する（デフォルト: True）"
-    )
-    group_gen.add_argument(
-        "--overlap-tokens",
-        type=int,
-        default=0,
-        help="チャンク間の重複トークン数（デフォルト: 0）"
-    )
-    group_gen.add_argument(
-        "--use-similarity",
-        action="store_true",
-        help="ベクトル類似度によるセマンティック分割を使用"
-    )
-    group_gen.add_argument(
-        "--similarity-threshold",
-        type=float,
-        default=0.7,
-        help="セマンティック分割の類似度閾値（デフォルト: 0.7）"
     )
     # スマート生成オプション（デフォルト: True）
     group_gen.add_argument(
@@ -616,13 +593,9 @@ def main():
                 result = pipeline.run(
                     use_celery=args.use_celery,
                     celery_workers=args.celery_workers,
-                    concurrency=args.concurrency,  # ✅ 改修: concurrency を渡す
+                    concurrency=args.concurrency,
                     batch_chunks=args.batch_chunks,
-                    merge_chunks=args.merge_chunks,
                     analyze_coverage=True,
-                    overlap_tokens=args.overlap_tokens,
-                    use_similarity=args.use_similarity,
-                    similarity_threshold=args.similarity_threshold,
                     use_smart_generation=args.use_smart_generation
                 )
 
@@ -683,13 +656,9 @@ def main():
                     result = pipeline.run(
                         use_celery=args.use_celery,
                         celery_workers=args.celery_workers,
-                        concurrency=args.concurrency,  # ✅ 改修: concurrency を渡す
+                        concurrency=args.concurrency,
                         batch_chunks=args.batch_chunks,
-                        merge_chunks=args.merge_chunks,
                         analyze_coverage=True,
-                        overlap_tokens=args.overlap_tokens,
-                        use_similarity=args.use_similarity,
-                        similarity_threshold=args.similarity_threshold,
                         use_smart_generation=args.use_smart_generation
                     )
 
@@ -726,13 +695,9 @@ def main():
             result = pipeline.run(
                 use_celery=args.use_celery,
                 celery_workers=args.celery_workers,
-                concurrency=args.concurrency,  # ✅ 改修: concurrency を渡す
+                concurrency=args.concurrency,
                 batch_chunks=args.batch_chunks,
-                merge_chunks=args.merge_chunks,
                 analyze_coverage=True,
-                overlap_tokens=args.overlap_tokens,
-                use_similarity=args.use_similarity,
-                similarity_threshold=args.similarity_threshold,
                 use_smart_generation=args.use_smart_generation
             )
 

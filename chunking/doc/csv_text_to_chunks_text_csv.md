@@ -1,6 +1,6 @@
 # csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキング ドキュメント
 
-**Version 1.2** | 最終更新: 2025-01-29
+**Version 1.3** | 最終更新: 2025-02-04
 
 ---
 
@@ -41,10 +41,12 @@
 | `save_chunks_as_csv()` | チャンクをCSV形式で保存（メタデータ付き） |
 | `save_chunks_as_text()` | チャンクをテキスト形式で保存（後方互換） |
 | `generate_output_filename()` | 出力ファイル名を自動生成 |
-| `_step1_hierarchical_split()` | Step1: 階層構造化（段落分割） |
+| `_step1_hierarchical_split()` | Step1: 階層構造化（段落分割）※前処理・後処理追加 |
 | `_step2_semantic_chunking()` | Step2: 意味的分割（話題転換点検出） |
 | `_step3_continuity_check()` | Step3: 文脈連続性チェック（過分割修正） |
 | `_normalize_whitespace()` | テキストの改行・空白を正規化 |
+| `_preprocess_text()` | **[v1.3追加]** Step1前処理: 長い1行を句読点で分割 |
+| `_postprocess_paragraph()` | **[v1.3追加]** Step1後処理: 段落内の文を改行区切りに整形 |
 | `_split_sentences_simple()` | 簡易的な文分割（日本語対応） |
 
 ---
@@ -160,10 +162,12 @@ flowchart TB
     end
 
     subgraph STEP1["Step1: 階層構造化"]
+        S1_PRE["前処理: _preprocess_text()<br/>長い1行を句読点で分割"]
         S1_IN["ブロック分割 (block_size単位)"]
         S1_LLM["LLM: PARAGRAPH_SEPARATION_PROMPT"]
+        S1_POST["後処理: _postprocess_paragraph()<br/>段落内の文を改行区切りに整形"]
         S1_OUT["段落リスト"]
-        S1_IN --> S1_LLM --> S1_OUT
+        S1_PRE --> S1_IN --> S1_LLM --> S1_POST --> S1_OUT
     end
 
     subgraph STEP2["Step2: 意味的分割"]
@@ -184,7 +188,7 @@ flowchart TB
         CSV["CSV/TXTファイル"]
     end
 
-    TEXT --> S1_IN
+    TEXT --> S1_PRE
     S1_OUT --> S2_IN
     S2_OUT --> S3_IN
     S3_OUT --> CSV
@@ -219,6 +223,8 @@ flowchart TB
     subgraph UTIL_FUNC["ユーティリティ（プライベート）"]
         NORM["_normalize_whitespace()"]
         SPLIT["_split_sentences_simple()"]
+        PREPROC["_preprocess_text()"]
+        POSTPROC["_postprocess_paragraph()"]
     end
 
     MAIN --> LOAD_CSV
@@ -231,6 +237,8 @@ flowchart TB
     CHUNKS_ALL --> SAVE_CSV
     CHUNKS_ALL --> SAVE_TXT
 
+    STEP1 --> PREPROC
+    STEP1 --> POSTPROC
     STEP1 --> STEP2
     STEP2 --> STEP3
 
@@ -267,6 +275,7 @@ flowchart TB
 | `chunking.models` | `StructuralResult`, `ContinuityResult` | Pydanticスキーマ |
 | `chunking.prompts` | `PARAGRAPH_SEPARATION_PROMPT`, `SEMANTIC_CHUNKING_PROMPT`, `CONTINUITY_CHECK_PROMPT` | LLMプロンプト |
 | `chunking.utils` | `setup_logging`, `format_time`, `format_size` | ユーティリティ |
+| `chunking.regex_string` | `chunk_text` | **[v1.3追加]** 日本語・英語対応の文分割 |
 
 ---
 
@@ -287,8 +296,10 @@ flowchart TB
 |-------|------|
 | `generate_output_filename(input_file, output_dir, ...)` | 出力ファイル名を自動生成（タイムスタンプ付き） |
 | `_normalize_whitespace(text)` | テキストの改行・空白を正規化（プライベート） |
+| `_preprocess_text(text)` | **[v1.3追加]** Step1前処理: 長い1行を句読点で分割（プライベート） |
+| `_postprocess_paragraph(paragraph)` | **[v1.3追加]** Step1後処理: 段落内の文を改行区切りに整形（プライベート） |
 | `_split_sentences_simple(text)` | 簡易的な文分割・日本語対応（プライベート） |
-| `_step1_hierarchical_split(text, client, ...)` | Step1: 階層構造化（プライベート） |
+| `_step1_hierarchical_split(text, client, ...)` | Step1: 階層構造化（プライベート）※v1.3で前処理・後処理追加 |
 | `_step2_semantic_chunking(paragraphs, client, ...)` | Step2: 意味的分割（プライベート） |
 | `_step3_continuity_check(chunks, client, ...)` | Step3: 文脈連続性チェック（プライベート） |
 | `main()` | CLI用メイン関数 |
@@ -559,7 +570,7 @@ generate_output_filename("data/cc_news.csv", "output", "cc_news")
 
 #### `_step1_hierarchical_split`
 
-**概要**: Step1 - テキストを物理的な空行（`\n\n`）に基づいて段落に分割する。LLMを使用して階層構造化。
+**概要**: Step1 - テキストを物理的な空行（`\n\n`）に基づいて段落に分割する。LLMを使用して階層構造化。**v1.3で前処理・後処理を追加し、改行のない長いテキストでも正確に分割可能。**
 
 ```python
 async def _step1_hierarchical_split(
@@ -582,8 +593,28 @@ async def _step1_hierarchical_split(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `text: str`, `client: AsyncAPIClient`, `model: str`, `block_size: int`, `checkpoint_manager: CheckpointManager` |
-| **Process** | 1. チェックポイント存在確認（存在すれば読み込み）<br>2. テキストを`block_size`単位でブロック分割<br>3. 各ブロックに`PARAGRAPH_SEPARATION_PROMPT`を適用<br>4. `asyncio.gather`で並列実行（tqdmで進捗表示）<br>5. `StructuralResult`をパースして段落抽出<br>6. チェックポイント保存 |
+| **Process** | 1. チェックポイント存在確認（存在すれば読み込み）<br>2. **[v1.3追加] 前処理: `_preprocess_text()`で長い1行を句読点で分割**<br>3. テキストを`block_size`単位でブロック分割<br>4. 各ブロックに`PARAGRAPH_SEPARATION_PROMPT`を適用<br>5. `asyncio.gather`で並列実行（tqdmで進捗表示）<br>6. `StructuralResult`をパースして段落抽出<br>7. **[v1.3追加] 後処理: `_postprocess_paragraph()`で段落内の文を改行区切りに整形**<br>8. チェックポイント保存 |
 | **Output** | `List[str]`: 段落のリスト |
+
+**v1.3での改善点**:
+
+```
+【処理フロー】
+入力テキスト
+    ↓
+前処理 (_preprocess_text)
+  - 長い1行を句読点（。/ .）で分割
+  - 日本語・英語を自動判定
+    ↓
+LLM処理 (PARAGRAPH_SEPARATION_PROMPT)
+  - 空行（\n\n）ベースで段落分割
+    ↓
+後処理 (_postprocess_paragraph)
+  - 段落内の文を改行区切りに整形
+  - Step2・Step3の処理精度向上
+    ↓
+段落リスト
+```
 
 > 📝 **注意**: このメソッドはプライベートです。直接呼び出さず、`chunks_all_async()`を使用してください。
 
@@ -690,6 +721,69 @@ _normalize_whitespace("行1\n\n行2")
 
 _normalize_whitespace("  複数    空白  ")
 # → '複数 空白'
+```
+
+---
+
+#### `_preprocess_text` **[v1.3追加]**
+
+**概要**: テキストの前処理として、長い1行を句読点で適切に分割する。日本語・英語を自動判定。
+
+```python
+def _preprocess_text(text: str) -> str
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `text` | str | - | 前処理対象のテキスト |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `text: str` |
+| **Process** | 1. テキストを改行で分割<br>2. 各行に対して`chunk_text()`を適用（日本語・英語自動判定）<br>3. 日本語: 句点（`。`）で分割<br>4. 英語: 文末ピリオド（`. `）で分割（略語考慮）<br>5. 分割された文を改行で結合 |
+| **Output** | `str`: 前処理されたテキスト（句読点で改行区切り） |
+
+**使用するモジュール**: `chunking.regex_string.chunk_text`
+
+**戻り値例**:
+
+```python
+# 日本語（改行なし）
+_preprocess_text("人工知能は急速に発展しています。特にNLPの分野では革命的な成果を上げました。")
+# → '人工知能は急速に発展しています。\n特にNLPの分野では革命的な成果を上げました。'
+
+# 英語（改行なし）
+_preprocess_text("AI is advancing rapidly. Transformer models achieved revolutionary results.")
+# → 'AI is advancing rapidly.\nTransformer models achieved revolutionary results.'
+```
+
+---
+
+#### `_postprocess_paragraph` **[v1.3追加]**
+
+**概要**: 段落の後処理として、句読点で文を分割し、改行で区切る。Step2・Step3の処理精度向上に寄与。
+
+```python
+def _postprocess_paragraph(paragraph: str) -> str
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `paragraph` | str | - | 後処理対象の段落テキスト |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `paragraph: str` |
+| **Process** | 1. 段落を改行で分割（存在する場合）<br>2. 各行に対して`chunk_text()`を適用<br>3. 句読点で文を分割<br>4. 分割された文を改行で結合 |
+| **Output** | `str`: 後処理された段落テキスト（文ごとに改行区切り） |
+
+**使用するモジュール**: `chunking.regex_string.chunk_text`
+
+**戻り値例**:
+
+```python
+_postprocess_paragraph("第1章 はじめに。本章では概要を説明します。")
+# → '第1章 はじめに。\n本章では概要を説明します。'
 ```
 
 ---
@@ -914,6 +1008,7 @@ __all__ = [
 | 1.0 | 初版作成（`chunks_all_async()`） |
 | 1.1 | チェックポイント機能追加 |
 | 1.2 | CSV入力対応（`load_text_from_csv()`）、CSV出力機能追加（`save_chunks_as_csv()`）、改行正規化対応、出力ファイル名自動生成機能追加 |
+| 1.3 | Step1に前処理・後処理機能を追加（`_preprocess_text()`, `_postprocess_paragraph()`）、`regex_string.chunk_text`を使用した日本語・英語対応の文分割、改行のない長いテキストの処理精度向上 |
 
 ---
 
@@ -929,6 +1024,7 @@ flowchart LR
         MODELS[models.py]
         PROMPTS[prompts.py]
         UTILS[utils.py]
+        REGEX_STRING[regex_string.py]
     end
 
     subgraph EXTERNAL["外部ライブラリ"]
@@ -954,6 +1050,7 @@ flowchart LR
     CSV_CHUNKS --> MODELS
     CSV_CHUNKS --> PROMPTS
     CSV_CHUNKS --> UTILS
+    CSV_CHUNKS --> REGEX_STRING
 
     CSV_CHUNKS --> PANDAS
     CSV_CHUNKS --> TIKTOKEN
@@ -987,8 +1084,10 @@ flowchart TB
     LOAD_CSV --> TEXT["テキスト取得"]
     LOAD_TXT --> TEXT
 
-    TEXT --> STEP1["Step1: 階層構造化<br/>_step1_hierarchical_split()"]
-    STEP1 --> CP1["チェックポイント保存"]
+    TEXT --> PREPROC["前処理: _preprocess_text()<br/>長い1行を句読点で分割"]
+    PREPROC --> STEP1["Step1: 階層構造化<br/>_step1_hierarchical_split()"]
+    STEP1 --> POSTPROC["後処理: _postprocess_paragraph()<br/>段落内の文を改行区切りに整形"]
+    POSTPROC --> CP1["チェックポイント保存"]
     CP1 --> STEP2["Step2: 意味的分割<br/>_step2_semantic_chunking()"]
     STEP2 --> CP2["チェックポイント保存"]
     CP2 --> STEP3["Step3: 連続性チェック<br/>_step3_continuity_check()"]

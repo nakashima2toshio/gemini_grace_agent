@@ -11,7 +11,8 @@ csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキ�
 テキストまたはCSVファイルを意味的なチャンクに分割するパイプライン。
 非同期・並列処理により高速化。CSV出力時に改行を削除してクリーンなCSVを作成。
 
-Usage:
+Usage:　chunking.csv_text_to_chunks_text_csv　はceleryを利用していない。
+　　　　次のmake_qa_register_qdrant.pyで、利用する。
 # Worker起動
 # ./start_celery.sh stop
 # ./start_celery.sh status
@@ -21,7 +22,7 @@ Usage:
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/cc_news_5per.csv \
   --output output_chunked \
-  --model gemini-2.5-flash \
+  --model gemini-3-flash-preview \
   --workers 4 \
   --text-column text \
   --combine-rows \
@@ -30,7 +31,7 @@ python -m chunking.csv_text_to_chunks_text_csv \
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/wikipedia_ja_5per.csv \
   --output output_chunked \
-  --model gemini-2.5-flash \
+  --model gemini-3-flash-preview \
   --workers 4 \
   --text-column text \
   --combine-rows \
@@ -41,7 +42,7 @@ python -m chunking.csv_text_to_chunks_text_csv \
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file ./data/document.txt \
   --output chunks_output \
-  --model gemini-2.5-flash \
+  --model gemini-3-flash-preview \
   --workers 8
 
 # デフォルト出力ディレクトリ使用
@@ -75,6 +76,7 @@ from chunking.utils import (
     format_size,
     estimate_api_calls
 )
+from chunking.regex_string import chunk_text
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +119,61 @@ def _normalize_whitespace(text: str) -> str:
     text = text.strip()
 
     return text
+
+
+# ================================================================
+# ✅ 新規追加: Step1用 前処理・後処理関数（step1_2_3.pyより移植）
+# ================================================================
+
+def _preprocess_text(text: str) -> str:
+    """
+    テキストの前処理：長い1行を適切に分割する
+
+    改行のない長いテキストを句読点（日本語: 。、英語: . ）で
+    適切に分割し、LLMへの入力を整形する。
+
+    Args:
+        text: 前処理対象のテキスト
+
+    Returns:
+        前処理されたテキスト（句読点で改行区切り）
+    """
+    lines = text.split('\n')
+    processed_lines = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            processed_lines.append('')
+            continue
+        # chunk_text: 日本語・英語対応の文分割
+        chunks = chunk_text(line, keep_delimiter=True)
+        if len(chunks) > 1:
+            processed_lines.extend(chunks)
+        else:
+            processed_lines.append(line)
+    return '\n'.join(processed_lines)
+
+
+def _postprocess_paragraph(paragraph: str) -> str:
+    """
+    段落の後処理：句読点で文を分割し、改行で区切る
+
+    Step1の出力（段落）を後処理し、各文を改行で区切ることで、
+    Step2・Step3での処理精度を向上させる。
+
+    Args:
+        paragraph: 後処理対象の段落テキスト
+
+    Returns:
+        後処理された段落テキスト（文ごとに改行区切り）
+    """
+    lines = paragraph.split('\n') if '\n' in paragraph else [paragraph]
+    processed = []
+    for line in lines:
+        line = line.strip()
+        if line:
+            processed.extend(chunk_text(line, keep_delimiter=True))
+    return '\n'.join(processed)
 
 
 # ================================================================
@@ -338,7 +395,7 @@ def _split_sentences_simple(text: str) -> List[str]:
 
 async def chunks_all_async(
         text: str,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3-flash-preview",
         max_workers: int = 8,
         block_size: int = 2000,
         checkpoint_manager: Optional[CheckpointManager] = None,
@@ -409,14 +466,36 @@ async def _step1_hierarchical_split(
         block_size: int,
         checkpoint_manager: CheckpointManager
 ) -> List[str]:
-    """Step 1: 階層構造化"""
+    """
+    Step 1: 階層構造化（段落分割）
+
+    テキストを段落単位に分割する。
+
+    【step1_2_3.pyからの改善点】
+    - 前処理: 長い1行を句読点で適切に分割（_preprocess_text）
+    - 後処理: 段落内の文を改行で区切り（_postprocess_paragraph）
+
+    Args:
+        text: 入力テキスト
+        client: 非同期APIクライアント
+        model: 使用するLLMモデル名
+        block_size: ブロックサイズ（文字数）
+        checkpoint_manager: チェックポイント管理
+
+    Returns:
+        段落のリスト
+    """
     if checkpoint_manager.exists("step1"):
         logger.info("Step1: チェックポイントから再開")
         return checkpoint_manager.load("step1")
 
     logger.info("\n[Step 1/3] 階層構造化（段落 > 文）")
 
-    blocks = [text[i:i + block_size] for i in range(0, len(text), block_size)]
+    # ✅ 前処理: 長い1行を句読点で分割（step1_2_3.pyより移植）
+    preprocessed = _preprocess_text(text)
+    logger.info(f"  前処理: テキストを句読点で分割")
+
+    blocks = [preprocessed[i:i + block_size] for i in range(0, len(preprocessed), block_size)]
     logger.info(f"  ブロック数: {len(blocks)}")
 
     tasks = []
@@ -446,6 +525,10 @@ async def _step1_hierarchical_split(
                     paragraphs.append(para.full_text)
             except Exception as e:
                 logger.warning(f"パース失敗: {e}")
+
+    # ✅ 後処理: 段落内の文を改行で区切り（step1_2_3.pyより移植）
+    paragraphs = [_postprocess_paragraph(p) for p in paragraphs]
+    logger.info(f"  後処理: 段落内の文を改行区切りに整形")
 
     logger.info(f"  出力: {len(paragraphs)} 段落")
     checkpoint_manager.save("step1", paragraphs)
@@ -644,7 +727,7 @@ async def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="gemini-2.5-flash",  # ✅ デフォルト値を統一
+        default="gemini-3-flash-preview",  # ✅ デフォルト値を統一
         help="使用するLLMモデル"
     )
     parser.add_argument(
@@ -775,4 +858,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
