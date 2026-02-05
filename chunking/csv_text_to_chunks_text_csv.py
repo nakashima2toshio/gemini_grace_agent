@@ -19,6 +19,8 @@ Usage:　chunking.csv_text_to_chunks_text_csv　はceleryを利用していな�
 # ./start_celery.sh restart -w 4 --flower
 
 # CSVファイル → チャンクCSV
+# 走行時にエラーが出た場合は：
+# Gemini は、limit制限が厳しいので、block-sizeとmax_output_tokens を調整してください。
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/cc_news_5per.csv \
   --output output_chunked \
@@ -26,7 +28,7 @@ python -m chunking.csv_text_to_chunks_text_csv \
   --workers 4 \
   --text-column text \
   --combine-rows \
-  --block-size 1000
+  --block-size 500
 
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/wikipedia_ja_5per.csv \
@@ -35,7 +37,7 @@ python -m chunking.csv_text_to_chunks_text_csv \
   --workers 4 \
   --text-column text \
   --combine-rows \
-  --block-size 1000
+  --block-size 500
 
 # ----------------------------------------------
 # テキストファイル → チャンクCSV
@@ -397,7 +399,7 @@ async def chunks_all_async(
         text: str,
         model: str = "gemini-3-flash-preview",
         max_workers: int = 8,
-        block_size: int = 2000,
+        block_size: int = 1000,  # ✅ 2000→1000に変更（MAX_TOKENS対策）
         checkpoint_manager: Optional[CheckpointManager] = None,
         output_file: Optional[str] = None,
         dataset_type: str = "custom",
@@ -414,7 +416,7 @@ async def chunks_all_async(
         api_key=api_key,
         max_workers=max_workers,
         max_retries=3,
-        max_output_tokens=4096
+        max_output_tokens=16384  # ✅ 4096→8192に増加（MAX_TOKENS対策）
     )
 
     if checkpoint_manager is None:
@@ -739,8 +741,8 @@ async def main():
     parser.add_argument(
         "--block-size",
         type=int,
-        default=2000,
-        help="バッチサイズ（トークン数）"
+        default=1000,  # ✅ 2000→1000に変更（MAX_TOKENS対策）
+        help="ブロックサイズ（文字数）。大きすぎるとMAX_TOKENSエラーが発生"
     )
     parser.add_argument(
         "--verbose",

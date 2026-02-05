@@ -1,6 +1,6 @@
-# step1.py - 階層構造化（Hierarchical Split）ドキュメント
+## step1.py - 階層構造化（Hierarchical Split）ドキュメント
 
-**Version 1.0** | 最終更新: 2025-01-29
+**Version 1.1** | 最終更新: 2025-02-05
 
 ---
 
@@ -70,7 +70,10 @@ LangChainなどのライブラリを使わず、「自律型エージェント�
 
 | 機能 | 説明 |
 |------|------|
+| `preprocess_text()` | **[v1.1追加]** テキストの前処理（長い1行を句読点で分割） |
+| `postprocess_paragraph()` | **[v1.1追加]** 段落の後処理（句読点で文を分割、改行区切り） |
 | `step1_hierarchical_split()` | テキストを段落単位に分割（Step1のコア機能） |
+| `run_test()` | テスト実行用のヘルパー関数 |
 | `main()` | テスト実行用のメイン関数 |
 
 ### 3段階処理における位置づけ
@@ -125,7 +128,7 @@ flowchart TB
     end
 
     subgraph EXTERNAL["外部サービス層"]
-        GEMINI["Google Gemini API<br/>gemini-2.5-flash"]
+        GEMINI["Google Gemini API<br/>gemini-3-flash-preview"]
     end
 
     CLI --> MAIN
@@ -236,6 +239,7 @@ flowchart TB
 |-----------|-----------|------|
 | `chunking.models` | `StructuralResult` | LLMレスポンスのPydanticスキーマ |
 | `chunking.prompts` | `PARAGRAPH_SEPARATION_PROMPT` | 階層分割用プロンプト |
+| `chunking.regex_string` | `chunk_text` | **[v1.1追加]** 日本語・英語対応の文分割 |
 
 ---
 
@@ -245,14 +249,71 @@ flowchart TB
 
 | 関数名 | 概要 |
 |-------|------|
+| `preprocess_text(text)` | **[v1.1追加]** テキストの前処理（長い1行を句読点で分割） |
+| `postprocess_paragraph(paragraph)` | **[v1.1追加]** 段落の後処理（句読点で文を分割、改行区切り） |
 | `step1_hierarchical_split(text, api_key, block_size)` | テキストを段落単位に分割（Step1のコア機能） |
+| `run_test(title, text, api_key)` | テスト実行用のヘルパー関数 |
 | `main()` | テスト実行用のメイン関数 |
 
 ---
 
 ## 4. クラス・関数 IPO詳細
 
-### 4.1 `step1_hierarchical_split`
+### 4.1 前処理・後処理関数 **[v1.1追加]**
+
+#### `preprocess_text`
+
+**概要**: テキストの前処理を行い、長い1行を句読点で適切に分割する。
+
+```python
+def preprocess_text(text: str) -> str
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `text` | str | - | 入力テキスト |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `text: str` |
+| **Process** | 1. テキストを`\n`で行単位に分割<br>2. 各行を`strip()`で前後空白除去<br>3. 空行は空文字列として保持<br>4. 各行を`chunk_text(line, keep_delimiter=True)`で分割<br>5. 複数チャンクに分割された場合は展開、そうでなければそのまま保持<br>6. `\n`で結合して返却 |
+| **Output** | `str`: 前処理済みテキスト（改行区切り） |
+
+**戻り値例**:
+```python
+preprocess_text("RAGは手法です。Facebookが発表しました。")
+# → "RAGは手法です。\nFacebookが発表しました。"
+```
+
+---
+
+#### `postprocess_paragraph`
+
+**概要**: 段落の後処理を行い、句読点で文を分割して改行で区切る。
+
+```python
+def postprocess_paragraph(paragraph: str) -> str
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `paragraph` | str | - | 入力段落 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `paragraph: str` |
+| **Process** | 1. 改行の有無で処理を分岐（`\n`含む場合は分割）<br>2. 各行を`strip()`で前後空白除去<br>3. 空行を除外<br>4. 各行を`chunk_text(line, keep_delimiter=True)`で句読点分割<br>5. `\n`で結合して返却 |
+| **Output** | `str`: 改行区切りの文の集合 |
+
+**戻り値例**:
+```python
+postprocess_paragraph("RAGは手法です。Facebookが発表しました。")
+# → "RAGは手法です。\nFacebookが発表しました。"
+```
+
+---
+
+### 4.2 `step1_hierarchical_split`
 
 **概要**: テキストを空行（`\n\n`）ベースで段落単位に分割する。LLM（Gemini API）を使用して構造を認識。
 
@@ -273,7 +334,7 @@ def step1_hierarchical_split(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `text: str`, `api_key: str`, `block_size: int = 2000` |
-| **Process** | 1. `genai.Client`を初期化<br>2. テキストを`block_size`単位でブロック分割<br>3. 各ブロックに`PARAGRAPH_SEPARATION_PROMPT`を適用<br>4. Gemini API呼び出し（`response_mime_type="application/json"`）<br>5. `StructuralResult.model_validate_json()`でパース<br>6. 各段落の`full_text`を抽出してリストに追加 |
+| **Process** | 1. `genai.Client`を初期化<br>2. **[v1.1追加]** `preprocess_text()`で前処理（長い行を句読点で分割）<br>3. テキストを`block_size`単位でブロック分割<br>4. 各ブロックに`PARAGRAPH_SEPARATION_PROMPT`を適用<br>5. Gemini API呼び出し（`response_mime_type="application/json"`）<br>6. `StructuralResult.model_validate_json()`でパース<br>7. 各段落の`full_text`を抽出してリストに追加<br>8. **[v1.1追加]** 各段落を`postprocess_paragraph()`で後処理 |
 | **Output** | `list[str]`: 段落のリスト |
 
 **戻り値例**:
@@ -308,23 +369,26 @@ def step1_hierarchical_split(text: str, api_key: str, block_size: int = 2000) ->
     # ① Gemini APIクライアントを初期化
     client = genai.Client(api_key=api_key)
 
-    # ② テキストをブロックに分割
+    # ② [v1.1追加] 前処理: 長い1行を句読点で分割
+    preprocessed_text = preprocess_text(text)
+
+    # ③ テキストをブロックに分割
     #    例: 5000文字のテキスト → 3ブロック（2000, 2000, 1000文字）
-    blocks = [text[i:i + block_size] for i in range(0, len(text), block_size)]
+    blocks = [preprocessed_text[i:i + block_size] for i in range(0, len(preprocessed_text), block_size)]
     print(f"入力: {len(text)}文字 → {len(blocks)}ブロック")
 
     paragraphs = []
 
-    # ③ 各ブロックを処理
+    # ④ 各ブロックを処理
     for i, block in enumerate(blocks):
         print(f"ブロック {i + 1}/{len(blocks)} 処理中...")
 
-        # ④ プロンプト作成（プロンプト + 入力テキスト）
+        # ⑤ プロンプト作成（プロンプト + 入力テキスト）
         prompt = f"{PARAGRAPH_SEPARATION_PROMPT}\n\n【入力テキスト】\n{block}"
 
-        # ⑤ Gemini API 呼び出し（同期）
+        # ⑥ Gemini API 呼び出し（同期）
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3-flash-preview",  # v1.1で更新
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -332,7 +396,7 @@ def step1_hierarchical_split(text: str, api_key: str, block_size: int = 2000) ->
             )
         )
 
-        # ⑥ レスポンスをパース
+        # ⑦ レスポンスをパース
         result = StructuralResult.model_validate_json(response.text)
 
         # ⑦ 段落を抽出（full_textプロパティで改行結合）
@@ -394,7 +458,7 @@ if __name__ == "__main__":
 | 設定 | デフォルト値 | 説明 |
 |-----|-------------|------|
 | `block_size` | 2000 | ブロックサイズ（文字数） |
-| `model` | "gemini-2.5-flash" | 使用するGeminiモデル |
+| `model` | "gemini-3-flash-preview" | 使用するGeminiモデル |
 
 ### 5.2 ブロックサイズの選定
 
@@ -408,7 +472,7 @@ if __name__ == "__main__":
 
 | モデル | Input (1M tokens) | Output (1M tokens) | 特性 |
 |--------|-------------------|--------------------|----|
-| **gemini-2.5-flash** | **$0.075** | **$0.30** | 【最安】大量処理に最適 |
+| **gemini-3-flash-preview** | **$0.075** | **$0.30** | 【最新】高性能・大量処理に最適 |
 | gemini-3-flash | $0.15 | $0.60 | 【バランス】複雑な判断向け |
 | gemini-3-pro | $2.00 | $12.00 | 【高性能】最終推論向け |
 
@@ -497,6 +561,7 @@ from chunking import chunks_all_async
 | バージョン | 変更内容 |
 |-----------|---------|
 | 1.0 | 初版作成（Step1単体確認用プログラム） |
+| 1.1 | 前処理・後処理関数追加（`preprocess_text()`, `postprocess_paragraph()`）、デフォルトモデルを`gemini-3-flash-preview`に変更、`chunk_text`を使用した日本語・英語対応の文分割 |
 
 ---
 
@@ -682,12 +747,12 @@ class StructuralResult(BaseModel):
 
 ### B.6 API呼び出しの詳細
 
-利用するモデルのデフォルトはコスパから"gemini-2.5-flash"としていますが、
+利用するモデルのデフォルトはコスパから"gemini-3-flash-preview"としていますが、
 最新モデルも利用し、結果を比較してみましょう。（段落分けではあまりない。）
 
 ```python
 response = client.models.generate_content(
-    model="gemini-2.5-flash",           # モデル名
+    model="gemini-3-flash-preview",           # モデル名（v1.1で更新）
     contents=prompt,                     # プロンプト
     config=types.GenerateContentConfig(
         response_mime_type="application/json",  # JSON形式を指定
@@ -698,7 +763,7 @@ response = client.models.generate_content(
 
 | パラメータ | 値 | 説明 |
 |------------|-----|------|
-| `model` | `"gemini-2.5-flash"` | 最新の安定版、高いレート制限とパフォーマンス |
+| `model` | `"gemini-3-flash-preview"` | 最新の安定版、高いレート制限とパフォーマンス |
 | `response_mime_type` | `"application/json"` | JSON形式のレスポンスを要求 |
 | `response_schema` | `StructuralResult` | Pydanticモデルでスキーマを指定 |
 

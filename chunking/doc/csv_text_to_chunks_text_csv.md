@@ -1,6 +1,6 @@
-# csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキング ドキュメント
+## csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキング ドキュメント
 
-**Version 1.3** | 最終更新: 2025-02-04
+**Version 1.4** | 最終更新: 2025-02-05
 
 ---
 
@@ -317,9 +317,9 @@ flowchart TB
 ```python
 async def chunks_all_async(
     text: str,
-    model: str = "gemini-2.5-flash",
+    model: str = "gemini-3-flash-preview",
     max_workers: int = 8,
-    block_size: int = 2000,
+    block_size: int = 1000,
     checkpoint_manager: Optional[CheckpointManager] = None,
     output_file: Optional[str] = None,
     dataset_type: str = "custom",
@@ -330,9 +330,9 @@ async def chunks_all_async(
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
 | `text` | str | - | 入力テキスト |
-| `model` | str | "gemini-2.5-flash" | 使用するLLMモデル名 |
+| `model` | str | "gemini-3-flash-preview" | 使用するLLMモデル名 |
 | `max_workers` | int | 8 | 並列ワーカー数（Semaphore制御） |
-| `block_size` | int | 2000 | Step1のブロックサイズ（文字数） |
+| `block_size` | int | 1000 | Step1のブロックサイズ（文字数） |
 | `checkpoint_manager` | Optional[CheckpointManager] | None | チェックポイント管理（省略時は自動生成） |
 | `output_file` | Optional[str] | None | 出力ファイルパス（省略時は保存しない） |
 | `dataset_type` | str | "custom" | データセット種別（CSV出力のメタデータ） |
@@ -366,7 +366,7 @@ async def main():
 
     chunks = await chunks_all_async(
         text=text,
-        model="gemini-2.5-flash",
+        model="gemini-3-flash-preview",
         max_workers=8,
         output_file="output/chunks.csv",
         dataset_type="wikipedia"
@@ -832,9 +832,9 @@ async def main() -> None
 |------|-----|-----------|------|
 | `--input-file` | str | (必須) | 入力ファイル（.txt, .csv） |
 | `--output` | str | "chunks_output" | 出力ディレクトリ |
-| `--model` | str | "gemini-2.5-flash" | LLMモデル名 |
+| `--model` | str | "gemini-3-flash-preview" | LLMモデル名 |
 | `--workers` | int | 8 | 並列ワーカー数 |
-| `--block-size` | int | 2000 | バッチサイズ（文字数） |
+| `--block-size` | int | 1000 | バッチサイズ（文字数）※大きすぎるとMAX_TOKENSエラーが発生 |
 | `--verbose` | flag | False | 詳細ログ出力 |
 | `--resume` | str | None | 再開するジョブID |
 | `--text-column` | str | None | CSVのテキストカラム名 |
@@ -849,10 +849,10 @@ async def main() -> None
 
 | 設定 | デフォルト値 | 説明 |
 |-----|-------------|------|
-| `model` | "gemini-2.5-flash" | 使用するLLMモデル |
+| `model` | "gemini-3-flash-preview" | 使用するLLMモデル |
 | `max_workers` | 8 | 並列ワーカー数 |
-| `block_size` | 2000 | Step1のブロックサイズ（文字数） |
-| `max_output_tokens` | 4096 | AsyncAPIClientの出力トークン制限 |
+| `block_size` | 1000 | Step1のブロックサイズ（文字数）※v1.4で2000→1000に変更 |
+| `max_output_tokens` | 16384 | AsyncAPIClientの出力トークン制限 ※v1.4で4096→16384に変更 |
 | `max_retries` | 3 | AsyncAPIClientのリトライ回数 |
 
 ### 5.2 テキストカラム自動検出候補
@@ -885,17 +885,17 @@ text_candidates = [
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/cc_news_5per.csv \
   --output output_chunked \
-  --model gemini-2.5-flash \
+  --model gemini-3-flash-preview \
   --workers 4 \
   --text-column text \
   --combine-rows \
-  --block-size 1000
+  --block-size 500
 
 # テキストファイルからチャンク作成
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file ./data/document.txt \
   --output chunks_output \
-  --model gemini-2.5-flash \
+  --model gemini-3-flash-preview \
   --workers 8
 
 # 詳細ログ付きで実行
@@ -926,9 +926,9 @@ async def process_csv():
     # 2. チャンキング処理
     chunks = await chunks_all_async(
         text=text,
-        model="gemini-2.5-flash",
+        model="gemini-3-flash-preview",
         max_workers=8,
-        block_size=2000
+        block_size=1000
     )
 
     # 3. CSV保存
@@ -1009,6 +1009,7 @@ __all__ = [
 | 1.1 | チェックポイント機能追加 |
 | 1.2 | CSV入力対応（`load_text_from_csv()`）、CSV出力機能追加（`save_chunks_as_csv()`）、改行正規化対応、出力ファイル名自動生成機能追加 |
 | 1.3 | Step1に前処理・後処理機能を追加（`_preprocess_text()`, `_postprocess_paragraph()`）、`regex_string.chunk_text`を使用した日本語・英語対応の文分割、改行のない長いテキストの処理精度向上 |
+| 1.4 | デフォルトモデルを`gemini-3-flash-preview`に変更、`block_size`を2000→1000に変更（MAX_TOKENS対策）、`max_output_tokens`を4096→16384に変更 |
 
 ---
 
