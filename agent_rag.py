@@ -5,6 +5,7 @@ Agent RAG Q&A生成・Qdrant管理 Streamlit アプリケーション
 sudo systemctl restart streamlit-app
 
 実行コマンド：
+# ----------- ./start_celery.sh restart -w 4 --flower
 streamlit run agent_rag.py --server.port 8501
 
 詳細な仕様、実行方法、アーキテクチャについては、プロジェクトルートの `README.md` を参照してください。

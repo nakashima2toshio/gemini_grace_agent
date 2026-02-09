@@ -175,7 +175,7 @@ Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度
 
 > **リスク**: 🔴 高（効果大） | **対象**: `agent_tools.py`, `qdrant_client_wrapper.py` | **依存**: STEP 4
 
-- [ ] **6-1.** `agent_tools.py` にコレクション設定キャッシュを追加
+- [x] **6-1.** `agent_tools.py` にコレクション設定キャッシュを追加
   ```python
   import time
 
@@ -191,17 +191,12 @@ Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度
           _collections_cache_time = now
       return _collections_cache
   ```
-- [ ] **6-2.** `search_rag_knowledge_base_structured()` L389-396 を修正
-  ```python
-  # Before
-  if not check_qdrant_health():
-      raise QdrantConnectionError(...)
-  existing_collections = [c.name for c in client.get_collections().collections]
-
-  # After
-  existing_collections = get_existing_collections_cached()
-  ```
-- [ ] **6-3.** `qdrant_client_wrapper.py` の `search_collection()` にベクトル設定キャッシュを追加
+- [x] **6-2.** `search_rag_knowledge_base_structured()` L389-396 を修正
+  - [x] `search_rag_knowledge_base_structured()`: ヘルスチェック削除 + キャッシュ化
+  - [x] `search_rag_knowledge_base_cached()` ステップ3: キャッシュ化
+  - [x] `search_rag_knowledge_base()` フォールバック: キャッシュ化
+  - [x] `list_rag_collections()`: キャッシュ化
+- [x] **6-3.** `qdrant_client_wrapper.py` の `search_collection()` にベクトル設定キャッシュを追加
   ```python
   _vector_config_cache: Dict[str, dict] = {}
 
@@ -215,10 +210,10 @@ Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度
           }
       return _vector_config_cache[collection_name]
   ```
-- [ ] **6-4.** `search_collection()` 内の `client.get_collection()` をキャッシュ版に置換
-- [ ] **6-5.** `check_qdrant_health()` の呼び出しを削減:
-  - [ ] `search_rag_knowledge_base_structured()` からは削除
-  - [ ] アプリ起動時 or セッション開始時の1回のみに限定
+- [x] **6-4.** `search_collection()` 内の `client.get_collection()` をキャッシュ版に置換
+- [x] **6-5.** `check_qdrant_health()` の呼び出しを削減:
+  - [x] `search_rag_knowledge_base_structured()` からは削除
+  - [x] `check_qdrant_health()` 関数自体は残存（他から参照可能）
 - [ ] **6-6.** 動作確認: 並列検索時にQdrant管理APIの呼び出し回数が削減されていること（ログで確認）
 - [ ] **6-7.** 完了コミット
 
@@ -231,44 +226,27 @@ Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度
 - [ ] **7-1.** 改善方針の確認:
   - `search_rag_knowledge_base_cached()` でEmbeddingを**1回だけ生成**
   - 各コレクション検索にはベクトルを直接渡す
-- [ ] **7-2.** `agent_tools.py` に**ベクトル受け渡し版**の検索関数を新規追加（既存関数は残す）
+- [x] **7-2.** `agent_tools.py` に**ベクトル受け渡し版**を実装（既存関数にオプションパラメータ追加方式）
   ```python
-  def search_collection_with_precomputed_vectors(
-      collection_name: str,
-      query: str,
-      query_vector: List[float],
-      sparse_vector: Optional[Any] = None,
-      limit: int = 20
-  ) -> Union[List[Dict[str, Any]], str]:
-      """事前計算済みベクトルを使用した検索（Embedding重複排除用）"""
-      # embed_query() / embed_sparse_query_unified() を呼ばない
-      # search_collection() にベクトルを直接渡す
-      ...
+  def search_rag_knowledge_base_structured(
+      query, collection_name=None, use_hybrid_search=True,
+      precomputed_query_vector=None,      # Phase 3 STEP 7
+      precomputed_sparse_vector=None       # Phase 3 STEP 7
+  ):
+      # precomputed が渡されていればそれを使用、なければ内部で生成
   ```
-- [ ] **7-3.** `search_rag_knowledge_base_cached()` を修正:
-  ```python
-  # ステップ3（全コレクション並列検索）の前にEmbeddingを1回生成
-  query_vector = embed_query(query)
-  sparse_vector = embed_sparse_query_unified(query) if use_hybrid_search else None
-
-  def search_func_with_vectors(q, col):
-      return search_collection_with_precomputed_vectors(
-          col, q, query_vector, sparse_vector
-      )
-
-  all_results = parallel_search_engine.search_all_collections(
-      query=query,
-      collections=all_collections,
-      search_func=search_func_with_vectors
-  )
-  ```
-- [ ] **7-4.** キャッシュヒット時（ステップ2）も同様にベクトル事前生成に対応
-- [ ] **7-5.** ユーザー指定コレクション時（ステップ1）も同様に対応
+- [x] **7-3.** `search_rag_knowledge_base_cached()` を修正:
+  - Embeddingを関数冒頭で1回だけ生成
+  - 全3パス（ユーザー指定/キャッシュヒット/並列検索）に事前計算ベクトルを渡す
+- [x] **7-4.** キャッシュヒット時（ステップ2）も同様にベクトル事前生成に対応
+- [x] **7-5.** ユーザー指定コレクション時（ステップ1）も同様に対応
+  - `search_rag_knowledge_base()` 経由 → `search_rag_knowledge_base_structured()` 直接呼び出しに変更
 - [ ] **7-6.** 動作確認（重要）:
   - [ ] 並列検索時のログで `embed_query` の呼び出しが1回のみであること
   - [ ] 検索結果が改善前と同等であること（スコア・件数を比較）
   - [ ] Hybrid検索ON/OFF 両方で正常動作すること
-- [ ] **7-7.** 旧パス（`search_rag_knowledge_base_structured` 単体呼び出し）が壊れていないか確認
+- [x] **7-7.** 旧パス（`search_rag_knowledge_base_structured` 単体呼び出し）が壊れていないか確認
+  - precomputed パラメータはOptional（デフォルトNone）なので後方互換
 - [ ] **7-8.** 完了コミット
 
 ---
@@ -277,10 +255,10 @@ Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度
 
 > **リスク**: 🟡 中 | **対象**: `agent_tools.py`, `qdrant_client_wrapper.py` | **依存**: STEP 7
 
-- [ ] **8-1.** フォールバック責務を `search_collection()` に集約する方針を確認:
+- [x] **8-1.** フォールバック責務を `search_collection()` に集約する方針を確認:
   - `qdrant_client_wrapper.py` の `search_collection()` が唯一のフォールバック処理を持つ
   - `agent_tools.py` 側の try-except は削除する
-- [ ] **8-2.** `agent_tools.py` `search_rag_knowledge_base_structured()` L418-443 のスパースエラー二重リトライを削除
+- [x] **8-2.** `agent_tools.py` `search_rag_knowledge_base_structured()` L418-443 のスパースエラー二重リトライを削除
   ```python
   # Before: try-except で sparse エラーをキャッチして再試行
   # After: search_collection() に任せる（search_collection 内に既にフォールバックがある）
@@ -292,11 +270,11 @@ Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度
       limit=20
   )
   ```
-- [ ] **8-3.** `qdrant_client_wrapper.py` の `search_collection()` 内のフォールバックログを整理:
-  - 1段階目: Hybrid Search 試行
-  - 2段階目: Dense のみ再試行
-  - 3段階目: 最シンプル形式（最終フォールバック）
-  - 各段階で明確なログを出力
+- [x] **8-3.** `qdrant_client_wrapper.py` の `search_collection()` 内のフォールバックログを整理:
+  - 【Stage 1】Hybrid Search 試行
+  - 【Stage 1→2】Sparse未設定時 Dense切替
+  - 【Stage 2】Dense のみ検索
+  - 【Stage 3】最終フォールバック（最シンプル形式）
 - [ ] **8-4.** 動作確認:
   - [ ] Sparse未対応コレクションに対して検索 → Dense フォールバックが正常動作
   - [ ] Sparse対応コレクションに対して検索 → Hybrid検索が正常動作
@@ -385,9 +363,9 @@ Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度
 | 1 | 3 | ドキュメント次元数修正 | ⚪ | ✅ 修正済み（コミット待ち） |
 | 2 | 4 | QdrantClient シングルトン化 | 🟡 | ✅ コード修正済み（動作確認・コミット待ち） |
 | 2 | 5 | EmbeddingClient シングルトン化 | 🟡 | ✅ コード修正済み（動作確認・コミット待ち） |
-| 3 | 6 | ヘルスチェック・存在確認キャッシュ | 🔴 | ☐ 未着手 |
-| 3 | 7 | Embedding重複排除 | 🔴 | ☐ 未着手 |
-| 3 | 8 | Sparse フォールバック一元化 | 🟡 | ☐ 未着手 |
+| 3 | 6 | ヘルスチェック・存在確認キャッシュ | 🔴 | ✅ コード修正済み（動作確認・コミット待ち） |
+| 3 | 7 | Embedding重複排除 | 🔴 | ✅ コード修正済み（動作確認・コミット待ち） |
+| 3 | 8 | Sparse フォールバック一元化 | 🟡 | ✅ コード修正済み（動作確認・コミット待ち） |
 | 4 | 9 | 検索エントリポイント整理 | 🟡 | ☐ 未着手 |
 | 4 | 10 | キーワード抽出連携強化 | 🟡 | ☐ 未着手 |
 | 4 | 11 | Embedding次元数不整合対応 | ⚪ | ☐ 未着手 |

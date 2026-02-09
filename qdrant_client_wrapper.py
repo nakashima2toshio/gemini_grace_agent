@@ -1066,6 +1066,27 @@ class QdrantDataFetcher:
 # 検索
 # ===================================================================
 
+# ベクトル設定キャッシュ（Phase 3 STEP 6 改善）
+_vector_config_cache: Dict[str, dict] = {}
+
+
+def _get_vector_config(client: QdrantClient, collection_name: str) -> dict:
+    """
+    コレクションのベクトル設定をキャッシュ付きで取得
+
+    並列検索時に同一コレクションへの get_collection() 重複呼び出しを排除する。
+    """
+    if collection_name not in _vector_config_cache:
+        collection_info = client.get_collection(collection_name)
+        vectors_config = collection_info.config.params.vectors
+        _vector_config_cache[collection_name] = {
+            "is_named_vector": isinstance(vectors_config, dict),
+            "dense_vector_name": "default" if isinstance(vectors_config, dict) else None
+        }
+        logger.debug(f"ベクトル設定キャッシュ追加: {collection_name}")
+    return _vector_config_cache[collection_name]
+
+
 def search_collection(
         client: QdrantClient,
         collection_name: str,
@@ -1083,18 +1104,16 @@ def search_collection(
         f"search_collection: collection='{collection_name}', query_vec_dim={len(query_vector)}, limit={limit}, sparse={sparse_vector is not None}")
 
     try:
-        # コレクションの情報を取得して、名前付きベクトルが必要か確認
-        collection_info = client.get_collection(collection_name)
-        vectors_config = collection_info.config.params.vectors
+        # Phase 3 STEP 6 改善: ベクトル設定キャッシュを使用
+        config = _get_vector_config(client, collection_name)
+        is_named_vector = config["is_named_vector"]
+        dense_vector_name = config["dense_vector_name"]
 
-        # 名前付きベクトル（辞書形式）かどうかの判定
-        is_named_vector = isinstance(vectors_config, dict)
-        dense_vector_name = "default" if is_named_vector else None
-
-        # Sparse Vectorが指定されている場合、Hybrid Searchを試みる
+        # Phase 3 STEP 8: 3段階フォールバック（唯一の責務）
+        # 【Stage 1】Sparse Vectorが指定されている場合、Hybrid Searchを試みる
         if sparse_vector:
             try:
-                logger.debug(f"Attempting Hybrid Search for '{collection_name}'")
+                logger.debug(f"【Stage 1】Hybrid Search試行: '{collection_name}'")
                 # Hybrid Search (Dense + Sparse)
                 prefetch = [
                     models.Prefetch(
@@ -1118,21 +1137,21 @@ def search_collection(
                     limit=limit,
                 )
                 hits = response.points
-                logger.info(f"✅ Hybrid Search成功: {collection_name}")
+                logger.info(f"✅ 【Stage 1】Hybrid Search成功: {collection_name}")
 
             except UnexpectedResponse as e:
                 # Sparse Vectorエラーの場合、Dense Vectorのみで再試行
                 error_msg = str(e)
                 if "text-sparse" in error_msg or "sparse" in error_msg.lower():
-                    logger.warning(f"⚠️ Sparse Vector未設定 ({collection_name}): Dense Vectorのみで再試行")
-                    sparse_vector = None  # Sparse Vectorを無効化して再試行
+                    logger.warning(f"⚠️ 【Stage 1→2】Sparse Vector未設定 ({collection_name}): Denseのみに切替")
+                    sparse_vector = None  # Sparse Vectorを無効化して Stage 2 へ
                 else:
                     # その他のエラーは再スロー
                     raise
 
-        # Dense Search（Sparse Vectorがない、またはエラーで無効化された場合）
+        # 【Stage 2】Dense Search（Sparse Vectorがない、またはエラーで無効化された場合）
         if not sparse_vector:
-            logger.debug(f"Using Dense Vector only for '{collection_name}'")
+            logger.debug(f"【Stage 2】Dense Vector only: '{collection_name}'")
             # 名前付きベクトルの場合は models.NamedVector または query(..., using=...) を使用
             if is_named_vector:
                 response = client.query_points(
@@ -1150,21 +1169,21 @@ def search_collection(
             hits = response.points
 
     except Exception as e:
-        logger.error(f"❌ Search failed for '{collection_name}': {e}")
+        logger.error(f"❌ 【Stage 2】Search failed for '{collection_name}': {e}")
         logger.error(f"   Error type: {type(e).__name__}")
 
-        # 最終フォールバック: query_pointsの最もシンプルな形式
+        # 【Stage 3】最終フォールバック: query_pointsの最もシンプルな形式
         try:
-            logger.warning(f"🔄 Attempting final fallback for '{collection_name}'")
+            logger.warning(f"🔄 【Stage 3】最終フォールバック試行: '{collection_name}'")
             response = client.query_points(
                 collection_name=collection_name,
                 query=query_vector,
                 limit=limit
             )
             hits = response.points
-            logger.info(f"✅ Fallback search成功: {collection_name}")
+            logger.info(f"✅ 【Stage 3】最終フォールバック成功: {collection_name}")
         except Exception as fallback_e:
-            logger.error(f"❌ Fallback search also failed for '{collection_name}': {fallback_e}")
+            logger.error(f"❌ 【Stage 3】最終フォールバックも失敗: '{collection_name}': {fallback_e}")
             return []
 
     logger.info(f"search_collection: found {len(hits)} hits for '{collection_name}'")

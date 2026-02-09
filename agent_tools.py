@@ -34,6 +34,28 @@ logger = logging.getLogger(__name__)  # Configure logger for this module
 client: QdrantClient = get_qdrant_client()
 
 
+# ============ コレクション一覧キャッシュ（Phase 3 STEP 6 改善）============
+_collections_cache: Optional[List[str]] = None
+_collections_cache_time: float = 0.0
+_COLLECTIONS_CACHE_TTL: float = 60.0  # 60秒
+
+
+def get_existing_collections_cached() -> List[str]:
+    """
+    コレクション一覧をキャッシュ付きで取得
+
+    TTL（60秒）以内は前回結果を返す。
+    並列検索時に N 回呼ばれても API は 1 回で済む。
+    """
+    global _collections_cache, _collections_cache_time
+    now = time.time()
+    if _collections_cache is None or (now - _collections_cache_time) > _COLLECTIONS_CACHE_TTL:
+        _collections_cache = [c.name for c in client.get_collections().collections]
+        _collections_cache_time = now
+        logger.debug(f"コレクション一覧キャッシュ更新: {len(_collections_cache)}件")
+    return _collections_cache
+
+
 # ============ カスタム例外 ============
 class RAGToolError(Exception):
     """RAGツール固有のエラー基底クラス"""
@@ -112,8 +134,8 @@ def list_rag_collections() -> str:
     """
     logger.info("ツールアクション: コレクション一覧を取得中...")
     try:
-        collections_response = client.get_collections()
-        collections: List[str] = [c.name for c in collections_response.collections]
+        # Phase 3 STEP 6 改善: コレクション一覧キャッシュ化
+        collections: List[str] = get_existing_collections_cached()
 
         if not collections:
             logger.info("Qdrantに利用可能なコレクションがありません。")
@@ -295,8 +317,8 @@ def search_rag_knowledge_base(
             f"Fallback search: 最初のコレクション '{effective_collection}' で結果なし。他のコレクションを検索します...")
 
         try:
-            # 利用可能なコレクション一覧を取得
-            all_collections = [c.name for c in client.get_collections().collections]
+            # Phase 3 STEP 6 改善: コレクション一覧キャッシュ化
+            all_collections = get_existing_collections_cached()
 
             # 優先順位を設定: custom_upload, qa_pairs系を優先
             priority_collections = [c for c in all_collections if "custom_upload" in c or "qa_pairs" in c]
@@ -356,7 +378,9 @@ def search_rag_knowledge_base(
 def search_rag_knowledge_base_structured(
         query: str,
         collection_name: Optional[str] = None,
-        use_hybrid_search: bool = True  # ★追加
+        use_hybrid_search: bool = True,  # ★追加
+        precomputed_query_vector: Optional[List[float]] = None,      # Phase 3 STEP 7 改善
+        precomputed_sparse_vector: Optional[Any] = None              # Phase 3 STEP 7 改善
 ) -> Union[List[Dict[str, Any]], str]:
     """
     Qdrantデータベースから専門的な知識を検索します（構造化データ版）。
@@ -365,6 +389,8 @@ def search_rag_knowledge_base_structured(
         query: 検索クエリ
         collection_name: 検索対象のコレクション名（省略時はデフォルト）
         use_hybrid_search: ハイブリッド検索（Sparse + Dense）を使用するか（デフォルト: True）
+        precomputed_query_vector: 事前計算済みDenseベクトル（Noneの場合は内部で生成）
+        precomputed_sparse_vector: 事前計算済みSparseベクトル（Noneの場合は内部で生成）
     """
     if collection_name is None:
         collection_name = AgentConfig.RAG_DEFAULT_COLLECTION
@@ -385,61 +411,48 @@ def search_rag_knowledge_base_structured(
     )
 
     try:
-        if not check_qdrant_health():
-            raise QdrantConnectionError("Qdrantサーバーに接続できません。")
-
-        existing_collections: List[str] = [c.name for c in client.get_collections().collections]
+        # Phase 3 STEP 6 改善: ヘルスチェック削除 + コレクション一覧キャッシュ化
+        existing_collections: List[str] = get_existing_collections_cached()
         if collection_name not in existing_collections:
             error_msg: str = f"コレクション '{collection_name}' はQdrantサーバーに存在しません。"
             logger.warning(error_msg)
             raise CollectionNotFoundError(error_msg)
 
-        query_vector: List[float] = embed_query(query)
+        # Phase 3 STEP 7 改善: 事前計算ベクトルがあればそれを使用
+        if precomputed_query_vector is not None:
+            query_vector = precomputed_query_vector
+            logger.debug(f"事前計算済みDenseベクトルを使用: {collection_name}")
+        else:
+            query_vector: List[float] = embed_query(query)
         if query_vector is None:
             raise EmbeddingError("クエリの埋め込み生成に失敗しました。")
 
         # ★変更: use_hybrid_search フラグに基づいてスパースベクトルを生成
         sparse_vector = None
         if use_hybrid_search:
-            try:
-                sparse_vector = embed_sparse_query_unified(query)
-                logger.debug(f"スパースベクトル取得成功: {collection_name}")
-            except Exception as e:
-                logger.debug(f"スパースベクトル取得スキップ ({collection_name}): {e}")
-                # スパースベクトルが利用できない場合は None のまま続行
+            if precomputed_sparse_vector is not None:
+                sparse_vector = precomputed_sparse_vector
+                logger.debug(f"事前計算済みSparseベクトルを使用: {collection_name}")
+            else:
+                try:
+                    sparse_vector = embed_sparse_query_unified(query)
+                    logger.debug(f"スパースベクトル取得成功: {collection_name}")
+                except Exception as e:
+                    logger.debug(f"スパースベクトル取得スキップ ({collection_name}): {e}")
         else:
             logger.debug(f"ハイブリッド検索無効: スパースベクトルをスキップ ({collection_name})")
 
         # 1. Retrieval (Broad Search)
         # Re-rankingの効果を高めるため、最終的に欲しい数より多く取得する
-        # Hybrid Search (RRF) を使用（スパースベクトルがある場合のみ）
-        candidates: List[Dict[str, Any]] = []  # 初期化
-        try:
-            candidates = search_collection(
-                client=client,
-                collection_name=collection_name,
-                query_vector=query_vector,
-                sparse_vector=sparse_vector,
-                limit=20  # 候補を広げる
-            )
-        except Exception as e:
-            # スパースベクトルエラーの場合、スパースベクトルなしで再試行
-            if "text-sparse" in str(e) or "sparse" in str(e).lower():
-                logger.warning(f"スパースベクトルエラー検出 ({collection_name}): スパースベクトルなしで再試行")
-                try:
-                    candidates = search_collection(
-                        client=client,
-                        collection_name=collection_name,
-                        query_vector=query_vector,
-                        sparse_vector=None,  # スパースベクトルなし
-                        limit=20
-                    )
-                except Exception as retry_error:
-                    logger.error(f"再試行も失敗 ({collection_name}): {retry_error}")
-                    candidates = []
-            else:
-                logger.error(f"検索エラー ({collection_name}): {e}")
-                candidates = []
+        # Phase 3 STEP 8 改善: Sparseフォールバックは search_collection() に一元化
+        # search_collection() 内で Hybrid → Dense → 最終フォールバック の3段階を処理
+        candidates: List[Dict[str, Any]] = search_collection(
+            client=client,
+            collection_name=collection_name,
+            query_vector=query_vector,
+            sparse_vector=sparse_vector,
+            limit=20  # 候補を広げる
+        )
 
         metrics.total_results = len(candidates) if candidates else 0
 
@@ -513,15 +526,42 @@ def search_rag_knowledge_base_cached(
     logger.info(f"   Hybrid Search: {hybrid_status}")  # ★追加
     logger.info(f"{'=' * 60}")
 
+    # Phase 3 STEP 7 改善: Embeddingを1回だけ生成（全検索パスで共有）
+    try:
+        query_vector: List[float] = embed_query(query)
+        if query_vector is None:
+            return "[[RAG_TOOL_ERROR]] クエリの埋め込み生成に失敗しました。"
+    except Exception as e:
+        logger.error(f"Dense Embedding生成エラー: {e}")
+        return f"[[RAG_TOOL_ERROR]] Embedding生成エラー: {str(e)}"
+
+    sparse_vector = None
+    if use_hybrid_search:
+        try:
+            sparse_vector = embed_sparse_query_unified(query)
+            logger.debug("Sparseベクトル生成成功（1回のみ）")
+        except Exception as e:
+            logger.debug(f"Sparseベクトル生成スキップ: {e}")
+
+    logger.info(f"✅ Embedding生成完了（Dense: {len(query_vector)}D, Sparse: {'あり' if sparse_vector else 'なし'}）")
+
     # ステップ1: ユーザーが明示的にコレクション指定した場合
     if collection_name:
         logger.info(f"🎯 ユーザー指定コレクション: {collection_name}")
-        # ★変更: use_hybrid_search パラメータを渡す
-        result = search_rag_knowledge_base(query, collection_name, use_hybrid_search=use_hybrid_search)
+        # Phase 3 STEP 7 改善: 事前計算ベクトルを渡す
+        result = search_rag_knowledge_base_structured(
+            query, collection_name,
+            use_hybrid_search=use_hybrid_search,
+            precomputed_query_vector=query_vector,
+            precomputed_sparse_vector=sparse_vector
+        )
 
         elapsed = (time.time() - start_time) * 1000
         logger.info(f"⏱️ 検索完了: {elapsed:.0f}ms (ユーザー指定)")
-        return result
+
+        if isinstance(result, str):
+            return result
+        return _format_results(result, collection_name)
 
     # ステップ2: キャッシュチェック
     cached_entry = collection_cache.get(session_id)
@@ -533,9 +573,13 @@ def search_rag_knowledge_base_cached(
             f"ヒット回数: {cached_entry.hit_count})"
         )
 
-        # ★変更: キャッシュされたコレクションから検索（use_hybrid_search を渡す）
-        cached_results = search_rag_knowledge_base_structured(query, cached_entry.collection_name,
-                                                              use_hybrid_search=use_hybrid_search)
+        # Phase 3 STEP 7 改善: 事前計算ベクトルを渡す
+        cached_results = search_rag_knowledge_base_structured(
+            query, cached_entry.collection_name,
+            use_hybrid_search=use_hybrid_search,
+            precomputed_query_vector=query_vector,
+            precomputed_sparse_vector=sparse_vector
+        )
 
         if not isinstance(cached_results, str) and cached_results:
             top_score = max(r.get('score', 0.0) for r in cached_results)
@@ -561,7 +605,8 @@ def search_rag_knowledge_base_cached(
 
     # ステップ3: 全コレクション並列検索
     try:
-        all_collections = [c.name for c in client.get_collections().collections]
+        # Phase 3 STEP 6 改善: コレクション一覧キャッシュ化
+        all_collections = get_existing_collections_cached()
         logger.info(f"🔍 全コレクション並列検索: {len(all_collections)}コレクション × 4並列")
     except Exception as e:
         logger.error(f"コレクション一覧取得エラー: {e}")
@@ -570,14 +615,19 @@ def search_rag_knowledge_base_cached(
     if not all_collections:
         return "[[NO_RAG_RESULT]] 利用可能なコレクションがありません。"
 
-    # ★変更: use_hybrid_search を渡すためのラッパー関数を作成
-    def search_func_with_hybrid(q: str, col: str) -> Union[List[Dict[str, Any]], str]:
-        return search_rag_knowledge_base_structured(q, col, use_hybrid_search=use_hybrid_search)
+    # Phase 3 STEP 7 改善: 事前計算ベクトルを渡すラッパー関数
+    def search_func_with_precomputed(q: str, col: str) -> Union[List[Dict[str, Any]], str]:
+        return search_rag_knowledge_base_structured(
+            q, col,
+            use_hybrid_search=use_hybrid_search,
+            precomputed_query_vector=query_vector,
+            precomputed_sparse_vector=sparse_vector
+        )
 
     all_results = parallel_search_engine.search_all_collections(
         query=query,
         collections=all_collections,
-        search_func=search_func_with_hybrid  # ★変更: ラッパー関数を使用
+        search_func=search_func_with_precomputed
     )
 
     if not all_results:
