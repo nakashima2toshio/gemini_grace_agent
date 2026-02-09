@@ -47,8 +47,8 @@ except ImportError:
         DOCKER_IMAGE = "qdrant/qdrant"
         HEALTH_CHECK_ENDPOINT = "/collections"
         DEFAULT_TIMEOUT = 30
-        DEFAULT_VECTOR_SIZE = 1536
-        DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+        DEFAULT_VECTOR_SIZE = 3072
+        DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
 
 # ログ設定
 logger = logging.getLogger(__name__)

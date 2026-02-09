@@ -5,11 +5,20 @@ csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキ�
 主要機能:
 - chunks_all_async(): テキストからチャンクを作成（LLMベース、asyncio並列処理）
 - load_text_from_csv(): CSVファイルからテキストを読み込み
-- save_chunks_as_csv(): チャンクをCSV形式で保存（改行正規化対応）
+- save_chunks_as_csv(): チャンクをCSV形式で保存（改行正規化対応 + シンプルCSV追加出力）
+- save_chunks_as_simple_csv(): チャンクをシンプルCSV形式で保存（Textカラムのみ）
 - generate_output_filename(): 出力ファイル名の自動生成
 
 テキストまたはCSVファイルを意味的なチャンクに分割するパイプライン。
 非同期・並列処理により高速化。CSV出力時に改行を削除してクリーンなCSVを作成。
+
+改修内容（v2.1）:
+- シンプルCSV保存機能を追加（Textカラムのみ）
+- save_chunks_as_csv()にsave_simple_csvパラメータを追加
+- デフォルトで2つのCSVファイルを出力:
+  1. メタデータ付きCSV（chunk_id, text, tokens, ...）
+  2. シンプルCSV（Text カラムのみ）
+- ファイル名の重複を回避（_simple サフィックスを使用）
 
 Usage:　chunking.csv_text_to_chunks_text_csv　はceleryを利用していない。
 　　　　次のmake_qa_register_qdrant.pyで、利用する。
@@ -22,35 +31,35 @@ Usage:　chunking.csv_text_to_chunks_text_csv　はceleryを利用していな�
 # 走行時にエラーが出た場合は：
 # Gemini は、limit制限が厳しいので、block-sizeとmax_output_tokens を調整してください。
 python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file OUTPUT/cc_news_5per.csv \
-  --output output_chunked \
+  --input-file OUTPUT/cc_news_1per.csv \
+  --output chunks_output \
   --model gemini-3-flash-preview \
-  --workers 4 \
-  --text-column text \
-  --combine-rows \
+  --workers 8 \
   --block-size 500
 
 python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file OUTPUT/wikipedia_ja_5per.csv \
-  --output output_chunked \
+  --input-file OUTPUT/wikipedia_ja_1per.csv \
+  --output chunks_output \
   --model gemini-3-flash-preview \
-  --workers 4 \
-  --text-column text \
-  --combine-rows \
-  --block-size 500
+  --workers 8 \
+
+# 出力例:
+# chunks_output/wikipedia_ja_5per_chunks_20260207_123456.csv （メタデータ付き）
+# chunks_output/wikipedia_ja_5per_chunks_20260207_123456_simple.csv （シンプル版、Textのみ）
 
 # ----------------------------------------------
 # テキストファイル → チャンクCSV
-python -m chunking.csv_text_to_chunks_text_csv \
+python -m chunking.csv_text_to_chunks_text_csv.py \
   --input-file ./data/document.txt \
   --output chunks_output \
   --model gemini-3-flash-preview \
   --workers 8
 
 # デフォルト出力ディレクトリ使用
-python -m chunking.csv_text_to_chunks_text_csv \
+python -m chunking.csv_text_to_chunks_text_csv.py \
   --input-file ./data/document.txt
   # → chunks_output/document_chunks_20250118_123456.csv が生成される
+  # → chunks_output/document_chunks_20250118_123456_simple.csv （シンプル版）も同時生成
 """
 
 import asyncio
@@ -253,7 +262,61 @@ def load_text_from_csv(
 
 
 # ================================================================
-# ✅ 改修: CSV保存機能（改行削除対応）
+# ✅ 新規追加: シンプルCSV保存機能（Textカラムのみ）
+# ================================================================
+
+def save_chunks_as_simple_csv(
+        chunks: List[str],
+        output_file: str,
+        normalize_whitespace: bool = True
+) -> str:
+    """
+    チャンクをシンプルなCSV形式で保存（Textカラムのみ）
+
+    Args:
+        chunks: チャンクのリスト
+        output_file: 出力ファイルパス
+        normalize_whitespace: 改行・空白を正規化するか（デフォルト: True）
+
+    Returns:
+        保存したCSVファイルパス
+
+    Example:
+        >>> output_file = "chunks_output/wikipedia_ja_5per_chunks_simple.csv"
+        >>> save_chunks_as_simple_csv(chunks, output_file)
+
+        出力CSV:
+        Text
+        "チャンク1のテキスト..."
+        "チャンク2のテキスト..."
+    """
+    data = []
+    for chunk_text in chunks:
+        # 改行・空白を正規化
+        if normalize_whitespace:
+            chunk_text_cleaned = _normalize_whitespace(chunk_text)
+        else:
+            chunk_text_cleaned = chunk_text
+
+        data.append({'Text': chunk_text_cleaned})
+
+    df = pd.DataFrame(data)
+    df.to_csv(output_file, index=False, encoding='utf-8')
+
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("✅ シンプルCSV保存完了（Textカラムのみ）")
+    logger.info("=" * 60)
+    logger.info(f"  ファイル: {output_file}")
+    logger.info(f"  チャンク数: {len(df)}")
+    logger.info(f"  カラム: Text のみ")
+    logger.info("=" * 60)
+
+    return output_file
+
+
+# ================================================================
+# ✅ 改修: CSV保存機能（改行削除対応 + シンプルCSV追加出力）
 # ================================================================
 
 def save_chunks_as_csv(
@@ -261,20 +324,31 @@ def save_chunks_as_csv(
         output_file: str,
         dataset_type: str = "custom",
         source_file: Optional[str] = None,
-        normalize_whitespace: bool = True  # ✅ 新規パラメータ
+        normalize_whitespace: bool = True,  # ✅ 新規パラメータ
+        save_simple_csv: bool = True  # ✅ 新規パラメータ
 ) -> str:
     """
-    チャンクをCSV形式で保存（メタデータ付き）
+    チャンクをCSV形式で保存（メタデータ付き + シンプルCSV）
 
     Args:
         chunks: チャンクのリスト
-        output_file: 出力ファイルパス
+        output_file: 出力ファイルパス（メタデータ付きCSV）
         dataset_type: データセット種別
         source_file: 元ファイル名
         normalize_whitespace: 改行・空白を正規化するか（デフォルト: True）
+        save_simple_csv: シンプルCSV（Textのみ）も保存するか（デフォルト: True）
 
     Returns:
-        保存したCSVファイルパス
+        保存したCSVファイルパス（メタデータ付き）
+
+    Note:
+        save_simple_csv=True の場合、以下の2つのファイルが生成されます:
+        1. {output_file}: メタデータ付きCSV（chunk_id, text, tokens, ...）
+        2. {output_file_stem}_simple.csv: シンプルCSV（Text カラムのみ）
+
+        例:
+        - wikipedia_ja_5per_chunks_20260207_123456.csv （メタデータ付き）
+        - wikipedia_ja_5per_chunks_20260207_123456_simple.csv （シンプル版）
     """
     tokenizer = tiktoken.get_encoding("cl100k_base")
 
@@ -305,7 +379,7 @@ def save_chunks_as_csv(
 
     logger.info("")
     logger.info("=" * 60)
-    logger.info("✅ CSV保存完了")
+    logger.info("✅ CSV保存完了（メタデータ付き）")
     logger.info("=" * 60)
     logger.info(f"  ファイル: {output_file}")
     logger.info(f"  チャンク数: {len(df)}")
@@ -313,6 +387,25 @@ def save_chunks_as_csv(
     logger.info(f"  平均トークン数: {df['tokens'].mean():.1f}")
     logger.info(f"  改行正規化: {'有効' if normalize_whitespace else '無効'}")
     logger.info("=" * 60)
+
+    # ================================================================
+    # ✅ 新規追加: シンプルCSV（Textのみ）も保存
+    # ================================================================
+    if save_simple_csv:
+        output_path = Path(output_file)
+
+        # ファイル名生成: メタデータ付きCSVと同じ名前で "_simple" を追加
+        # 例: wikipedia_ja_5per_chunks_20260207_123456.csv
+        #  → wikipedia_ja_5per_chunks_20260207_123456_simple.csv
+        simple_csv_name = output_path.stem + "_simple.csv"
+        simple_csv_path = output_path.parent / simple_csv_name
+
+        # シンプルCSVを保存
+        save_chunks_as_simple_csv(
+            chunks=chunks,
+            output_file=str(simple_csv_path),
+            normalize_whitespace=normalize_whitespace
+        )
 
     return output_file
 
@@ -450,7 +543,8 @@ async def chunks_all_async(
                 output_file=output_file,
                 dataset_type=dataset_type,
                 source_file=source_file,
-                normalize_whitespace=True  # ✅ 改行正規化を有効化
+                normalize_whitespace=True,  # ✅ 改行正規化を有効化
+                save_simple_csv=True  # ✅ シンプルCSVも保存
             )
         else:
             save_chunks_as_text(
@@ -474,31 +568,36 @@ async def _step1_hierarchical_split(
     テキストを段落単位に分割する。
 
     【step1_2_3.pyからの改善点】
-    - 前処理: 長い1行を句読点で適切に分割（_preprocess_text）
-    - 後処理: 段落内の文を改行で区切り（_postprocess_paragraph）
+    - 前処理: _preprocess_text() で句読点区切りに変換
+    - 後処理: _postprocess_paragraph() で文ごとに改行区切り
+
+    【分割基準】
+    - 章・節の切り替わり → 新しい段落
+    - トピック転換 → 新しい段落
+    - 文脈の連続性 → 同じ段落
 
     Args:
-        text: 入力テキスト
+        text: 分割対象テキスト
         client: 非同期APIクライアント
         model: 使用するLLMモデル名
-        block_size: ブロックサイズ（文字数）
+        block_size: 入力テキストのブロックサイズ（文字数）
         checkpoint_manager: チェックポイント管理
 
     Returns:
-        段落のリスト
+        段落単位に分割されたテキストリスト
     """
     if checkpoint_manager.exists("step1"):
         logger.info("Step1: チェックポイントから再開")
         return checkpoint_manager.load("step1")
 
-    logger.info("\n[Step 1/3] 階層構造化（段落 > 文）")
+    logger.info("\n[Step 1/3] 階層構造化（段落分割）")
+    logger.info(f"  入力: {format_size(len(text))}")
 
-    # ✅ 前処理: 長い1行を句読点で分割（step1_2_3.pyより移植）
-    preprocessed = _preprocess_text(text)
-    logger.info(f"  前処理: テキストを句読点で分割")
+    # 【改善】前処理: 長い1行を句読点で分割
+    text = _preprocess_text(text)
 
-    blocks = [preprocessed[i:i + block_size] for i in range(0, len(preprocessed), block_size)]
-    logger.info(f"  ブロック数: {len(blocks)}")
+    blocks = [text[i:i + block_size] for i in range(0, len(text), block_size)]
+    logger.info(f"  ブロック分割: {len(blocks)} ブロック（{block_size}文字ごと）")
 
     tasks = []
     for i, block in enumerate(blocks):
@@ -514,7 +613,7 @@ async def _step1_hierarchical_split(
     # results = await asyncio.gather(*tasks)
     results = await async_tqdm.gather(
         *tasks,
-        desc="Step1: 階層構造化",  # 各ステップで説明を変更
+        desc="Step1: 段落分割",  # 各ステップで説明を変更
         total=len(tasks)
     )
 
@@ -524,13 +623,11 @@ async def _step1_hierarchical_split(
             try:
                 result = StructuralResult.model_validate_json(result_json)
                 for para in result.paragraphs:
-                    paragraphs.append(para.full_text)
+                    # 【改善】後処理: 各段落を句読点で文ごとに改行区切り
+                    para_text = _postprocess_paragraph(para.full_text)
+                    paragraphs.append(para_text)
             except Exception as e:
                 logger.warning(f"パース失敗: {e}")
-
-    # ✅ 後処理: 段落内の文を改行で区切り（step1_2_3.pyより移植）
-    paragraphs = [_postprocess_paragraph(p) for p in paragraphs]
-    logger.info(f"  後処理: 段落内の文を改行区切りに整形")
 
     logger.info(f"  出力: {len(paragraphs)} 段落")
     checkpoint_manager.save("step1", paragraphs)
@@ -545,15 +642,18 @@ async def _step2_semantic_chunking(
         checkpoint_manager: CheckpointManager
 ) -> List[str]:
     """
-    Step 2: 意味的分割
+    Step 2: 意味的チャンキング
 
-    段落を意味的な類似度に基づいて再構成する。
-    話題の転換点で分割し、形式的な改行ではなく意味のまとまりで分割する。
+    Step1の段落を意味的なチャンクに分割する。
 
-    【Step1との違い】
-    - Step1: 物理的構造（空行のみ）で分割
-    - Step2: 意味的な類似度（話題の転換）で分割
-    - 章の変わり目（第1章→第2章）はStep2で分割
+    【step1_2_3.pyからの改善点】
+    - Step1で生成された段落は既に後処理済み（句読点改行区切り）
+    - LLMが「文のまとまり」を理解しやすくなっている
+
+    【分割基準】
+    - 意味の単位（例: 問題提起と解決策を1つのチャンクに）
+    - Q/A生成に最適なサイズ（トークン数を考慮）
+    - 独立して理解可能な情報の塊
 
     Args:
         paragraphs: 段落のリスト（Step1の出力）
@@ -562,13 +662,13 @@ async def _step2_semantic_chunking(
         checkpoint_manager: チェックポイント管理
 
     Returns:
-        意味的に分割されたチャンクのリスト
+        意味的に分割されたチャンクリスト
     """
     if checkpoint_manager.exists("step2"):
         logger.info("Step2: チェックポイントから再開")
         return checkpoint_manager.load("step2")
 
-    logger.info("\n[Step 2/3] 意味的分割")
+    logger.info("\n[Step 2/3] 意味的チャンキング")
     logger.info(f"  入力: {len(paragraphs)} 段落")
 
     tasks = []

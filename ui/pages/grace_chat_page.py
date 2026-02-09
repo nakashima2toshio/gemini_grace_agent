@@ -2,9 +2,9 @@
 # !/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-grace_chat_page.py - GRACE エージェント チャット画面
+grace_chat_page.py - 自律型エージェント チャット画面
 ===================================================
-GRACEアーキテクチャを使用したエージェントとの対話インターフェース。
+GRACE自律型アーキテクチャを使用したエージェントとの対話インターフェース。
 """
 
 import os
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def show_grace_chat_page():
-    st.title("🧠 GRACE エージェント (New)")
+    st.title("🧠 自律型エージェント (New)")
     st.caption("Goal-Reasoning-Action-Critique-Execute Architecture")
 
     # -------------------------------------------------------------------------
@@ -109,7 +109,7 @@ def show_grace_chat_page():
 
     # サイドバー設定
     with st.sidebar:
-        st.header("⚙️ GRACE エージェント設定")
+        st.header("⚙️ 自律型エージェント設定")
 
         # モデル選択
         selected_model = st.selectbox(

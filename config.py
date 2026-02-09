@@ -348,8 +348,8 @@ class QdrantConfig:
     DOCKER_IMAGE: str = "qdrant/qdrant"
     HEALTH_CHECK_ENDPOINT: str = "/collections"
     DEFAULT_TIMEOUT: int = 30
-    DEFAULT_VECTOR_SIZE: int = 1536  # text-embedding-3-small
-    DEFAULT_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    DEFAULT_VECTOR_SIZE: int = 3072  # gemini-embedding-001 (MRL: 768/1536/3072)
+    DEFAULT_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
 
 # ===================================================================
@@ -549,4 +549,3 @@ NO_TEMPERATURE_MODELS = ModelConfig.NO_TEMPERATURE_MODELS
 def supports_temperature(model: str) -> bool:
     """temperatureサポートチェック（後方互換性用）"""
     return ModelConfig.supports_temperature(model)
-

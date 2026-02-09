@@ -75,7 +75,7 @@ EMBEDDING_PRICING = {
 }
 
 EMBEDDING_DIMS = {
-    "gemini-embedding-001"  : 768,
+    "gemini-embedding-001"  : 3072,
     "text-embedding-3-small": 1536,
     "text-embedding-3-large": 3072,
 }

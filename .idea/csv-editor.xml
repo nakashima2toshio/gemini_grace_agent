@@ -3,6 +3,13 @@
   <component name="CsvFileAttributes">
     <option name="attributeMap">
       <map>
+        <entry key="/OUTPUT/cc_news_1per.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="/OUTPUT/cc_news_5per.csv">
           <value>
             <Attribute>
@@ -80,7 +87,14 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="/output_chunked/cc_news_5per_chunks_20260124_005716.csv">
+        <entry key="/output_chunked/cc_news_1per_chunks.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/output_chunked/cc_news_5per_chunks.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />
@@ -94,21 +108,21 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="/qa_output/pipeline/qa_pairs_cc_news_5per_chunked_20260121_102236.csv">
+        <entry key="/output_chunked/wikipedia_ja_1per_chunks.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />
             </Attribute>
           </value>
         </entry>
-        <entry key="/qa_output/qa_pairs_cc_news_5per_chunked.csv">
+        <entry key="/output_chunked/wikipedia_ja_5per_chunks.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />
             </Attribute>
           </value>
         </entry>
-        <entry key="/qa_output/qa_pairs_wikipedia_ja_5per_chunked.csv">
+        <entry key="/output_chunked/wikipedia_ja_5per_chunks_20260205_161451.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />

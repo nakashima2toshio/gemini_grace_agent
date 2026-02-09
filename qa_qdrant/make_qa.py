@@ -63,15 +63,15 @@ def main():
         epilog="""
 使用例:
   # チャンク済みCSVからQ/A生成（Celery並列処理）
-  python qa_qdrant/make_qa.py \\
-    --input-file output_chunked/data_chunks.csv \\
-    --use-celery \\
-    -c 8 \\
+  python qa_qdrant/make_qa.py \
+    --input-file output_chunked/data_chunks.csv \
+    --use-celery \
+    -c 8 \
     --analyze-coverage
 
   # 同期処理（Celery不使用）
-  python qa_qdrant/make_qa.py \\
-    --input-file output_chunked/data_chunks.csv \\
+  python qa_qdrant/make_qa.py \
+    --input-file output_chunked/data_chunks.csv \
     --analyze-coverage
 
 注意:

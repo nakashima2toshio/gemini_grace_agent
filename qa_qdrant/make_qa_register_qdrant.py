@@ -10,98 +10,91 @@ make_qa_register_qdrant.py - Q/A生成からQdrant登録までを完結する統
   Celery並列処理に対応。
 
 【使用方法】
+# 1. Celeryワーカー起動（別ターミナル）
+./start_celery.sh restart -c 8 --flower
 
-  # 1. Celeryワーカー起動（別ターミナル）
-  ./start_celery.sh restart -c 8 --flower
+# 2. Q/A生成 + Qdrant登録（基本）
+python qa_qdrant/make_qa_register_qdrant.py \
+--input-file output_chunked/cc_news_1per_chunks.csv \
+--collection cc_news_1per \
+--use-celery \
+--model gemini-3-flash-preview \
+--concurrency 8 \
+--recreate
 
-  # 2. Q/A生成 + Qdrant登録（基本）
-  python qa_qdrant/make_qa_register_qdrant.py \
-    --input-file output_chunked/cc_news_5per_chunks.csv \
-    --collection cc_news_5per \
-    --use-celery \
-    --model gemini-3-flash-preview \
-    --concurrency 8 \
-    --text-column text \
-    --combine-rows \
-    --block-size 1200 \
-    --recreate
-
- # wikipedia_jaへの対応：
-  python qa_qdrant/make_qa_register_qdrant.py \
-    --input-file output_chunked/wikipedia_ja_5per_chunked.csv \
-    --collection wikipedia_ja_5per \
-    --use-celery \
-    --model gemini-3-flash-preview \
-    --concurrency 3 \
-    --text-column text \
-    --combine-rows \
-    --block-size 400 \
-    --recreate
+# wikipedia_jaへの対応：
+python qa_qdrant/make_qa_register_qdrant.py \
+--input-file output_chunked/wikipedia_ja_1per_chunks.csv \
+--collection wikipedia_ja_1per \
+--use-celery \
+--model gemini-3-flash-preview \
+--concurrency 8 \
+--recreate
 
 
-  # 3. 並列数を4に指定
-  python qa_qdrant/make_qa_register_qdrant.py \
-    --input-file output_chunked/cc_news_5per_chunks.csv \
-    --collection cc_news_5per \
-    --use-celery \
-    --concurrency 4 \
-    --recreate
+# 3. 並列数を4に指定
+python qa_qdrant/make_qa_register_qdrant.py \
+--input-file output_chunked/cc_news_5per_chunks.csv \
+--collection cc_news_5per \
+--use-celery \
+--concurrency 4 \
+--recreate
 
-  # 4. Celery不使用（同期処理）
-  python qa_qdrant/make_qa_register_qdrant.py \
-    --input-file output_chunked/cc_news_5per_chunks.csv \
-    --collection cc_news_5per \
-    --recreate
+# 4. Celery不使用（同期処理）
+python qa_qdrant/make_qa_register_qdrant.py \
+--input-file output_chunked/cc_news_5per_chunks.csv \
+--collection cc_news_5per \
+--recreate
 
-  # 5. テキストファイルから（チャンク作成 + Q/A生成 + 登録）
-  python qa_qdrant/make_qa_register_qdrant.py \
-    --input-file data/document.txt \
-    --collection my_collection \
-    --use-celery \
-    --concurrency 8 \
-    --recreate
+# 5. テキストファイルから（チャンク作成 + Q/A生成 + 登録）
+python qa_qdrant/make_qa_register_qdrant.py \
+--input-file data/document.txt \
+--collection my_collection \
+--use-celery \
+--concurrency 8 \
+--recreate
 
-  # 6. 従来方式のQ/A生成（スマート生成を無効化）
-  python qa_qdrant/make_qa_register_qdrant.py \
-    --input-file output_chunked/cc_news_5per_chunks.csv \
-    --collection cc_news_5per \
-    --use-celery \
-    --no-smart-generation \
-    --recreate
+# 6. 従来方式のQ/A生成（スマート生成を無効化）
+python qa_qdrant/make_qa_register_qdrant.py \
+--input-file output_chunked/cc_news_5per_chunks.csv \
+--collection cc_news_5per \
+--use-celery \
+--no-smart-generation \
+--recreate
 
 【オプション一覧】
 
-  入力ソース（いずれか1つ必須）:
-    --dataset           事前定義されたデータセット名
-    --input-file        入力ファイルのパス（.txt, .csv）
+入力ソース（いずれか1つ必須）:
+--dataset           事前定義されたデータセット名
+--input-file        入力ファイルのパス（.txt, .csv）
 
-  入力CSV処理（--input-file が CSV の場合）:
-    --text-column       テキストカラム名（デフォルト: text）
-    --combine-rows      複数行を結合してチャンク化
-    --block-size        結合する行数（デフォルト: 400）
+入力CSV処理（--input-file が CSV の場合）:
+--text-column       テキストカラム名（デフォルト: text）
+--combine-rows      複数行を結合してチャンク化
+--block-size        結合する行数（デフォルト: 400）
 
-  Qdrant登録:
-    --collection        Qdrantコレクション名（必須）
-    --recreate          コレクションを再作成
-    --batch-size        Embeddingバッチサイズ（デフォルト: 100）
+Qdrant登録:
+--collection        Qdrantコレクション名（必須）
+--recreate          コレクションを再作成
+--batch-size        Embeddingバッチサイズ（デフォルト: 100）
 
-  Q/A生成:
-    --model             LLMモデル（デフォルト: gemini-3-flash-preview）
-    --use-celery        Celery並列処理を使用
-    -c, --concurrency   並列タスク数（デフォルト: 8）
-    --batch-chunks      1回のAPIで処理するチャンク数（デフォルト: 3）
-    --use-smart-generation    スマートQ/A生成を使用（デフォルト）
-    --no-smart-generation     従来方式のQ/A生成を使用
+Q/A生成:
+--model             LLMモデル（デフォルト: gemini-3-flash-preview）
+--use-celery        Celery並列処理を使用
+-c, --concurrency   並列タスク数（デフォルト: 8）
+--batch-chunks      1回のAPIで処理するチャンク数（デフォルト: 3）
+--use-smart-generation    スマートQ/A生成を使用（デフォルト）
+--no-smart-generation     従来方式のQ/A生成を使用
 
-  出力:
-    --output            Q/AペアCSVの出力ディレクトリ（デフォルト: qa_output/pipeline）
-    --ui-output         UI用CSVの出力ディレクトリ（デフォルト: qa_output）
+出力:
+--output            Q/AペアCSVの出力ディレクトリ（デフォルト: qa_output/pipeline）
+--ui-output         UI用CSVの出力ディレクトリ（デフォルト: qa_output）
 
 【並列処理について】
 
-  - -c, --concurrency: 同時に実行するタスク数（デフォルト: 8）
-  - start_celery.sh と同じ値を指定することを推奨
-  - M2 MacBook Air (8 vCPU) では 8 が最適
+- -c, --concurrency: 同時に実行するタスク数（デフォルト: 8）
+- start_celery.sh と同じ値を指定することを推奨
+- M2 MacBook Air (8 vCPU) では 8 が最適
 
 ============================================================================
 """
