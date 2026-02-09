@@ -1,4 +1,409 @@
-# ユーザークエリ入力〜Embedding処理: 改善点・問題点分析
+# TODO: ユーザークエリ入力〜Embedding処理 改善チェックリスト
+
+**作成日**: 2026-02-09
+**対象**: grace_chat_page.py 関連パイプライン
+**方針**: 影響範囲が小さく安全なものから着手し、段階的に進める
+
+---
+
+## 実施順の考え方
+
+```
+Phase 1 (STEP 1-3): 低リスク整理 — 既存動作に影響なし
+Phase 2 (STEP 4-5): インフラ統一 — クライアント・インスタンス管理
+Phase 3 (STEP 6-8): コア改善 — Embedding重複・ヘルスチェック最適化
+Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度向上
+```
+
+---
+
+## Phase 1: 低リスク整理（既存動作に影響なし）
+
+---
+
+### STEP 1: print() を logger に置換（#10）
+
+> **リスク**: ⚪ 最小 | **対象**: `regex_mecab.py` | **依存**: なし
+
+- [x] **1-1.** `regex_mecab.py` のバックアップを作成
+- [x] **1-2.** L102-103 の `print()` を `logger.info()` / `logger.warning()` に変更
+  ```python
+  # Before
+  print("✅ MeCabが利用可能です（複合名詞抽出モード）")
+  print("⚠️ MeCabが利用できません（正規表現モード）")
+
+  # After
+  logger.info("✅ MeCabが利用可能です（複合名詞抽出モード）")
+  logger.warning("⚠️ MeCabが利用できません（正規表現モード）")
+  ```
+- [x] **1-3.** ファイル先頭に `import logging` と `logger = logging.getLogger(__name__)` を追加（未追加の場合）
+- [x] **1-4.** L136 の `print(f"⚠️ MeCab抽出エラー: {e}")` も `logger.warning()` に変更
+- [x] **1-5.** L140 の `print("ℹ️ 英語主体の...")` も `logger.info()` に変更
+- [ ] **1-6.** 動作確認: Streamlitで質問入力 → KeywordExtractor経由の処理が正常動作すること
+- [ ] **1-7.** 完了コミット
+
+---
+
+### STEP 2: デッドコード `filter_results_by_keywords` の整理（#8）
+
+> **リスク**: ⚪ 最小 | **対象**: `agent_tools.py` | **依存**: なし
+
+- [x] **2-1.** `agent_tools.py` のバックアップを作成
+- [x] **2-2.** プロジェクト全体で `filter_results_by_keywords` の呼び出し箇所を検索
+  ```bash
+  grep -rn "filter_results_by_keywords" *.py services/*.py
+  ```
+- [x] **2-3.** 呼び出しがない場合:
+  - [x] 関数定義（L144-186）に `# TODO: 将来のキーワードフィルタ強化で活用予定` コメントを追加
+  - [ ] **または** 関数を削除する（不要と判断した場合）
+- [x] **2-4.** 呼び出しがある場合: その箇所を記録し、この STEP はスキップ → **呼び出しなし確認済み**
+- [ ] **2-5.** 完了コミット
+
+---
+
+### STEP 3: 設計ドキュメントの次元数記載を修正（#9 の一部）
+
+> **リスク**: ⚪ 最小 | **対象**: `grace_chat_input_query.md` | **依存**: なし
+
+- [x] **3-1.** `grace_chat_input_query.md` 内の「768次元」記載箇所を検索 → **12箇所特定**
+- [x] **3-2.** 実際のコード設定と照合:
+  - `config.py` → `QdrantConfig.DEFAULT_VECTOR_SIZE = 3072`
+  - `config.py` → `GeminiConfig.EMBEDDING_DIMS = 3072`
+  - `qdrant_client_wrapper.py` → `PROVIDER_DEFAULTS["gemini"]["dims"] = 3072`
+- [x] **3-3.** ドキュメント内の次元数を正しい値（3072）に修正 → **全12箇所修正完了**
+- [x] **3-4.** OpenAI用コレクション（1536次元）が混在している旨を注意書きとして追記 → **4.6 embed_query セクションに追記**
+- [ ] **3-5.** 完了コミット
+
+---
+
+## Phase 2: インフラ統一（クライアント・インスタンス管理）
+
+---
+
+### STEP 4: QdrantClient のシングルトン化（#4）
+
+> **リスク**: 🟡 中 | **対象**: `qdrant_client_wrapper.py`, `agent_tools.py`, `grace_chat_page.py`, `agent_service.py` | **依存**: なし
+
+- [x] **4-1.** 現在 `QdrantClient` を生成している全箇所をリストアップ
+  ```bash
+  grep -rn "QdrantClient(" *.py services/*.py
+  ```
+- [x] **4-2.** `qdrant_client_wrapper.py` にシングルトン取得関数を追加
+  ```python
+  _qdrant_client: Optional[QdrantClient] = None
+
+  def get_qdrant_client() -> QdrantClient:
+      global _qdrant_client
+      if _qdrant_client is None:
+          _qdrant_client = QdrantClient(
+              url=QdrantConfig.URL,
+              timeout=QdrantConfig.DEFAULT_TIMEOUT
+          )
+      return _qdrant_client
+  ```
+- [x] **4-3.** `__all__` に `"get_qdrant_client"` を追加
+- [x] **4-4.** `agent_tools.py` L34-35 を変更
+  ```python
+  # Before
+  client: QdrantClient = QdrantClient(url=qdrant_url)
+
+  # After
+  from qdrant_client_wrapper import get_qdrant_client
+  client: QdrantClient = get_qdrant_client()
+  ```
+- [x] **4-5.** `grace_chat_page.py` L55 のコレクションデータ表示部分を変更
+  ```python
+  # Before
+  client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+
+  # After
+  from qdrant_client_wrapper import get_qdrant_client
+  client = get_qdrant_client()
+  ```
+- [x] **4-5b.** `agent_chat_page.py` も同様に変更 → **追加対象として実施済み**
+- [x] **4-6.** `agent_service.py` L442 の `get_available_collections_from_qdrant_helper()` を変更
+  ```python
+  # Before
+  client = QdrantClient(url=qdrant_url)
+
+  # After
+  from qdrant_client_wrapper import get_qdrant_client
+  client = get_qdrant_client()
+  ```
+- [ ] **4-7.** 動作確認: 全画面でQdrant接続が正常に動作すること
+- [ ] **4-8.** 完了コミット
+
+---
+
+### STEP 5: EmbeddingClient のシングルトン化（#3）
+
+> **リスク**: 🟡 中 | **対象**: `qdrant_client_wrapper.py` | **依存**: STEP 4 完了推奨
+
+- [x] **5-1.** `qdrant_client_wrapper.py` にEmbeddingClientキャッシュを追加
+  ```python
+  _embedding_clients: Dict[str, EmbeddingClient] = {}
+
+  def get_embedding_client(provider: str = None) -> EmbeddingClient:
+      provider = provider or DEFAULT_EMBEDDING_PROVIDER
+      if provider not in _embedding_clients:
+          _embedding_clients[provider] = create_embedding_client(provider=provider)
+      return _embedding_clients[provider]
+  ```
+- [x] **5-2.** `embed_query_unified()` を修正
+  ```python
+  # Before
+  embedding_client = create_embedding_client(provider=provider)
+
+  # After
+  embedding_client = get_embedding_client(provider=provider)
+  ```
+- [x] **5-3.** `embed_texts_unified()` も同様に修正
+- [x] **5-4.** Sparse用: `embed_sparse_query_unified()` の `get_sparse_embedding_client()` も同様にキャッシュ化を検討
+  - [x] `get_cached_sparse_embedding_client()` を新規追加してキャッシュ化
+  - [x] `embed_sparse_texts_unified()` と `embed_sparse_query_unified()` を修正
+  - [ ] `helper_embedding_sparse.py` が内部でキャッシュしているか確認（**未提供のため未検証**）
+- [ ] **5-5.** 動作確認: 検索実行 → Embeddingが正常に生成されること
+- [ ] **5-6.** 完了コミット
+
+---
+
+## Phase 3: コア改善（Embedding重複・ヘルスチェック最適化）
+
+---
+
+### STEP 6: ヘルスチェック・コレクション存在確認のキャッシュ化（#2）
+
+> **リスク**: 🔴 高（効果大） | **対象**: `agent_tools.py`, `qdrant_client_wrapper.py` | **依存**: STEP 4
+
+- [ ] **6-1.** `agent_tools.py` にコレクション設定キャッシュを追加
+  ```python
+  import time
+
+  _collections_cache: Optional[List[str]] = None
+  _collections_cache_time: float = 0.0
+  _COLLECTIONS_CACHE_TTL: float = 60.0  # 60秒
+
+  def get_existing_collections_cached() -> List[str]:
+      global _collections_cache, _collections_cache_time
+      now = time.time()
+      if _collections_cache is None or (now - _collections_cache_time) > _COLLECTIONS_CACHE_TTL:
+          _collections_cache = [c.name for c in client.get_collections().collections]
+          _collections_cache_time = now
+      return _collections_cache
+  ```
+- [ ] **6-2.** `search_rag_knowledge_base_structured()` L389-396 を修正
+  ```python
+  # Before
+  if not check_qdrant_health():
+      raise QdrantConnectionError(...)
+  existing_collections = [c.name for c in client.get_collections().collections]
+
+  # After
+  existing_collections = get_existing_collections_cached()
+  ```
+- [ ] **6-3.** `qdrant_client_wrapper.py` の `search_collection()` にベクトル設定キャッシュを追加
+  ```python
+  _vector_config_cache: Dict[str, dict] = {}
+
+  def _get_vector_config(client, collection_name):
+      if collection_name not in _vector_config_cache:
+          collection_info = client.get_collection(collection_name)
+          vectors_config = collection_info.config.params.vectors
+          _vector_config_cache[collection_name] = {
+              "is_named_vector": isinstance(vectors_config, dict),
+              "dense_vector_name": "default" if isinstance(vectors_config, dict) else None
+          }
+      return _vector_config_cache[collection_name]
+  ```
+- [ ] **6-4.** `search_collection()` 内の `client.get_collection()` をキャッシュ版に置換
+- [ ] **6-5.** `check_qdrant_health()` の呼び出しを削減:
+  - [ ] `search_rag_knowledge_base_structured()` からは削除
+  - [ ] アプリ起動時 or セッション開始時の1回のみに限定
+- [ ] **6-6.** 動作確認: 並列検索時にQdrant管理APIの呼び出し回数が削減されていること（ログで確認）
+- [ ] **6-7.** 完了コミット
+
+---
+
+### STEP 7: Embedding生成の重複呼び出し排除（#1）
+
+> **リスク**: 🔴 高（効果最大・変更範囲広め） | **対象**: `agent_tools.py`, `agent_parallel_search.py` | **依存**: STEP 5, STEP 6
+
+- [ ] **7-1.** 改善方針の確認:
+  - `search_rag_knowledge_base_cached()` でEmbeddingを**1回だけ生成**
+  - 各コレクション検索にはベクトルを直接渡す
+- [ ] **7-2.** `agent_tools.py` に**ベクトル受け渡し版**の検索関数を新規追加（既存関数は残す）
+  ```python
+  def search_collection_with_precomputed_vectors(
+      collection_name: str,
+      query: str,
+      query_vector: List[float],
+      sparse_vector: Optional[Any] = None,
+      limit: int = 20
+  ) -> Union[List[Dict[str, Any]], str]:
+      """事前計算済みベクトルを使用した検索（Embedding重複排除用）"""
+      # embed_query() / embed_sparse_query_unified() を呼ばない
+      # search_collection() にベクトルを直接渡す
+      ...
+  ```
+- [ ] **7-3.** `search_rag_knowledge_base_cached()` を修正:
+  ```python
+  # ステップ3（全コレクション並列検索）の前にEmbeddingを1回生成
+  query_vector = embed_query(query)
+  sparse_vector = embed_sparse_query_unified(query) if use_hybrid_search else None
+
+  def search_func_with_vectors(q, col):
+      return search_collection_with_precomputed_vectors(
+          col, q, query_vector, sparse_vector
+      )
+
+  all_results = parallel_search_engine.search_all_collections(
+      query=query,
+      collections=all_collections,
+      search_func=search_func_with_vectors
+  )
+  ```
+- [ ] **7-4.** キャッシュヒット時（ステップ2）も同様にベクトル事前生成に対応
+- [ ] **7-5.** ユーザー指定コレクション時（ステップ1）も同様に対応
+- [ ] **7-6.** 動作確認（重要）:
+  - [ ] 並列検索時のログで `embed_query` の呼び出しが1回のみであること
+  - [ ] 検索結果が改善前と同等であること（スコア・件数を比較）
+  - [ ] Hybrid検索ON/OFF 両方で正常動作すること
+- [ ] **7-7.** 旧パス（`search_rag_knowledge_base_structured` 単体呼び出し）が壊れていないか確認
+- [ ] **7-8.** 完了コミット
+
+---
+
+### STEP 8: Sparse フォールバックの一元化（#6）
+
+> **リスク**: 🟡 中 | **対象**: `agent_tools.py`, `qdrant_client_wrapper.py` | **依存**: STEP 7
+
+- [ ] **8-1.** フォールバック責務を `search_collection()` に集約する方針を確認:
+  - `qdrant_client_wrapper.py` の `search_collection()` が唯一のフォールバック処理を持つ
+  - `agent_tools.py` 側の try-except は削除する
+- [ ] **8-2.** `agent_tools.py` `search_rag_knowledge_base_structured()` L418-443 のスパースエラー二重リトライを削除
+  ```python
+  # Before: try-except で sparse エラーをキャッチして再試行
+  # After: search_collection() に任せる（search_collection 内に既にフォールバックがある）
+  candidates = search_collection(
+      client=client,
+      collection_name=collection_name,
+      query_vector=query_vector,
+      sparse_vector=sparse_vector,
+      limit=20
+  )
+  ```
+- [ ] **8-3.** `qdrant_client_wrapper.py` の `search_collection()` 内のフォールバックログを整理:
+  - 1段階目: Hybrid Search 試行
+  - 2段階目: Dense のみ再試行
+  - 3段階目: 最シンプル形式（最終フォールバック）
+  - 各段階で明確なログを出力
+- [ ] **8-4.** 動作確認:
+  - [ ] Sparse未対応コレクションに対して検索 → Dense フォールバックが正常動作
+  - [ ] Sparse対応コレクションに対して検索 → Hybrid検索が正常動作
+- [ ] **8-5.** 完了コミット
+
+---
+
+## Phase 4: 設計改善（アーキテクチャ整理・検索精度向上）
+
+---
+
+### STEP 9: 検索エントリポイントの整理（#7）
+
+> **リスク**: 🟡 中 | **対象**: `agent_tools.py`, `agent_service.py` | **依存**: STEP 7, STEP 8
+
+- [ ] **9-1.** 現在の3つのエントリポイントの使用箇所を調査
+  ```bash
+  grep -rn "search_rag_knowledge_base_cached\|search_rag_knowledge_base_structured\|search_rag_knowledge_base[^_]" *.py services/*.py
+  ```
+- [ ] **9-2.** 整理方針を決定:
+  - `search_rag_knowledge_base_cached()` → **メインエントリポイント**（維持）
+  - `search_rag_knowledge_base_structured()` → **内部関数**（`_search_structured` にリネーム検討）
+  - `search_rag_knowledge_base()` → **Legacy ラッパー**（フォールバック削除、薄いラッパー化）
+- [ ] **9-3.** `search_rag_knowledge_base()` の独自フォールバックロジック（L294-322）を削除
+  - `search_rag_knowledge_base_cached()` が全コレクション並列検索でカバーしているため
+- [ ] **9-4.** フォーマット処理の統一:
+  - `search_rag_knowledge_base()` 内のフォーマット処理（L327-353）を `_format_results()` に統一
+- [ ] **9-5.** `TOOLS_MAP` の確認: LLMが直接呼ぶツール名 `search_rag_knowledge_base` の動作に影響がないこと
+- [ ] **9-6.** 動作確認:
+  - [ ] `search_rag_knowledge_base_cached` 経由の通常検索が正常
+  - [ ] Legacy 呼び出しパスが壊れていないこと
+- [ ] **9-7.** 完了コミット
+
+---
+
+### STEP 10: キーワード抽出と検索クエリの連携強化（#5）
+
+> **リスク**: 🟡 中 | **対象**: `agent_service.py` | **依存**: STEP 9
+
+- [ ] **10-1.** 現状の問題を再確認:
+  - KeywordExtractor で抽出 → LLMへヒント → LLMが独自にクエリ生成
+  - 抽出キーワードが検索クエリに含まれる保証なし
+- [ ] **10-2.** 改善方針を選択:
+  - [ ] **案A**: LLM生成クエリにキーワードを強制付加
+  - [ ] **案B**: 検索結果のフィルタリングにキーワードを活用（`filter_results_by_keywords` 復活）
+  - [ ] **案C**: 現状維持（LLMのプロンプト改善のみで対応）
+- [ ] **10-3.** 選択した方針で実装
+- [ ] **10-4.** 効果測定: 同一クエリで改善前/後の検索結果を比較
+- [ ] **10-5.** 完了コミット
+
+---
+
+### STEP 11: Embedding次元数の不整合対応（#9 の本体）
+
+> **リスク**: ⚪ 低（将来的なバグ防止） | **対象**: `qdrant_client_wrapper.py`, `agent_tools.py` | **依存**: STEP 7
+
+- [ ] **11-1.** 現在登録されている全コレクションの次元数を確認
+  ```python
+  # 調査用スクリプト
+  for col in client.get_collections().collections:
+      info = client.get_collection(col.name)
+      print(f"{col.name}: {info.config.params.vectors}")
+  ```
+- [ ] **11-2.** OpenAI用コレクション（1536次元）が実際に使用されているか確認
+- [ ] **11-3.** 使用されている場合: コレクションごとのプロバイダー判定ロジックを実装
+  ```python
+  def get_provider_for_collection(collection_name: str) -> str:
+      if collection_name in COLLECTION_EMBEDDINGS:
+          return "openai"
+      elif collection_name in COLLECTION_EMBEDDINGS_GEMINI:
+          return "gemini"
+      else:
+          return DEFAULT_EMBEDDING_PROVIDER
+  ```
+- [ ] **11-4.** 使用されていない場合: `COLLECTION_EMBEDDINGS` の旧定義にdeprecatedコメントを追加
+- [ ] **11-5.** 完了コミット
+
+---
+
+## 進捗サマリ
+
+| Phase | STEP | 項目 | 優先度 | 状態 |
+|-------|------|------|--------|------|
+| 1 | 1 | print() → logger 置換 | ⚪ | ✅ コード修正済み（動作確認・コミット待ち） |
+| 1 | 2 | デッドコード整理 | ⚪ | ✅ コード修正済み（コミット待ち） |
+| 1 | 3 | ドキュメント次元数修正 | ⚪ | ✅ 修正済み（コミット待ち） |
+| 2 | 4 | QdrantClient シングルトン化 | 🟡 | ✅ コード修正済み（動作確認・コミット待ち） |
+| 2 | 5 | EmbeddingClient シングルトン化 | 🟡 | ✅ コード修正済み（動作確認・コミット待ち） |
+| 3 | 6 | ヘルスチェック・存在確認キャッシュ | 🔴 | ☐ 未着手 |
+| 3 | 7 | Embedding重複排除 | 🔴 | ☐ 未着手 |
+| 3 | 8 | Sparse フォールバック一元化 | 🟡 | ☐ 未着手 |
+| 4 | 9 | 検索エントリポイント整理 | 🟡 | ☐ 未着手 |
+| 4 | 10 | キーワード抽出連携強化 | 🟡 | ☐ 未着手 |
+| 4 | 11 | Embedding次元数不整合対応 | ⚪ | ☐ 未着手 |
+
+---
+
+## 注意事項
+
+- **各STEPは必ず動作確認してからコミット**すること
+- **Phase 3（STEP 6-7）が最も効果が大きい**が、Phase 1-2を先に済ませることで安全にコードベースを整理してから取り組める
+- STEP 7（Embedding重複排除）は変更範囲が最も広いため、**テスト用クエリを事前に3-5個用意**し、改善前後でスコア・件数を比較すること
+- 各STEPでバックアップを取ること（git commit で十分）
+
+---
+---
+## ユーザークエリ入力〜Embedding処理: 改善点・問題点分析
 
 **Version 1.0** | 分析日: 2026-02-09
 

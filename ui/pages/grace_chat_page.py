@@ -17,6 +17,7 @@ from qdrant_client import QdrantClient
 # Configuration and Services
 from config import AgentConfig, GeminiConfig
 from services.agent_service import ReActAgent, get_available_collections_from_qdrant_helper
+from qdrant_client_wrapper import get_qdrant_client
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,8 @@ def show_grace_chat_page():
 
             if target_collection:
                 try:
-                    # Qdrantクライアント接続
-                    client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+                    # Qdrantクライアント接続（シングルトン: Phase 2 STEP 4 改善）
+                    client = get_qdrant_client()
 
                     st.caption(f"📊 コレクション: **{target_collection}** から100件を表示")
 

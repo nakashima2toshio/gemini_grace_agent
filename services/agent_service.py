@@ -5,6 +5,7 @@ from google import genai  # 新しいSDK
 from google.genai import types  # 新しいSDK
 from typing import Dict, List, Any, Optional, Union, Tuple, Generator
 from qdrant_client import QdrantClient
+from qdrant_client_wrapper import get_qdrant_client
 
 # Configuration and Tools
 from config import AgentConfig, GeminiConfig
@@ -438,8 +439,8 @@ class ReActAgent:
 def get_available_collections_from_qdrant_helper() -> List[str]:
     """Qdrantから利用可能なコレクション名を取得"""
     try:
-        qdrant_url = get_config("qdrant.url", "http://localhost:6333")
-        client = QdrantClient(url=qdrant_url)
+        # シングルトン QdrantClient を使用（Phase 2 STEP 4 改善）
+        client = get_qdrant_client()
         collections = client.get_collections()
         return [c.name for c in collections.collections]
     except Exception as e:

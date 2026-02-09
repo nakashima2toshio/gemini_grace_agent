@@ -16,7 +16,7 @@ from typing import List, Optional, Dict, Any, Union
 from dataclasses import dataclass, field
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse, ResponseHandlingException
-from qdrant_client_wrapper import search_collection, embed_query, embed_sparse_query_unified, QDRANT_CONFIG
+from qdrant_client_wrapper import search_collection, embed_query, embed_sparse_query_unified, QDRANT_CONFIG, get_qdrant_client
 from config import AgentConfig, CohereConfig
 
 # キャッシュと並列検索のインポート
@@ -30,9 +30,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)  # Configure logger for this module
 
-# Initialize Client
-qdrant_url: str = QDRANT_CONFIG.get("url", "http://localhost:6333")
-client: QdrantClient = QdrantClient(url=qdrant_url)
+# Initialize Client（シングルトン: Phase 2 STEP 4 改善）
+client: QdrantClient = get_qdrant_client()
 
 
 # ============ カスタム例外 ============

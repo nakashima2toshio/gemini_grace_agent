@@ -3,8 +3,11 @@
 # [Usage:] List: keywords = extractor.extract(sample_text_jp, top_n=10)
 # [Usage:] List: chunks = chunk_text(sample_text_jp2)
 import re
+import logging
 from typing import List, Dict, Tuple
 from collections import Counter
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -98,9 +101,9 @@ class KeywordExtractor:
         }
 
         if self.mecab_available:
-            print("✅ MeCabが利用可能です（複合名詞抽出モード）")
+            logger.info("✅ MeCabが利用可能です（複合名詞抽出モード）")
         else:
-            print("⚠️ MeCabが利用できません（正規表現モード）")
+            logger.warning("⚠️ MeCabが利用できません（正規表現モード）")
 
     def _check_mecab_availability(self) -> bool:
         """MeCabの利用可能性をチェック"""
@@ -133,11 +136,11 @@ class KeywordExtractor:
                 if keywords:  # 空でなければ成功
                     return keywords
             except Exception as e:
-                print(f"⚠️ MeCab抽出エラー: {e}")
+                logger.warning(f"⚠️ MeCab抽出エラー: {e}")
 
         # 日本語がない、またはMeCabエラー・不可の場合は正規表現版
         if not is_japanese:
-            print("ℹ️ 英語主体のテキストとして判定されました（正規表現モードを使用）")
+            logger.info("ℹ️ 英語主体のテキストとして判定されました（正規表現モードを使用）")
         return self._extract_with_regex(text, top_n, use_scoring)
 
     def _extract_with_mecab(self, text: str, top_n: int,
@@ -488,4 +491,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -227,6 +227,77 @@ def create_qdrant_client(url: str = None, timeout: int = 30) -> QdrantClient:
     return QdrantClient(url=url, timeout=timeout)
 
 
+# シングルトン QdrantClient（Phase 2 STEP 4 改善）
+_qdrant_client: Optional[QdrantClient] = None
+
+
+def get_qdrant_client() -> QdrantClient:
+    """
+    QdrantClient のシングルトンインスタンスを取得
+
+    アプリケーション全体で1つの接続プールを共有し、
+    リソース効率と設定一貫性を確保する。
+
+    Returns:
+        QdrantClientインスタンス（シングルトン）
+    """
+    global _qdrant_client
+    if _qdrant_client is None:
+        _qdrant_client = QdrantClient(
+            url=QDRANT_CONFIG["url"],
+            timeout=QdrantConfig.DEFAULT_TIMEOUT
+        )
+        logger.info(f"QdrantClient シングルトン作成: url={QDRANT_CONFIG['url']}")
+    return _qdrant_client
+
+
+# ===================================================================
+# EmbeddingClient シングルトンキャッシュ（Phase 2 STEP 5 改善）
+# ===================================================================
+
+_embedding_clients: Dict[str, EmbeddingClient] = {}
+
+
+def get_embedding_client(provider: str = None) -> EmbeddingClient:
+    """
+    EmbeddingClient のキャッシュ済みインスタンスを取得
+
+    プロバイダーごとに1つのインスタンスを保持し、
+    毎回の create_embedding_client() 呼び出しを排除する。
+
+    Args:
+        provider: "gemini" or "openai"（Noneの場合はデフォルト）
+
+    Returns:
+        EmbeddingClientインスタンス（キャッシュ済み）
+    """
+    provider = provider or DEFAULT_EMBEDDING_PROVIDER
+    if provider not in _embedding_clients:
+        _embedding_clients[provider] = create_embedding_client(provider=provider)
+        logger.info(f"EmbeddingClient キャッシュ作成: provider={provider}")
+    return _embedding_clients[provider]
+
+
+_sparse_embedding_clients: Dict[str, Any] = {}
+
+
+def get_cached_sparse_embedding_client(model_name: str = None):
+    """
+    Sparse EmbeddingClient のキャッシュ済みインスタンスを取得
+
+    Args:
+        model_name: 使用するSparseモデル名（Noneの場合はデフォルト）
+
+    Returns:
+        Sparse EmbeddingClientインスタンス（キャッシュ済み）
+    """
+    cache_key = model_name or "_default"
+    if cache_key not in _sparse_embedding_clients:
+        _sparse_embedding_clients[cache_key] = get_sparse_embedding_client(model_name)
+        logger.info(f"Sparse EmbeddingClient キャッシュ作成: model={model_name}")
+    return _sparse_embedding_clients[cache_key]
+
+
 # ===================================================================
 # コレクション管理
 # ===================================================================
@@ -541,7 +612,7 @@ def embed_texts_unified(
         vectors = embed_texts_unified(texts, provider="openai")
     """
     provider = provider or DEFAULT_EMBEDDING_PROVIDER
-    embedding_client = create_embedding_client(provider=provider)
+    embedding_client = get_embedding_client(provider=provider)
 
     # 空文字列・空白のみの文字列を除外して処理
     valid_texts = []
@@ -594,7 +665,7 @@ def embed_query_unified(
         vector = embed_query_unified("検索クエリ", provider="gemini")
     """
     provider = provider or DEFAULT_EMBEDDING_PROVIDER
-    embedding_client = create_embedding_client(provider=provider)
+    embedding_client = get_embedding_client(provider=provider)
     # return embedding_client.embed_text(text)
     return embedding_client.embed_text(text, task_type="retrieval_query")
 
@@ -617,7 +688,7 @@ def embed_sparse_texts_unified(
     Returns:
         Qdrant用SparseVectorオブジェクトのリスト
     """
-    sparse_client = get_sparse_embedding_client(model_name)
+    sparse_client = get_cached_sparse_embedding_client(model_name)
 
     # 空文字列・空白のみの文字列を除外して処理
     valid_texts = []
@@ -669,7 +740,7 @@ def embed_sparse_query_unified(
     Returns:
         Qdrant用SparseVector
     """
-    sparse_client = get_sparse_embedding_client(model_name)
+    sparse_client = get_cached_sparse_embedding_client(model_name)
     raw = sparse_client.embed_text(text)
     return models.SparseVector(
         indices=raw["indices"],
@@ -1143,6 +1214,7 @@ __all__ = [
     # クライアント・ヘルスチェック
     "QdrantHealthChecker",
     "create_qdrant_client",
+    "get_qdrant_client",
 
     # コレクション管理
     "get_collection_stats",
@@ -1161,6 +1233,8 @@ __all__ = [
     # Gemini 3 Migration: 埋め込み（抽象化版）
     "embed_texts_unified",
     "embed_query_unified",
+    "get_embedding_client",
+    "get_cached_sparse_embedding_client",
     "create_collection_for_provider",
     "get_provider_vector_size",
 

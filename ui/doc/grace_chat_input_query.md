@@ -1,6 +1,6 @@
 # grace_chat_input_query - ユーザークエリ入力〜Embedding処理 詳細設計ドキュメント
 
-**Version 1.0** | 最終更新: 2026-02-09
+**Version 1.1** | 最終更新: 2026-02-09
 
 ---
 
@@ -31,7 +31,7 @@
 - ReActAgent への質問の委譲（`execute_turn`）
 - LLM（Gemini）による検索クエリの生成判断（Thought → Action）
 - オプションのキーワード抽出によるクエリ拡張（MeCab/Regex）
-- Gemini Embedding API を用いた Dense ベクトル（768次元）の生成
+- Gemini Embedding API を用いた Dense ベクトル（3072次元）の生成
 - スパースベクトル（TF-IDF / BM25系）の生成（ハイブリッド検索有効時）
 - キャッシュ戦略に基づく検索対象コレクションの決定
 - 並列検索エンジンへのクエリとベクトルの引き渡し
@@ -56,7 +56,7 @@
 [search_rag_knowledge_base_cached(query, session_id, ...)]
     │
     ├─ ステップ1: キャッシュチェック (CollectionCache)
-    ├─ ステップ2: embed_query(query) → Dense Vector (768D)
+    ├─ ステップ2: embed_query(query) → Dense Vector (3072D)
     ├─ ステップ3: embed_sparse_query_unified(query) → Sparse Vector (条件付き)
     │
     ▼
@@ -111,7 +111,7 @@ flowchart TB
 
     subgraph LLM_LAYER["LLM層"]
         GEMINI_CHAT["Gemini Chat API<br/>(検索判断・クエリ生成)"]
-        GEMINI_EMB["Gemini Embedding API<br/>(Dense Vector 768D)"]
+        GEMINI_EMB["Gemini Embedding API<br/>(Dense Vector 3072D)"]
     end
 
     subgraph SEARCH["検索層"]
@@ -122,7 +122,7 @@ flowchart TB
     end
 
     subgraph EMBEDDING["ベクトル生成層"]
-        DENSE["embed_query()<br/>(Dense 768D)"]
+        DENSE["embed_query()<br/>(Dense 3072D)"]
         SPARSE["embed_sparse_query_unified()<br/>(Sparse TF-IDF/BM25)"]
     end
 
@@ -155,7 +155,7 @@ flowchart TB
 5. Gemini が `Thought:` で思考し、`Action: search_rag_knowledge_base(query="...")` を決定
 6. ツール関数 `search_rag_knowledge_base_cached()` が呼び出される
 7. キャッシュチェック → コレクション決定
-8. `embed_query(query)` で Dense ベクトル（768次元）を生成
+8. `embed_query(query)` で Dense ベクトル（3072次元）を生成
 9. （ハイブリッド検索有効時）`embed_sparse_query_unified(query)` でスパースベクトルを生成
 10. `search_collection()` で Qdrant にベクトル検索を実行
 11. （オプション）`rerank_results()` で Cohere Rerank を実行
@@ -284,7 +284,7 @@ flowchart TB
 
 | 関数名 | 概要 |
 |-------|------|
-| `embed_query(query)` | Gemini Embedding API で Dense ベクトル（768D）を生成 |
+| `embed_query(query)` | Gemini Embedding API で Dense ベクトル（3072D）を生成 |
 | `embed_sparse_query_unified(query)` | TF-IDF / BM25 系スパースベクトルを生成 |
 
 #### 検索実行関数（qdrant_client_wrapper.py）
@@ -455,7 +455,7 @@ def search_rag_knowledge_base_structured(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `query`, `collection_name`, `use_hybrid_search` |
-| **Process** | 1. `collection_name` が None の場合、`AgentConfig.RAG_DEFAULT_COLLECTION` を使用<br>2. `check_qdrant_health()` で接続確認<br>3. コレクションの存在確認<br>4. **`embed_query(query)` で Dense ベクトル（768D）を生成** ← Embedding 生成のコアステップ<br>5. `use_hybrid_search=True` の場合、**`embed_sparse_query_unified(query)` でスパースベクトルを生成**<br>6. `search_collection(client, collection_name, query_vector, sparse_vector, limit=20)` で候補を広く取得<br>7. スパースベクトルエラー時は Dense のみで再試行<br>8. `rerank_results(query, candidates, top_k, threshold=0.2)` で再評価<br>9. メトリクス記録 |
+| **Process** | 1. `collection_name` が None の場合、`AgentConfig.RAG_DEFAULT_COLLECTION` を使用<br>2. `check_qdrant_health()` で接続確認<br>3. コレクションの存在確認<br>4. **`embed_query(query)` で Dense ベクトル（3072D）を生成** ← Embedding 生成のコアステップ<br>5. `use_hybrid_search=True` の場合、**`embed_sparse_query_unified(query)` でスパースベクトルを生成**<br>6. `search_collection(client, collection_name, query_vector, sparse_vector, limit=20)` で候補を広く取得<br>7. スパースベクトルエラー時は Dense のみで再試行<br>8. `rerank_results(query, candidates, top_k, threshold=0.2)` で再評価<br>9. メトリクス記録 |
 | **Output** | `Union[List[Dict[str, Any]], str]`: 成功時は検索結果リスト、失敗時はエラー文字列 |
 
 **戻り値例（成功時）**:
@@ -488,7 +488,7 @@ def search_rag_knowledge_base_structured(
 
 #### 関数: `embed_query`
 
-**概要**: Gemini Embedding API を呼び出し、テキストクエリを Dense ベクトル（768次元浮動小数点配列）に変換する。これがベクトル検索の核となるベクトル表現である。
+**概要**: Gemini Embedding API を呼び出し、テキストクエリを Dense ベクトル（3072次元浮動小数点配列）に変換する。これがベクトル検索の核となるベクトル表現である。
 
 ```python
 def embed_query(query: str) -> List[float]
@@ -501,10 +501,12 @@ def embed_query(query: str) -> List[float]
 | 項目 | 内容 |
 |------|------|
 | **Input** | `query: str` |
-| **Process** | 1. Gemini Embedding API にテキストを送信<br>2. モデル（`text-embedding-004` 等）で 768次元の Dense ベクトルを生成<br>3. ベクトルを `List[float]` として返却 |
-| **Output** | `List[float]`: 768次元の Dense ベクトル。失敗時は `None` |
+| **Process** | 1. Gemini Embedding API にテキストを送信<br>2. モデル（`gemini-embedding-001`）で 3072次元の Dense ベクトルを生成<br>3. ベクトルを `List[float]` として返却 |
+| **Output** | `List[float]`: 3072次元の Dense ベクトル。失敗時は `None` |
 
 > 📝 **注意**: `embed_query` は `qdrant_client_wrapper.py` に実装されています。このモジュールのソースコードは本ドキュメント作成時に提供されていないため、内部実装の詳細は推定です。実装確認が必要です。
+
+> ⚠️ **次元数に関する注意（2026-02-09追記）**: 現在の `config.py` では `GeminiConfig.EMBEDDING_DIMS = 3072`、`QdrantConfig.DEFAULT_VECTOR_SIZE = 3072` に設定されています。ただし、`COLLECTION_EMBEDDINGS` に登録された旧コレクションは OpenAI Embedding（1536次元）で作成されたものが含まれます。現在の `embed_query()` は常に `provider="gemini"`（3072次元）を使用するため、OpenAI用コレクションに対して検索すると次元不一致エラーが発生するリスクがあります。詳細は改善計画 STEP 11 を参照してください。
 
 ---
 
@@ -552,7 +554,7 @@ def search_collection(
 |------------|------|-----------|------|
 | `client` | `QdrantClient` | - | Qdrant クライアントインスタンス |
 | `collection_name` | `str` | - | 検索対象コレクション名 |
-| `query_vector` | `List[float]` | - | Dense ベクトル（768D） |
+| `query_vector` | `List[float]` | - | Dense ベクトル（3072D） |
 | `sparse_vector` | `Any` | `None` | スパースベクトル（None の場合は Dense のみ） |
 | `limit` | `int` | `20` | 取得件数上限 |
 
@@ -652,7 +654,7 @@ for event in agent.execute_turn(prompt):
 #       → ["レベッカ", "クローン"]
 #    b. Gemini LLM が Thought → Action を決定
 #    c. search_rag_knowledge_base_cached(query="レベッカ・クローン", session_id="...")
-#    d. embed_query("レベッカ・クローン") → [0.012, -0.034, ...] (768D)
+#    d. embed_query("レベッカ・クローン") → [0.012, -0.034, ...] (3072D)
 #    e. embed_sparse_query_unified("レベッカ・クローン") → sparse vector
 #    f. search_collection(...) → Qdrant検索
 #    g. rerank_results(...) → 再評価
@@ -712,6 +714,7 @@ __all__ = [
 | バージョン | 日付 | 変更内容 |
 |-----------|------|---------|
 | 1.0 | 2026-02-09 | 初版作成: ユーザークエリ入力〜Embedding 処理の詳細設計 |
+| 1.1 | 2026-02-09 | 改善Phase1: Dense ベクトル次元数を768→3072に修正（全12箇所）、Embeddingモデル名を `gemini-embedding-001` に修正、OpenAIコレクション混在リスクの注意書き追加 |
 
 ---
 
