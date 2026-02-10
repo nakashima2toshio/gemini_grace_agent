@@ -290,19 +290,19 @@ Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度
 
 > **リスク**: 🟡 中 | **対象**: `agent_tools.py`, `agent_service.py` | **依存**: STEP 7, STEP 8
 
-- [ ] **9-1.** 現在の3つのエントリポイントの使用箇所を調査
-  ```bash
-  grep -rn "search_rag_knowledge_base_cached\|search_rag_knowledge_base_structured\|search_rag_knowledge_base[^_]" *.py services/*.py
-  ```
-- [ ] **9-2.** 整理方針を決定:
+- [x] **9-1.** 現在の3つのエントリポイントの使用箇所を調査
+  - `search_rag_knowledge_base`: TOOLS_MAP登録 + Gemini tools API定義用。実行時は agent_service が `search_rag_knowledge_base_cached` にインターセプト
+  - `search_rag_knowledge_base_structured`: 内部検索エンジン（5箇所から呼び出し）
+  - `search_rag_knowledge_base_cached`: メインエントリポイント（agent_service L310 から呼び出し）
+- [x] **9-2.** 整理方針を決定:
   - `search_rag_knowledge_base_cached()` → **メインエントリポイント**（維持）
-  - `search_rag_knowledge_base_structured()` → **内部関数**（`_search_structured` にリネーム検討）
-  - `search_rag_knowledge_base()` → **Legacy ラッパー**（フォールバック削除、薄いラッパー化）
-- [ ] **9-3.** `search_rag_knowledge_base()` の独自フォールバックロジック（L294-322）を削除
+  - `search_rag_knowledge_base_structured()` → **内部関数**（維持、将来的にリネーム検討）
+  - `search_rag_knowledge_base()` → **薄いラッパー**（フォールバック削除済み）
+- [x] **9-3.** `search_rag_knowledge_base()` の独自フォールバックロジック（86行→23行に簡素化）を削除
   - `search_rag_knowledge_base_cached()` が全コレクション並列検索でカバーしているため
-- [ ] **9-4.** フォーマット処理の統一:
-  - `search_rag_knowledge_base()` 内のフォーマット処理（L327-353）を `_format_results()` に統一
-- [ ] **9-5.** `TOOLS_MAP` の確認: LLMが直接呼ぶツール名 `search_rag_knowledge_base` の動作に影響がないこと
+- [x] **9-4.** フォーマット処理の統一:
+  - `search_rag_knowledge_base()` 内のフォーマット処理を `_format_results()` に統一
+- [x] **9-5.** `TOOLS_MAP` の確認: 関数名・シグネチャ維持で影響なし
 - [ ] **9-6.** 動作確認:
   - [ ] `search_rag_knowledge_base_cached` 経由の通常検索が正常
   - [ ] Legacy 呼び出しパスが壊れていないこと
@@ -314,14 +314,14 @@ Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度
 
 > **リスク**: 🟡 中 | **対象**: `agent_service.py` | **依存**: STEP 9
 
-- [ ] **10-1.** 現状の問題を再確認:
+- [x] **10-1.** 現状の問題を再確認:
   - KeywordExtractor で抽出 → LLMへヒント → LLMが独自にクエリ生成
   - 抽出キーワードが検索クエリに含まれる保証なし
-- [ ] **10-2.** 改善方針を選択:
-  - [ ] **案A**: LLM生成クエリにキーワードを強制付加
-  - [ ] **案B**: 検索結果のフィルタリングにキーワードを活用（`filter_results_by_keywords` 復活）
-  - [ ] **案C**: 現状維持（LLMのプロンプト改善のみで対応）
-- [ ] **10-3.** 選択した方針で実装
+- [x] **10-2.** 改善方針を選択:
+  - [ ] **案A**: LLM生成クエリにキーワードを強制付加 → リスク大（クエリがノイジー）
+  - [ ] **案B**: 検索結果のフィルタリングにキーワードを活用 → recall低下リスク
+  - [x] **案C**: 現状維持＋プロンプト改善（採用）
+- [x] **10-3.** 案Cで実装: 「固有名詞・専門用語は原文のまま含める」指示を追加
 - [ ] **10-4.** 効果測定: 同一クエリで改善前/後の検索結果を比較
 - [ ] **10-5.** 完了コミット
 
@@ -331,25 +331,14 @@ Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度
 
 > **リスク**: ⚪ 低（将来的なバグ防止） | **対象**: `qdrant_client_wrapper.py`, `agent_tools.py` | **依存**: STEP 7
 
-- [ ] **11-1.** 現在登録されている全コレクションの次元数を確認
-  ```python
-  # 調査用スクリプト
-  for col in client.get_collections().collections:
-      info = client.get_collection(col.name)
-      print(f"{col.name}: {info.config.params.vectors}")
-  ```
-- [ ] **11-2.** OpenAI用コレクション（1536次元）が実際に使用されているか確認
-- [ ] **11-3.** 使用されている場合: コレクションごとのプロバイダー判定ロジックを実装
-  ```python
-  def get_provider_for_collection(collection_name: str) -> str:
-      if collection_name in COLLECTION_EMBEDDINGS:
-          return "openai"
-      elif collection_name in COLLECTION_EMBEDDINGS_GEMINI:
-          return "gemini"
-      else:
-          return DEFAULT_EMBEDDING_PROVIDER
-  ```
-- [ ] **11-4.** 使用されていない場合: `COLLECTION_EMBEDDINGS` の旧定義にdeprecatedコメントを追加
+- [x] **11-1.** 現在登録されている全コレクションの次元数を確認
+  - `COLLECTION_EMBEDDINGS` (OpenAI 1536次元): 定義のみ、検索ロジックで未参照
+  - `COLLECTION_EMBEDDINGS_GEMINI` (3072次元): 定義のみ、検索ロジックで未参照
+  - 現在の検索は `DEFAULT_EMBEDDING_PROVIDER=gemini` (3072次元) を使用
+- [x] **11-2.** OpenAI用コレクション（1536次元）が実際に使用されているか確認
+  - `COLLECTION_EMBEDDINGS` はプロジェクト内で定義・エクスポートのみ。検索パスで参照なし
+- [ ] ~~**11-3.** 使用されている場合: プロバイダー判定ロジックを実装~~ → 不要
+- [x] **11-4.** 使用されていない場合: `COLLECTION_EMBEDDINGS` の旧定義にdeprecatedコメントを追加
 - [ ] **11-5.** 完了コミット
 
 ---
@@ -366,9 +355,9 @@ Phase 4 (STEP 9-10): 設計改善 — アーキテクチャ整理・検索精度
 | 3 | 6 | ヘルスチェック・存在確認キャッシュ | 🔴 | ✅ コード修正済み（動作確認・コミット待ち） |
 | 3 | 7 | Embedding重複排除 | 🔴 | ✅ コード修正済み（動作確認・コミット待ち） |
 | 3 | 8 | Sparse フォールバック一元化 | 🟡 | ✅ コード修正済み（動作確認・コミット待ち） |
-| 4 | 9 | 検索エントリポイント整理 | 🟡 | ☐ 未着手 |
-| 4 | 10 | キーワード抽出連携強化 | 🟡 | ☐ 未着手 |
-| 4 | 11 | Embedding次元数不整合対応 | ⚪ | ☐ 未着手 |
+| 4 | 9 | 検索エントリポイント整理 | 🟡 | ✅ コード修正済み（動作確認・コミット待ち） |
+| 4 | 10 | キーワード抽出連携強化 | 🟡 | ✅ 案C採用・プロンプト微修正済み（動作確認・コミット待ち） |
+| 4 | 11 | Embedding次元数不整合対応 | ⚪ | ✅ DEPRECATEDコメント追加済み（コミット待ち） |
 
 ---
 

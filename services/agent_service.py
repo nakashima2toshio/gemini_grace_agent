@@ -253,7 +253,14 @@ class ReActAgent:
                 keywords = self.keyword_extractor.extract(user_input, top_n=5)
                 if keywords:
                     keywords_str = ", ".join(keywords)
-                    augmented_input = f"""{user_input}\n\n【重要: 検索クエリ作成の指示】\n以下の抽出された重要キーワードを、必ず検索クエリに含めてください。\n重要キーワード: {keywords_str}"""
+                    # Phase 4 STEP 10 改善: プロンプトを具体化
+                    augmented_input = (
+                        f"{user_input}\n\n"
+                        f"【重要: 検索クエリ作成の指示】\n"
+                        f"以下の抽出された重要キーワードを、検索クエリに含めてください。\n"
+                        f"特に固有名詞・専門用語は原文のまま含めること。\n"
+                        f"重要キーワード: {keywords_str}"
+                    )
                     logger.info(f"Augmented input with keywords: {keywords_str}")
                     yield {"type": "log", "content": f"""🔑 **Extracted Keywords:** {keywords_str}
 📖 **説明**: 質問から重要なキーワードを自動抽出しました。
