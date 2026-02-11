@@ -94,6 +94,10 @@ PROVIDER_DEFAULTS = {
 }
 
 # コレクション固有の埋め込み設定（レガシー: OpenAI用）
+# [DEPRECATED] Phase 4 STEP 11: 現在の検索は DEFAULT_EMBEDDING_PROVIDER=gemini (3072次元) を使用。
+# これらの OpenAI 1536次元コレクションが Qdrant に残存している場合、次元数不整合で検索失敗する。
+# 旧コレクション (qa_corpus, qa_cc_news_*, qa_livedoor_*) は Qdrant から削除済みか確認すること。
+# 新規登録は COLLECTION_EMBEDDINGS_GEMINI または PROVIDER_DEFAULTS を使用すること。
 COLLECTION_EMBEDDINGS = {
     "qa_corpus"             : {"model": "text-embedding-3-small", "dims": 1536},
     "qa_cc_news_a02_llm"    : {"model": "text-embedding-3-small", "dims": 1536},

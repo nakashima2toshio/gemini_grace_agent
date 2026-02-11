@@ -286,92 +286,30 @@ def rerank_results(
         return sorted_results[:top_k]
 
 
-# ★変更: use_hybrid_search パラメータを追加
+# Phase 4 STEP 9 整理: 薄いラッパーに簡素化
+# ※ agent_service.py では search_rag_knowledge_base_cached() にインターセプトされるため
+#    この関数が直接呼ばれるケースは限定的（Gemini tools API の関数定義として必要）
 def search_rag_knowledge_base(
         query: str,
         collection_name: Optional[str] = None,
-        use_hybrid_search: bool = True  # ★追加
+        use_hybrid_search: bool = True
 ) -> str:
     """
-    Qdrantデータベースから専門的な知識を検索します（Legacy String Output版）。
-
-    検索結果が見つからない場合、自動的に他のコレクションもフォールバック検索します。
+    Qdrantデータベースから専門的な知識を検索します。
 
     Args:
         query: 検索クエリ
         collection_name: 検索対象のコレクション名（省略時はデフォルト）
         use_hybrid_search: ハイブリッド検索（Sparse + Dense）を使用するか（デフォルト: True）
     """
-    # デフォルトコレクションの解決（表示用）
     effective_collection = collection_name if collection_name else AgentConfig.RAG_DEFAULT_COLLECTION
 
-    # フォールバック検索を有効にするかどうか
-    enable_fallback = True  # デフォルトでフォールバックを有効化
-
-    # ★変更: use_hybrid_search パラメータを渡す
     results = search_rag_knowledge_base_structured(query, collection_name, use_hybrid_search=use_hybrid_search)
-
-    # フォールバック検索: 結果が見つからない場合、他のコレクションも試す
-    if enable_fallback and isinstance(results, str) and "NO_RAG_RESULT" in results:
-        logger.info(
-            f"Fallback search: 最初のコレクション '{effective_collection}' で結果なし。他のコレクションを検索します...")
-
-        try:
-            # Phase 3 STEP 6 改善: コレクション一覧キャッシュ化
-            all_collections = get_existing_collections_cached()
-
-            # 優先順位を設定: custom_upload, qa_pairs系を優先
-            priority_collections = [c for c in all_collections if "custom_upload" in c or "qa_pairs" in c]
-            other_collections = [c for c in all_collections if
-                                 c not in priority_collections and c != effective_collection]
-
-            # 優先コレクション → その他のコレクションの順で検索
-            fallback_collections = priority_collections + other_collections
-
-            for fallback_col in fallback_collections[:3]:  # 最大3つまで試行
-                logger.info(f"  → フォールバック検索: {fallback_col}")
-                # ★変更: use_hybrid_search パラメータを渡す
-                fallback_results = search_rag_knowledge_base_structured(query, fallback_col,
-                                                                        use_hybrid_search=use_hybrid_search)
-
-                if not isinstance(fallback_results, str):  # 成功した場合
-                    logger.info(f"✓ フォールバック検索成功: {fallback_col} で結果を発見")
-                    effective_collection = fallback_col
-                    results = fallback_results
-                    break
-        except Exception as e:
-            logger.error(f"フォールバック検索エラー: {e}")
 
     if isinstance(results, str):  # Error or No Result strings
         return results
 
-    formatted_results: List[str] = []
-    for i, res in enumerate(results, 1):
-        score: float = res.get("score", 0.0)
-        original_score: float = res.get("original_score", 0.0)
-        rerank_score: float = res.get("rerank_score", 0.0)
-        payload: Dict[str, Any] = res.get("payload", {})
-        q: str = payload.get("question", "N/A")
-        a: str = payload.get("answer", "N/A")
-        # source: str = payload.get("source", "unknown") # ファイル名は使用しない
-
-        # スコア表示を改善
-        if original_score > 0:
-            score_info = f"Rerank: {rerank_score:.4f} (Original: {original_score:.4f})"
-        else:
-            score_info = f"{score:.4f}"
-
-        formatted_results.append(
-            f"--- Result {i} [Score: {score_info}] ---\n"
-            f"Q: {q}\n"
-            f"A: {a}\n"
-            f"Source: {effective_collection}\n"
-        )
-
-    if not formatted_results:
-        return "[[NO_RAG_RESULT_LOW_SCORE]] 検索結果は見つかりましたが、関連性スコアが低すぎたため採用しませんでした。"
-
-    return "\n".join(formatted_results)
+    return _format_results(results, effective_collection)
 
 
 # ★変更: use_hybrid_search パラメータを追加
