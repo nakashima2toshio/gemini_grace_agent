@@ -4,30 +4,42 @@
 """
 grace_chat_page.py - 自律型エージェント チャット画面
 ===================================================
-GRACE自律型アーキテクチャを使用したエージェントとの対話インターフェース。
+GRACE (Planner + Executor) アーキテクチャを使用したエージェントとの対話インターフェース。
+
+改修(2): ReActAgent → Planner/Executor 接続
 """
 
 import os
 import logging
 import streamlit as st
 import pandas as pd
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Generator
 from qdrant_client import QdrantClient
 
 # Configuration and Services
 from config import AgentConfig, GeminiConfig
-from services.agent_service import ReActAgent, get_available_collections_from_qdrant_helper
+
+# --- STEP 2-1: import変更 ---
+# 旧: from services.agent_service import ReActAgent, get_available_collections_from_qdrant_helper
+from services.agent_service import get_available_collections_from_qdrant_helper  # これだけ残す
+from grace import (
+    Planner, create_planner,
+    Executor, create_executor,
+    ExecutionPlan, ExecutionState, ExecutionResult,
+    StepResult, StepStatus,
+    GraceConfig, get_config as get_grace_config,
+)
 from qdrant_client_wrapper import get_qdrant_client
 
 logger = logging.getLogger(__name__)
 
 
 def show_grace_chat_page():
-    st.title("🧠 自律型エージェント (New)")
-    st.caption("Goal-Reasoning-Action-Critique-Execute Architecture")
+    st.title("🧠 自律型エージェント (GRACE)")
+    st.caption("Goal-Reasoning-Action-Critique-Execute Architecture — Planner + Executor")
 
     # -------------------------------------------------------------------------
-    # コレクションデータの表示エリア (Modified)
+    # コレクションデータの表示エリア (変更なし)
     # -------------------------------------------------------------------------
     with st.expander("📊 コレクションデータの表示", expanded=False):
         st.markdown("登録されているコレクションから、質問と回答のデータを100件表示します。")
@@ -47,7 +59,7 @@ def show_grace_chat_page():
 
             if target_collection:
                 try:
-                    # Qdrantクライアント接続（シングルトン: Phase 2 STEP 4 改善）
+                    # Qdrantクライアント接続（シングルトン）
                     client = get_qdrant_client()
 
                     st.caption(f"📊 コレクション: **{target_collection}** から100件を表示")
@@ -87,7 +99,7 @@ def show_grace_chat_page():
                             df_preview,
                             width='stretch',
                             hide_index=True,
-                            height=600,  # スクロール可能な高さ
+                            height=600,
                             column_config={
                                 "ID"      : st.column_config.NumberColumn("ID", width="small"),
                                 "Question": st.column_config.TextColumn("質問 (Question)", width="medium"),
@@ -110,7 +122,7 @@ def show_grace_chat_page():
 
     # サイドバー設定
     with st.sidebar:
-        st.header("⚙️ 自律型エージェント設定")
+        st.header("⚙️ GRACE エージェント設定")
 
         # モデル選択
         selected_model = st.selectbox(
@@ -120,39 +132,37 @@ def show_grace_chat_page():
             if AgentConfig.MODEL_NAME in GeminiConfig.AVAILABLE_MODELS else 0
         )
 
-        # コレクション一覧の取得
+        # コレクション一覧の取得（表示用・参考情報）
         all_collections = get_available_collections_from_qdrant_helper()
 
         if not all_collections:
             st.warning("利用可能なコレクションが見つかりません。Qdrantサーバーを確認してください。")
             all_collections = ["(None)"]
 
-        # 検索対象コレクションの選択（マルチセレクト）
+        # 検索対象コレクションの表示（GRACEは全コレクション自動検索）
         selected_collections = st.multiselect(
-            "検索対象コレクション (Target Collections)",
+            "検索対象コレクション (参考表示)",
             options=all_collections,
             default=all_collections if all_collections != ["(None)"] else [],
-            help="GRACEエージェントが検索ツールを使用する際に、候補として提示されるコレクションです。"
+            help="GRACEエージェントはQdrant上の全コレクションを自動検索します。"
         )
 
-        # ★追加: ハイブリッド検索（Sparse + Dense）の有効化チェックボックス
+        # ハイブリッド検索（表示のみ・GRACE側デフォルトに任せる）
         use_hybrid_search = st.checkbox(
             "⚡ ハイブリッド検索 (Sparse + Dense)",
             value=True,
-            help="キーワードベースのSparse検索を併用して検索精度を向上させます"
+            help="GRACEエージェント内部のデフォルト動作に従います",
+            disabled=True  # GRACE側のデフォルトに任せるため無効化
         )
 
+        # --- STEP 2-4: session_state キー整理 ---
         if st.button("🗑️ 会話履歴をクリア"):
             st.session_state.grace_chat_history = []
-            # current_collections もクリアして再初期化を強制
-            if "grace_current_collections" in st.session_state:
-                del st.session_state["grace_current_collections"]
-            # current_model もクリア
-            if "grace_current_model" in st.session_state:
-                del st.session_state["grace_current_model"]
-            # ★追加: grace_current_hybrid_search もクリア
-            if "grace_current_hybrid_search" in st.session_state:
-                del st.session_state["grace_current_hybrid_search"]
+            # Planner / Executor をクリアして再初期化を強制
+            for key in ["grace_planner", "grace_executor",
+                        "grace_current_collections", "grace_current_model"]:
+                if key in st.session_state:
+                    del st.session_state[key]
             st.rerun()
 
         # キャッシュリセットボタン
@@ -188,18 +198,9 @@ def show_grace_chat_page():
         st.session_state.grace_session_id = str(uuid.uuid4())
         logger.info(f"New GRACE session ID created: {st.session_state.grace_session_id}")
 
-    # 前回のコレクション選択状態・モデルと比較
-    current_collections_key = "grace_current_collections"
+    # --- STEP 2-2: 初期化ロジック変更 ---
     current_model_key = "grace_current_model"
-    current_hybrid_key = "grace_current_hybrid_search"  # ★追加
     should_reinitialize = False
-
-    # selected_collections はリストなのでソートして比較
-    if current_collections_key not in st.session_state:
-        should_reinitialize = True
-    elif sorted(st.session_state[current_collections_key]) != sorted(selected_collections):
-        should_reinitialize = True
-        st.toast("検索対象コレクションが変更されたため、エージェントを再設定します。")
 
     # モデルの変更チェック
     if current_model_key not in st.session_state:
@@ -208,28 +209,26 @@ def show_grace_chat_page():
         should_reinitialize = True
         st.toast(f"モデルが変更されました: {selected_model}")
 
-    # ★追加: ハイブリッド検索設定の変更チェック
-    if current_hybrid_key not in st.session_state:
-        should_reinitialize = True
-    elif st.session_state[current_hybrid_key] != use_hybrid_search:
-        should_reinitialize = True
-        st.toast(f"ハイブリッド検索: {'有効' if use_hybrid_search else '無効'}")
-
-    if should_reinitialize or "grace_agent" not in st.session_state or st.session_state.grace_agent is None:
+    if should_reinitialize or "grace_planner" not in st.session_state or "grace_executor" not in st.session_state:
         try:
-            # ★変更: use_hybrid_search パラメータを追加
-            st.session_state.grace_agent = ReActAgent(
-                selected_collections,
-                selected_model,
-                session_id=st.session_state.grace_session_id,
-                use_hybrid_search=use_hybrid_search  # ★追加
+            # GraceConfig を取得し、UIで選択したモデルを反映
+            grace_config = get_grace_config()
+            grace_config.llm.model = selected_model
+
+            # Planner + Executor を初期化
+            st.session_state.grace_planner = create_planner(
+                config=grace_config,
+                model_name=selected_model
             )
-            st.session_state[current_collections_key] = selected_collections
+            st.session_state.grace_executor = create_executor(
+                config=grace_config
+            )
+
             st.session_state[current_model_key] = selected_model
-            st.session_state[current_hybrid_key] = use_hybrid_search  # ★追加
-            st.toast("GRACEエージェントの準備が完了しました（キャッシュ+並列検索）。")
+            st.toast("GRACE Planner + Executor の準備が完了しました。")
         except Exception as e:
-            st.error(f"エージェントの初期化に失敗しました: {e}")
+            st.error(f"GRACE エージェントの初期化に失敗しました: {e}")
+            logger.error(f"GRACE init failed: {e}", exc_info=True)
             return
 
     # チャット履歴の表示
@@ -237,50 +236,131 @@ def show_grace_chat_page():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # ユーザー入力処理
+    # --- STEP 2-3: ユーザー入力処理 + イベントループ変更 ---
     if prompt := st.chat_input("質問を入力してください..."):
         st.chat_message("user").markdown(prompt)
         st.session_state.grace_chat_history.append({"role": "user", "content": prompt})
 
         with st.chat_message("assistant"):
-            st_expander_placeholder = st.empty()
-
-            # 思考ログを蓄積するリスト
-            current_thought_log_content: List[str] = []
-
-            response_text_placeholder = st.empty()
-
             final_response_content = ""
 
             try:
-                # エージェントからイベントを取得
-                for event in st.session_state.grace_agent.execute_turn(prompt):
-                    if event["type"] == "log":
-                        current_thought_log_content.append(event["content"])
-                        with st_expander_placeholder.expander("🤔 エージェントの思考プロセス", expanded=True):
-                            for log_entry in current_thought_log_content:
-                                st.markdown(log_entry)
-                                st.divider()
-                    elif event["type"] == "tool_call":
-                        current_thought_log_content.append(
-                            f"🛠️ **Tool Call:** `{event['name']}`\nArgs: `{event['args']}`")
-                        with st_expander_placeholder.expander("🤔 エージェントの思考プロセス", expanded=True):
-                            with st.spinner(f"ツールを実行中: {event['name']}..."):
-                                for log_entry in current_thought_log_content:
+                # ============================================================
+                # Phase 1: Plan — 計画策定
+                # ============================================================
+                with st.expander("📋 計画策定 (Plan)", expanded=True):
+                    with st.spinner("計画を生成中..."):
+                        plan: ExecutionPlan = st.session_state.grace_planner.create_plan(prompt)
+
+                    # 計画の表示
+                    st.markdown(f"**目標**: {plan.original_query}")
+                    st.markdown(f"**複雑度**: {plan.complexity:.1f} | **ステップ数**: {plan.estimated_steps}")
+                    for step in plan.steps:
+                        deps = f" (依存: {step.depends_on})" if step.depends_on else ""
+                        st.markdown(f"  {step.step_id}. **[{step.action}]** {step.description}{deps}")
+
+                # ============================================================
+                # Phase 2-4: Execute — 実行 (Confidence/Intervention/Replan)
+                # ============================================================
+                with st.expander("⚡ 実行 (Execute)", expanded=True):
+                    executor: Executor = st.session_state.grace_executor
+                    gen = executor.execute_plan_generator(plan)
+
+                    # 思考プロセスログ蓄積用
+                    thought_log: List[str] = []
+                    thought_container = st.container()
+
+                    execution_result: Optional[ExecutionResult] = None
+
+                    try:
+                        while True:
+                            yielded = next(gen)
+
+                            if isinstance(yielded, ExecutionState):
+                                # --- ステップ完了/一時停止の通知 ---
+                                state: ExecutionState = yielded
+                                sid = state.current_step_id
+                                status = state.step_statuses.get(sid, "unknown")
+
+                                # 信頼度を表示（結果がある場合）
+                                conf_str = ""
+                                if sid in state.step_results:
+                                    conf_str = f" (信頼度: {state.step_results[sid].confidence:.2f})"
+
+                                status_icon = {
+                                    StepStatus.SUCCESS: "✅",
+                                    StepStatus.FAILED: "❌",
+                                    StepStatus.SKIPPED: "⏭️",
+                                    StepStatus.RUNNING: "🔄",
+                                    StepStatus.PENDING: "⏳",
+                                }.get(status, "❓")
+
+                                log_entry = f"Step {sid}: {status_icon} {status.value if hasattr(status, 'value') else status}{conf_str}"
+                                thought_log.append(log_entry)
+
+                                with thought_container:
                                     st.markdown(log_entry)
-                                    st.divider()
-                    elif event["type"] == "tool_result":
-                        current_thought_log_content.append(f"📝 **Tool Result:**\n{event['content']}")
-                        with st_expander_placeholder.expander("🤔 エージェントの思考プロセス", expanded=True):
-                            for log_entry in current_thought_log_content:
-                                st.markdown(log_entry)
-                                st.divider()
-                    elif event["type"] == "final_answer":
-                        final_response_content = event["content"]
-                        response_text_placeholder.markdown(final_response_content)
+
+                                # 介入リクエストがある場合
+                                if state.is_paused and state.intervention_request:
+                                    req = state.intervention_request
+                                    st.warning(f"⚠️ 確認が必要: {req.message}")
+                                    # Phase 3 HITL: 現時点では自動続行
+                                    st.info("（自動続行します）")
+
+                            elif isinstance(yielded, dict):
+                                # --- ツール実行結果などのイベント ---
+                                event_type = yielded.get("type", "")
+
+                                if event_type == "log":
+                                    log_entry = yielded["content"]
+                                    thought_log.append(log_entry)
+                                    with thought_container:
+                                        st.markdown(log_entry)
+                                        st.divider()
+
+                                elif event_type == "tool_call":
+                                    log_entry = f"🛠️ **Tool Call:** `{yielded.get('name', '')}`\nArgs: `{yielded.get('args', '')}`"
+                                    thought_log.append(log_entry)
+                                    with thought_container:
+                                        st.markdown(log_entry)
+
+                                elif event_type == "tool_result":
+                                    content = yielded.get("content", "")
+                                    display = content[:500] + "..." if len(content) > 500 else content
+                                    log_entry = f"📝 **Tool Result:**\n{display}"
+                                    thought_log.append(log_entry)
+                                    with thought_container:
+                                        st.markdown(log_entry)
+                                        st.divider()
+
+                                elif event_type == "final_answer":
+                                    # Legacy Agent 経由の最終回答
+                                    final_response_content = yielded.get("content", "")
+
+                    except StopIteration as e:
+                        # Generator の return 値 = ExecutionResult
+                        execution_result = e.value
+
+                # ============================================================
+                # 最終回答の表示
+                # ============================================================
+                if execution_result and execution_result.final_answer:
+                    final_response_content = execution_result.final_answer
+
+                    # メタ情報の表示
+                    with st.expander("📊 実行結果サマリ", expanded=False):
+                        st.markdown(f"**ステータス**: {execution_result.overall_status}")
+                        st.markdown(f"**全体信頼度**: {execution_result.overall_confidence:.2f}")
+                        st.markdown(f"**リプラン回数**: {execution_result.replan_count}")
+                        if execution_result.total_execution_time_ms:
+                            st.markdown(f"**実行時間**: {execution_result.total_execution_time_ms}ms")
 
                 if final_response_content:
-                    st.session_state.grace_chat_history.append({"role": "assistant", "content": final_response_content})
+                    st.markdown(final_response_content)
+                    st.session_state.grace_chat_history.append(
+                        {"role": "assistant", "content": final_response_content}
+                    )
                 else:
                     st.warning("エージェントからの応答がありませんでした。")
 

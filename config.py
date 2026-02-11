@@ -415,6 +415,7 @@ class GeminiConfig:
 
     # 利用可能なモデル一覧
     AVAILABLE_MODELS: List[str] = [
+        "gemini-3-flash-preview",          # デフォルト（Gemini 3 Flash）
         "gemini-2.5-flash",
         "gemini-3-pro-preview",
         "gemini-3-pro-image-preview",
@@ -424,7 +425,7 @@ class GeminiConfig:
     ]
 
     # デフォルトモデル
-    DEFAULT_MODEL: str = "gemini-2.5-flash"
+    DEFAULT_MODEL: str = "gemini-3-flash-preview"
 
     # Embeddingモデル
     EMBEDDING_MODEL: str = "gemini-embedding-001"
@@ -440,6 +441,7 @@ class GeminiConfig:
 
     # モデル料金（1000トークンあたりのドル）
     MODEL_PRICING: Dict[str, Dict[str, float]] = {
+        "gemini-3-flash-preview": {"input": 0.0005, "output": 0.003},  # $0.50/$3.00 per 1M tokens
         "gemini-3-pro-preview": {"input": 0.002, "output": 0.012},
         "gemini-3-pro-image-preview": {"input": 0.002, "output": 0.012},
         "gemini-2.5-flash-preview": {"input": 0.00015, "output": 0.0006},
@@ -450,6 +452,7 @@ class GeminiConfig:
 
     # モデル制限
     MODEL_LIMITS: Dict[str, Dict[str, int]] = {
+        "gemini-3-flash-preview": {"max_input_tokens": 1000000, "max_output_tokens": 8192},
         "gemini-3-pro-preview": {"max_input_tokens": 1000000, "max_output_tokens": 64000},
         "gemini-3-pro-image-preview": {"max_input_tokens": 65000, "max_output_tokens": 32000},
         "gemini-2.5-flash-preview": {"max_input_tokens": 1000000, "max_output_tokens": 64000},

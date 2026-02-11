@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 class LLMConfig(BaseModel):
     """LLM設定"""
     provider: str = "gemini"
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3-flash-preview"
     temperature: float = 0.7
     max_tokens: int = 4096
     timeout: int = 30
