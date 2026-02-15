@@ -41,53 +41,15 @@ import streamlit as st
 # UIページをインポート
 from ui.pages import (
     show_system_explanation_page,
+    show_rag_download_page,
+    show_qa_generation_page,
+    show_qdrant_registration_page,
+    show_qdrant_page,
     show_qdrant_search_page,
     show_grace_chat_page,
 )
 from ui.pages.agent_chat_page import show_agent_chat_page
 from ui.pages.log_viewer_page import show_log_viewer_page
-
-
-# --- 新規ページ（仮実装） ---
-def show_rag_data_creation_page():
-    """RAGデータ作成ページ"""
-    st.header("📄 RAGデータ作成")
-    st.divider()
-    st.markdown(
-        """
-        ### RAGデータ作成について
-
-        このページでは、RAG（Retrieval-Augmented Generation）に使用するデータを作成します。
-
-        **主な機能（予定）：**
-        - ドキュメントの読み込みとチャンク分割
-        - エンベディングの生成
-        - Qdrantへのデータ登録
-
-        > ※ 現在、実装準備中です。
-        """
-    )
-
-
-def show_qdrant_crud_page():
-    """QdrantのCRUDページ"""
-    st.header("🗄️ QdrantのCRUD")
-    st.divider()
-    st.markdown(
-        """
-        ### Qdrant CRUD操作について
-
-        このページでは、Qdrantベクトルデータベースに対するCRUD操作を行います。
-
-        **主な機能（予定）：**
-        - **Create**: コレクション作成、ポイント追加
-        - **Read**: コレクション一覧、ポイント検索・取得
-        - **Update**: ポイントのペイロード更新
-        - **Delete**: ポイント削除、コレクション削除
-
-        > ※ 現在、実装準備中です。
-        """
-    )
 
 
 def main():
@@ -108,36 +70,43 @@ def main():
         page = st.radio(
             "機能選択",
             options=[
-                "explanation",
-                "qdrant_search",
+                "explanation", # <-- Moved to top
                 "agent_chat",
                 "grace_chat",
                 "log_viewer",
-                "rag_data_creation",
-                "qdrant_crud",
+                "rag_download",
+                "qa_generation",
+                "qdrant_registration",
+                "show_qdrant",
+                "qdrant_search",
             ],
             format_func=lambda x: {
-                "explanation": "📖 説明",
-                "qdrant_search": "🔎 Qdrant検索",
-                "agent_chat": "🤖 Agent(ReAct+Reflection)",
-                "grace_chat": "🧠 Agent(Plan+Executor)",
+                "explanation": "📖 説明", # <-- Label for explanation
+                "agent_chat": "🤖 エージェント対話 (ReAct+Reflection)",
+                "grace_chat": "🧠 自律型エージェント (Agent)",
                 "log_viewer": "📊 未回答ログ",
-                "rag_data_creation": "📄 RAGデータ作成",
-                "qdrant_crud": "🗄️ QdrantのCRUD",
+                "rag_download": "📥 RAGデータダウンロード",
+                "qa_generation": "🤖 Q/A生成",
+                "qdrant_registration": "📥 CSVデータ登録",
+                "show_qdrant": "🗄️ Qdrantデータ管理",
+                "qdrant_search": "🔎 Qdrant検索",
             }[x],
             label_visibility="collapsed",
         )
         st.markdown("全ソースは： [GitHub: nakashima2toshio/gemini_agent_rag](https://github.com/nakashima2toshio/gemini_agent_rag)")
-        st.divider()
+        st.divider() # Removed one of the two consecutive dividers
+
 
     # 選択された画面を表示
     page_mapping = {
-        "explanation": show_system_explanation_page,
         "agent_chat": show_agent_chat_page,
         "grace_chat": show_grace_chat_page,
         "log_viewer": show_log_viewer_page,
-        "rag_data_creation": show_rag_data_creation_page,
-        "qdrant_crud": show_qdrant_crud_page,
+        "explanation": show_system_explanation_page,
+        "rag_download": show_rag_download_page,
+        "qa_generation": show_qa_generation_page,
+        "qdrant_registration": show_qdrant_registration_page,
+        "show_qdrant": show_qdrant_page,
         "qdrant_search": show_qdrant_search_page,
     }
     page_mapping[page]()
