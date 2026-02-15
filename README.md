@@ -12,6 +12,10 @@
 
 ## （自律型Agent）grace_chat_page.py
 
+画面： agent_rag.py
+
+![image.png](assets/image.png)
+
 個々のドキュメントは、
 機能ディレクトリー/doc/*.md を参照あれ。
 
