@@ -1,3 +1,21 @@
+Agent
+
+
+
+Chunk
+
+
+
+Qa_Pair
+
+
+
+Test:
+
+
+
+
+
 実行コマンド：
 ./start_celery.sh stop
 ./start_celery.sh restart -w 16

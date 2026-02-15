@@ -1,3 +1,15 @@
+# Agent RAG (Gemini) プロジェクト
+
+> **はじめにお読みください**　
+>
+>
+> | ドキュメント                                                            | 説明                                                          |
+> | ----------------------------------------------------------------------- | ------------------------------------------------------------- |
+> | [環境構築手順書 (readme_make_env.md)](./readme_make_env.md)             | Mac向けの環境構築（Python / Docker / Celery / API キー設定）  |
+> | [RAG ツール使用ガイド (readme_usage_tools.md)](./readme_usage_tools.md) | チャンク作成 → Q/A 生成・Qdrant 登録 → Agent 検索の操作手順 |
+
+---
+
 ## （自律型Agent）grace_chat_page.py
 
 個々のドキュメントは、
