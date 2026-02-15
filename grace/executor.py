@@ -798,12 +798,27 @@ class Executor:
         )
         logger.info(f"[_llm_calculate_step_confidence] Constructed ConfidenceFactors: {confidence_factors}")
 
-        # ConfidenceCalculatorで計算
-        confidence_score = self.confidence_calculator.llm_calculate(
-            factors=confidence_factors,
-            step_description=step.description,
-            tool_output=str(tool_result.output)
-        )
+        # ConfidenceCalculatorで計算（LLM評価 + Heuristicフォールバック）
+        try:
+            confidence_score = self.confidence_calculator.llm_calculate(
+                factors=confidence_factors,
+                step_description=step.description,
+                tool_output=str(tool_result.output)
+            )
+            
+            # LLM評価が低すぎる場合、Heuristicで再計算して比較
+            if confidence_score.score < 0.6 and confidence_factors.is_search_step:
+                heuristic_score = self.confidence_calculator.calculate(confidence_factors)
+                if heuristic_score.score > confidence_score.score:
+                    logger.info(
+                        f"Using heuristic score {heuristic_score.score:.2f} "
+                        f"instead of LLM score {confidence_score.score:.2f}"
+                    )
+                    confidence_score = heuristic_score
+                    
+        except Exception as e:
+            logger.error(f"LLM confidence calculation failed: {e}, falling back to heuristic")
+            confidence_score = self.confidence_calculator.calculate(confidence_factors)
 
         # ステップごとのConfidenceScoreを保存
         self.step_confidence_scores[step.step_id] = confidence_score

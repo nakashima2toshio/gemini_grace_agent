@@ -1,6 +1,6 @@
 # replan.py - 動的リプランニングシステム ドキュメント
 
-**Version 1.2** | 最終更新: 2025-01-29
+**Version 1.3** | 最終更新: 2026-02-13
 
 ---
 
@@ -8,49 +8,38 @@
 
 1. [概要](#概要)
 2. [アーキテクチャ構成図](#1-アーキテクチャ構成図)
-   - [システム全体構成](#11-システム全体構成)
-   - [データフロー](#12-データフロー)
 3. [モジュール構成図](#2-モジュール構成図)
-   - [内部モジュール構成](#21-内部モジュール構成)
-   - [外部依存関係](#22-外部依存関係)
-   - [内部依存モジュール](#23-内部依存モジュール)
 4. [クラス・関数一覧表](#3-クラス関数一覧表)
-   - [Enum一覧](#31-enum一覧)
-   - [データクラス一覧](#32-データクラス一覧)
-   - [クラス一覧](#33-クラス一覧)
-   - [ファクトリ関数一覧](#34-ファクトリ関数一覧)
 5. [クラス・関数 IPO詳細](#4-クラス関数-ipo詳細)
-   - [ReplanTrigger Enum](#41-replantrigger-enum)
-   - [ReplanStrategy Enum](#42-replanstrategy-enum)
-   - [ReplanContext データクラス](#43-replancontext-データクラス)
-   - [ReplanResult データクラス](#44-replanresult-データクラス)
-   - [ReplanManager クラス](#45-replanmanager-クラス)
-   - [ReplanOrchestrator クラス](#46-replanorchestrator-クラス)
-   - [ファクトリ関数](#47-ファクトリ関数)
 6. [設定・定数](#5-設定定数)
 7. [使用例](#6-使用例)
-   - [基本的なワークフロー](#61-基本的なワークフロー)
-   - [ユーザーフィードバックによるリプラン](#62-ユーザーフィードバックによるリプラン)
-   - [Orchestratorを使用した統合フロー](#63-orchestratorを使用した統合フロー)
 8. [エクスポート](#7-エクスポート)
 9. [変更履歴](#8-変更履歴)
 10. [付録: 依存関係図](#付録-依存関係図)
-11. [関連ドキュメント](#関連ドキュメント)
-12. [補足情報](#補足情報)
 
 ---
 
 ## 概要
 
-`replan.py`は、GRACEシステムにおける動的リプランニング機能を提供するモジュールです。ステップ実行の失敗、低信頼度、ユーザーフィードバックなどのトリガーに応じて、計画を動的に修正・再生成します。
+`replan.py`は、GRACEフレームワークにおける動的リプランニングシステムを提供するモジュール。ステップ実行の失敗、低信頼度、ユーザーフィードバック、新情報の発見、タイムアウトなどのトリガーに応じて、実行計画を動的に修正・再生成する。
 
 ### 主な責務
 
-- リプランのトリガー条件判定（ステップ失敗、低信頼度、ユーザーフィードバック等）
-- リプラン戦略の決定（部分再計画、全体再計画、代替アクション、スキップ、中断）
+- リプランのトリガー条件判定（ステップ失敗・低信頼度・ユーザーフィードバック）
+- リプラン戦略の決定（部分再計画・全体再計画・代替・スキップ・中断）
 - 失敗情報やフィードバックを考慮した新計画の生成
 - リプラン履歴の管理
-- Executor との統合によるリプランフロー制御
+- Executorとの統合によるリプランフロー制御
+
+### 各責務対応のモジュール
+
+| # | 責務 | 対応モジュール | 説明 |
+|---|------|--------------|------|
+| 1 | リプランのトリガー条件判定 | `replan.py` | `ReplanManager.should_replan()` / `should_replan_from_feedback()` |
+| 2 | リプラン戦略の決定 | `replan.py` | `ReplanManager.determine_strategy()` でコンテキストに応じた戦略選択 |
+| 3 | 失敗情報やフィードバックを考慮した新計画の生成 | `replan.py` + `planner.py` | `ReplanManager.create_new_plan()` が `Planner.create_plan()` を呼び出し |
+| 4 | リプラン履歴の管理 | `replan.py` | `ReplanManager` が `history: List[ReplanResult]` で管理 |
+| 5 | Executorとの統合によるリプランフロー制御 | `replan.py` | `ReplanOrchestrator` が判定→コンテキスト作成→戦略決定→実行を統合 |
 
 ### 主要機能一覧
 
@@ -58,18 +47,18 @@
 |------|------|
 | `ReplanTrigger` | リプランのトリガー条件を定義するEnum |
 | `ReplanStrategy` | リプラン戦略を定義するEnum |
-| `ReplanContext` | リプラン時のコンテキスト情報を保持 |
-| `ReplanResult` | リプラン結果を保持 |
-| `ReplanManager` | 動的リプランニング管理の主クラス |
-| `ReplanManager.should_replan()` | ステップ結果に基づくリプラン要否判定 |
-| `ReplanManager.should_replan_from_feedback()` | フィードバックに基づくリプラン要否判定 |
-| `ReplanManager.determine_strategy()` | リプラン戦略の決定 |
-| `ReplanManager.create_new_plan()` | 新しい計画の生成 |
-| `ReplanOrchestrator` | Executorとの統合リプランフロー管理 |
-| `ReplanOrchestrator.handle_step_failure()` | ステップ失敗時のリプラン処理 |
+| `ReplanContext` | リプラン時のコンテキストデータクラス |
+| `ReplanResult` | リプラン結果データクラス |
+| `ReplanManager` | リプランの判定・戦略決定・計画生成を担う中核クラス |
+| `ReplanManager.should_replan()` | ステップ実行結果に基づくリプラン要否判定 |
+| `ReplanManager.should_replan_from_feedback()` | ユーザーフィードバックに基づくリプラン要否判定 |
+| `ReplanManager.determine_strategy()` | コンテキストに応じたリプラン戦略の決定 |
+| `ReplanManager.create_new_plan()` | 戦略に応じた新計画の生成 |
+| `ReplanOrchestrator` | ExecutorとReplanManagerを統合するオーケストレーター |
+| `ReplanOrchestrator.handle_step_failure()` | ステップ失敗時の自動リプラン処理 |
 | `ReplanOrchestrator.handle_user_feedback()` | ユーザーフィードバックによるリプラン処理 |
-| `create_replan_manager()` | ReplanManagerのファクトリ関数 |
-| `create_replan_orchestrator()` | ReplanOrchestratorのファクトリ関数 |
+| `create_replan_manager()` | ReplanManagerインスタンスのファクトリ関数 |
+| `create_replan_orchestrator()` | ReplanOrchestratorインスタンスのファクトリ関数 |
 
 ---
 
@@ -77,44 +66,41 @@
 
 ### 1.1 システム全体構成
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Executor 層                              │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │
-│  │  StepExecutor    │  │   UserInterface  │  │  Monitoring  │  │
-│  └────────┬─────────┘  └────────┬─────────┘  └──────┬───────┘  │
-└───────────┼─────────────────────┼───────────────────┼──────────┘
-            │                     │                   │
-            │ StepResult          │ Feedback          │
-            └──────────────────┬──┴───────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        replan.py                                │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  ReplanOrchestrator                                        │ │
-│  │    └── ReplanManager                                       │ │
-│  │          ├── should_replan()                               │ │
-│  │          ├── determine_strategy()                          │ │
-│  │          └── create_new_plan()                             │ │
-│  └────────────────────────────────────────────────────────────┘ │
-└───────────────────────────────┬─────────────────────────────────┘
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       依存モジュール層                           │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐    │
-│  │    Planner     │  │    schemas     │  │    config      │    │
-│  │  (計画生成)    │  │  (データ構造)  │  │   (設定管理)   │    │
-│  └────────────────┘  └────────────────┘  └────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph CLIENT [クライアント層]
+        EXECUTOR[StepExecutor]
+        UI[UserInterface]
+        MON[Monitoring]
+    end
+
+    subgraph MODULE [replan.py]
+        ORCH[ReplanOrchestrator]
+        MGR[ReplanManager]
+    end
+
+    subgraph EXTERNAL [外部サービス層]
+        PLANNER_MOD[planner.py Planner]
+        SCHEMAS[schemas.py ExecutionPlan PlanStep StepResult]
+        CONFIG[config.py GraceConfig]
+    end
+
+    ORCH --> MGR
+    EXECUTOR --> ORCH
+    UI --> ORCH
+    MON -.-> MGR
+    MGR --> PLANNER_MOD
+    MGR --> SCHEMAS
+    MGR --> CONFIG
 ```
 
 ### 1.2 データフロー
 
-1. Executor がステップ実行結果（StepResult）を取得
-2. ReplanOrchestrator が結果を受け取り、リプラン要否を判定
-3. リプランが必要な場合、ReplanManager が戦略を決定
-4. 戦略に応じて Planner を使用して新計画を生成
-5. 新計画（ExecutionPlan）を Executor に返却
+1. クライアント層（Executor/UI）がステップ失敗またはユーザーフィードバックを検知
+2. `ReplanOrchestrator`がリプラン要否を`ReplanManager`に問い合わせ
+3. `ReplanManager`がトリガー条件を判定し、リプラン戦略を決定
+4. 戦略に応じて`Planner`を呼び出し、新しい`ExecutionPlan`を生成
+5. `ReplanResult`をクライアント層に返却
 
 ---
 
@@ -122,176 +108,182 @@
 
 ### 2.1 内部モジュール構成
 
-```
-replan.py
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```mermaid
+flowchart TB
+    subgraph ENUMS["Enum定義"]
+        RT[ReplanTrigger]
+        RS[ReplanStrategy]
+    end
 
-[Enum]
-  ├── ReplanTrigger           - リプランのトリガー条件
-  └── ReplanStrategy          - リプラン戦略
+    subgraph DATA["データクラス"]
+        RC[ReplanContext]
+        RR[ReplanResult]
+    end
 
-[データクラス]
-  ├── ReplanContext           - リプラン時のコンテキスト
-  └── ReplanResult            - リプラン結果
+    subgraph MGR_CLS["ReplanManager クラス"]
+        INIT_M["__init__()"]
+        SHOULD["should_replan()"]
+        SHOULD_FB["should_replan_from_feedback()"]
+        DET["determine_strategy()"]
+        CREATE["create_new_plan()"]
+        FULL["_create_full_replan()"]
+        PARTIAL["_create_partial_replan()"]
+        FALLBACK["_apply_fallback()"]
+        SKIP["_skip_failed_step()"]
+        ENHANCE["_enhance_query_with_context()"]
+        REMAIN["_create_remaining_query()"]
+        ADJUST["_adjust_step_ids()"]
+        FIND["_find_step()"]
+        CAN["can_replan()"]
+        HIST["get_history()"]
+        CLR["clear_history()"]
+        GET_P["_get_planner()"]
+    end
 
-[クラス]
-  ├── ReplanManager           - 動的リプランニング管理
-  │     ├── __init__()
-  │     ├── _get_planner()
-  │     ├── should_replan()
-  │     ├── should_replan_from_feedback()
-  │     ├── determine_strategy()
-  │     ├── create_new_plan()
-  │     ├── _create_full_replan()
-  │     ├── _create_partial_replan()
-  │     ├── _apply_fallback()
-  │     ├── _skip_failed_step()
-  │     ├── _enhance_query_with_context()
-  │     ├── _create_remaining_query()
-  │     ├── _adjust_step_ids()
-  │     ├── _find_step()
-  │     ├── can_replan()
-  │     ├── get_history()
-  │     └── clear_history()
-  │
-  └── ReplanOrchestrator      - リプランオーケストレーター
-        ├── __init__()
-        ├── handle_step_failure()
-        └── handle_user_feedback()
+    subgraph ORCH_CLS["ReplanOrchestrator クラス"]
+        INIT_O["__init__()"]
+        HSF["handle_step_failure()"]
+        HUF["handle_user_feedback()"]
+    end
 
-[ファクトリ関数]
-  ├── create_replan_manager()
-  └── create_replan_orchestrator()
+    subgraph FACTORY["ファクトリ関数"]
+        CRM["create_replan_manager()"]
+        CRO["create_replan_orchestrator()"]
+    end
+
+    ENUMS --> DATA
+    DATA --> MGR_CLS
+    MGR_CLS --> ORCH_CLS
+    CRM --> INIT_M
+    CRO --> INIT_O
+    CREATE --> FULL
+    CREATE --> PARTIAL
+    CREATE --> FALLBACK
+    CREATE --> SKIP
+    FULL --> ENHANCE
+    PARTIAL --> REMAIN
+    PARTIAL --> ADJUST
+    DET --> FIND
 ```
 
 ### 2.2 外部依存関係
 
 | ライブラリ | バージョン | 用途 |
 |-----------|-----------|------|
-| `dataclasses` | 標準 | データクラス定義 |
-| `typing` | 標準 | 型ヒント |
-| `enum` | 標準 | 列挙型定義 |
-| `datetime` | 標準 | 日時処理 |
-| `logging` | 標準 | ログ出力 |
+| `logging` | 標準ライブラリ | ログ出力 |
+| `dataclasses` | 標準ライブラリ | データクラス定義 |
+| `typing` | 標準ライブラリ | 型注釈 |
+| `enum` | 標準ライブラリ | Enum定義 |
+| `datetime` | 標準ライブラリ | 日時情報 |
 
 ### 2.3 内部依存モジュール
 
-| モジュール | インポート | 用途 |
-|-----------|-----------|------|
-| `.schemas` | `ExecutionPlan`, `PlanStep`, `StepResult` | 計画・結果のデータ構造 |
-| `.planner` | `Planner`, `create_planner` | 計画生成 |
-| `.config` | `get_config`, `GraceConfig` | 設定管理 |
-
-**Planner クラスの使用方法**:
-
-ReplanManager は以下の Planner メソッドを使用して新計画を生成します：
-
-| メソッド | 用途 | 呼び出し元 |
-|---------|------|-----------|
-| `Planner.create_plan(query)` | クエリから新規計画を生成 | `_create_full_replan()`, `_create_partial_replan()` |
-| `Planner.refine_plan(plan, feedback)` | フィードバックに基づく計画修正 | （将来の拡張用） |
-
-**GraceConfigから使用するサブ設定**:
-
-| サブ設定 | 説明 |
-|---------|------|
-| `config.replan.max_replans` | 最大リプラン回数（デフォルト: 3） |
-| `config.replan.confidence_threshold` | リプラン発動の信頼度閾値（デフォルト: 0.4） |
-| `config.replan.partial_replan_threshold` | 部分リプランの閾値（デフォルト: 0.6） |
-| `config.replan.cooldown_seconds` | リプラン間隔（デフォルト: 5秒）※将来の拡張用 |
+| モジュール | 用途 |
+|-----------|------|
+| `.schemas` | `ExecutionPlan`, `PlanStep`, `StepResult` データ型 |
+| `.planner` | `Planner`, `create_planner` による計画生成 |
+| `.config` | `get_config()`, `GraceConfig`, `ReplanConfig` による設定取得 |
 
 ---
 
 ## 3. クラス・関数一覧表
 
-### 3.1 Enum一覧
+### 3.1 クラス一覧
 
-#### ReplanTrigger
+#### ReplanTrigger（Enum）
 
-| 値 | 説明 |
-|------|------|
-| `STEP_FAILED` | ステップ実行失敗 |
-| `LOW_CONFIDENCE` | 信頼度が閾値未満 |
-| `USER_FEEDBACK` | ユーザーからの修正要求 |
-| `NEW_INFORMATION` | 新しい情報の発見 |
-| `TIMEOUT` | タイムアウト |
+| メンバー | 値 | 概要 |
+|---------|-----|------|
+| `STEP_FAILED` | `"step_failed"` | ステップ実行失敗 |
+| `LOW_CONFIDENCE` | `"low_confidence"` | 信頼度が閾値未満 |
+| `USER_FEEDBACK` | `"user_feedback"` | ユーザーからの修正要求 |
+| `NEW_INFORMATION` | `"new_information"` | 新しい情報の発見 |
+| `TIMEOUT` | `"timeout"` | タイムアウト |
 
-#### ReplanStrategy
+#### ReplanStrategy（Enum）
 
-| 値 | 説明 |
-|------|------|
-| `PARTIAL` | 失敗ステップ以降のみ再計画 |
-| `FULL` | 全体を再計画 |
-| `FALLBACK` | 代替アクションへ切り替え |
-| `SKIP` | 失敗ステップをスキップ |
-| `ABORT` | 実行中断 |
+| メンバー | 値 | 概要 |
+|---------|-----|------|
+| `PARTIAL` | `"partial"` | 失敗ステップ以降のみ再計画 |
+| `FULL` | `"full"` | 全体を再計画 |
+| `FALLBACK` | `"fallback"` | 代替アクションへ切り替え |
+| `SKIP` | `"skip"` | 失敗ステップをスキップ |
+| `ABORT` | `"abort"` | 実行中断 |
 
-### 3.2 データクラス一覧
+#### ReplanContext（dataclass）
 
-#### ReplanContext
+| フィールド / メソッド | 型 | 概要 |
+|---------------------|------|------|
+| `trigger` | `ReplanTrigger` | トリガー条件 |
+| `original_query` | `str` | 元のユーザークエリ |
+| `failed_step_id` | `Optional[int]` | 失敗したステップID |
+| `error_message` | `Optional[str]` | エラーメッセージ |
+| `completed_results` | `Dict[int, StepResult]` | 完了済み結果 |
+| `user_feedback` | `Optional[str]` | ユーザーフィードバック |
+| `new_information` | `Optional[str]` | 新しい情報 |
+| `replan_count` | `int` | 現在のリプラン回数 |
+| `created_at` | `datetime` | 作成日時 |
+| `has_completed_steps` | `bool`（property） | 完了済みステップの有無 |
+| `completed_step_ids` | `List[int]`（property） | 完了済みステップIDリスト |
+| `get_completed_outputs()` | `Dict[int, str]` | 完了済みステップの出力取得 |
 
-| フィールド/プロパティ | 型 | デフォルト | 説明 |
-|-----------|------|-----------|------|
-| `trigger` | ReplanTrigger | - | トリガー条件 |
-| `original_query` | str | - | 元のクエリ |
-| `failed_step_id` | Optional[int] | None | 失敗したステップID |
-| `error_message` | Optional[str] | None | エラーメッセージ |
-| `completed_results` | Dict[int, StepResult] | {} | 完了済み結果 |
-| `user_feedback` | Optional[str] | None | ユーザーフィードバック |
-| `new_information` | Optional[str] | None | 新情報 |
-| `replan_count` | int | 0 | リプラン回数 |
-| `created_at` | datetime | now() | 作成日時 |
-| `has_completed_steps` (property) | bool | - | 完了済みステップの有無 |
-| `completed_step_ids` (property) | List[int] | - | 完了済みステップIDリスト |
+#### ReplanResult（dataclass）
 
-#### ReplanResult
-
-| フィールド | 型 | デフォルト | 説明 |
-|-----------|------|-----------|------|
-| `success` | bool | - | 成功フラグ |
-| `strategy` | ReplanStrategy | - | 採用された戦略 |
-| `new_plan` | Optional[ExecutionPlan] | None | 新しい計画 |
-| `reason` | str | "" | 理由 |
-| `replan_count` | int | 0 | リプラン回数 |
-| `created_at` | datetime | now() | 作成日時 |
-
-### 3.3 クラス一覧
+| フィールド | 型 | 概要 |
+|-----------|------|------|
+| `success` | `bool` | リプラン成功フラグ |
+| `strategy` | `ReplanStrategy` | 適用された戦略 |
+| `new_plan` | `Optional[ExecutionPlan]` | 新しい計画 |
+| `reason` | `str` | 理由 |
+| `replan_count` | `int` | リプラン回数 |
+| `created_at` | `datetime` | 作成日時 |
 
 #### ReplanManager
 
 | メソッド | 概要 |
 |---------|------|
-| `__init__(config, planner)` | コンストラクタ |
-| `should_replan(step_result, replan_count)` | ステップ結果からリプラン要否判定 |
-| `should_replan_from_feedback(feedback, replan_count)` | フィードバックからリプラン要否判定 |
-| `determine_strategy(context, current_plan)` | リプラン戦略を決定 |
-| `create_new_plan(context, strategy, current_plan)` | 新しい計画を生成 |
+| `__init__(config, planner)` | コンストラクタ（設定・Planner指定） |
+| `should_replan(step_result, replan_count)` | ステップ結果に基づくリプラン要否判定 |
+| `should_replan_from_feedback(feedback, replan_count)` | フィードバックに基づくリプラン要否判定 |
+| `determine_strategy(context, current_plan)` | リプラン戦略の決定 |
+| `create_new_plan(context, strategy, current_plan)` | 新しい計画の生成 |
 | `can_replan(replan_count)` | リプラン可能か判定 |
 | `get_history()` | リプラン履歴を取得 |
-| `clear_history()` | 履歴をクリア |
+| `clear_history()` | リプラン履歴をクリア |
+| `_get_planner()` | Plannerの遅延初期化取得 |
+| `_create_full_replan(context)` | 全体再計画の実行 |
+| `_create_partial_replan(context, current_plan)` | 部分再計画の実行 |
+| `_apply_fallback(context, current_plan)` | 代替アクションの適用 |
+| `_skip_failed_step(context, current_plan)` | 失敗ステップのスキップ |
+| `_enhance_query_with_context(original_query, context)` | エラーコンテキスト付きクエリ生成 |
+| `_create_remaining_query(context, completed_steps)` | 残りステップ用クエリ生成 |
+| `_adjust_step_ids(steps, start_id, completed_count)` | ステップID・依存関係の調整 |
+| `_find_step(plan, step_id)` | 計画からステップを検索 |
 
 #### ReplanOrchestrator
 
 | メソッド | 概要 |
 |---------|------|
-| `__init__(config, replan_manager)` | コンストラクタ |
+| `__init__(config, replan_manager)` | コンストラクタ（設定・ReplanManager指定） |
 | `handle_step_failure(step_result, current_plan, completed_results, replan_count)` | ステップ失敗時のリプラン処理 |
-| `handle_user_feedback(feedback, current_plan, completed_results, replan_count)` | フィードバックによるリプラン処理 |
+| `handle_user_feedback(feedback, current_plan, completed_results, replan_count)` | ユーザーフィードバックによるリプラン処理 |
 
-### 3.4 ファクトリ関数一覧
+### 3.2 関数一覧（カテゴリ別）
+
+#### ファクトリ関数
 
 | 関数名 | 概要 |
 |-------|------|
-| `create_replan_manager(config, planner)` | ReplanManagerインスタンス作成 |
-| `create_replan_orchestrator(config, replan_manager)` | ReplanOrchestratorインスタンス作成 |
+| `create_replan_manager(config, planner)` | ReplanManagerインスタンスを作成 |
+| `create_replan_orchestrator(config, replan_manager)` | ReplanOrchestratorインスタンスを作成 |
 
 ---
 
 ## 4. クラス・関数 IPO詳細
 
-### 4.1 ReplanTrigger Enum
+### 4.1 ReplanTrigger（Enum）
 
-**概要**: リプランのトリガー条件を定義するEnum。
+リプランのトリガー条件を定義する文字列Enum。`str`を継承しているため文字列として直接比較可能。
 
 ```python
 class ReplanTrigger(str, Enum):
@@ -302,19 +294,19 @@ class ReplanTrigger(str, Enum):
     TIMEOUT = "timeout"
 ```
 
-| 値 | 説明 | 発生条件 |
-|------|------|---------|
-| `STEP_FAILED` | ステップ実行失敗 | `step_result.status == "failed"` |
-| `LOW_CONFIDENCE` | 低信頼度 | `step_result.confidence < threshold` |
-| `USER_FEEDBACK` | ユーザーフィードバック | フィードバックに修正キーワード含む |
-| `NEW_INFORMATION` | 新情報発見 | 追加情報により計画変更が必要 |
-| `TIMEOUT` | タイムアウト | ステップ実行がタイムアウト |
+```python
+# 使用例
+trigger = ReplanTrigger.STEP_FAILED
+print(trigger.value)
+# 出力: step_failed
 
----
+print(trigger == "step_failed")
+# 出力: True
+```
 
-### 4.2 ReplanStrategy Enum
+### 4.2 ReplanStrategy（Enum）
 
-**概要**: リプラン戦略を定義するEnum。
+リプラン戦略を定義する文字列Enum。戦略の選択は`ReplanManager.determine_strategy()`で行われる。
 
 ```python
 class ReplanStrategy(str, Enum):
@@ -325,140 +317,239 @@ class ReplanStrategy(str, Enum):
     ABORT = "abort"
 ```
 
-| 値 | 説明 | 適用条件 |
-|------|------|---------|
-| `PARTIAL` | 部分再計画 | 中盤以降で失敗、フィードバック時 |
-| `FULL` | 全体再計画 | 序盤（進捗≤34%）で失敗、タイムアウト |
-| `FALLBACK` | 代替アクション | 失敗ステップに`fallback`定義あり |
-| `SKIP` | ステップスキップ | 失敗ステップが必須でない場合 |
-| `ABORT` | 中断 | 最大リプラン回数超過 |
-
----
-
-### 4.3 ReplanContext データクラス
-
-**概要**: リプラン時のコンテキスト情報を保持するデータクラス。
-
 ```python
-@dataclass
-class ReplanContext:
-    trigger: ReplanTrigger
-    original_query: str
-    failed_step_id: Optional[int] = None
-    error_message: Optional[str] = None
-    completed_results: Dict[int, StepResult] = field(default_factory=dict)
-    user_feedback: Optional[str] = None
-    new_information: Optional[str] = None
-    replan_count: int = 0
-    created_at: datetime = field(default_factory=datetime.now)
+# 使用例
+strategy = ReplanStrategy.PARTIAL
+print(strategy.value)
+# 出力: partial
 ```
 
-**プロパティ**:
+### 4.3 ReplanContext クラス
 
-| プロパティ | 戻り値型 | 説明 |
-|-----------|---------|------|
-| `has_completed_steps` | bool | 完了済みステップがあるか |
-| `completed_step_ids` | List[int] | 完了済みステップIDのソート済みリスト |
-
-**メソッド**:
-
-| メソッド | 戻り値型 | 説明 |
-|---------|---------|------|
-| `get_completed_outputs()` | Dict[int, str] | 完了済みステップの出力を取得 |
-
-**戻り値例**:
-```python
-ReplanContext(
-    trigger=ReplanTrigger.STEP_FAILED,
-    original_query="東京の天気を教えて",
-    failed_step_id=2,
-    error_message="検索結果が見つかりませんでした",
-    completed_results={1: StepResult(...)},
-    replan_count=1
-)
-```
-
----
-
-### 4.4 ReplanResult データクラス
-
-**概要**: リプラン結果を保持するデータクラス。
-
-```python
-@dataclass
-class ReplanResult:
-    success: bool
-    strategy: ReplanStrategy
-    new_plan: Optional[ExecutionPlan] = None
-    reason: str = ""
-    replan_count: int = 0
-    created_at: datetime = field(default_factory=datetime.now)
-```
-
-**戻り値例**:
-```python
-# 成功時
-ReplanResult(
-    success=True,
-    strategy=ReplanStrategy.PARTIAL,
-    new_plan=ExecutionPlan(...),
-    reason="部分再計画",
-    replan_count=2
-)
-
-# 失敗時（中断）
-ReplanResult(
-    success=False,
-    strategy=ReplanStrategy.ABORT,
-    new_plan=None,
-    reason="最大リプラン回数超過により中断",
-    replan_count=3
-)
-```
-
----
-
-### 4.5 ReplanManager クラス
-
-動的リプランニング管理の主クラス。
+リプラン時のコンテキスト情報を保持するデータクラス。トリガー条件、エラー情報、完了済みステップの結果、ユーザーフィードバックなどを集約する。
 
 #### コンストラクタ: `__init__`
 
-**概要**: ReplanManagerを初期化し、設定からリプラン制限を読み込みます。
+**概要**: ReplanContextインスタンスを生成する。
 
 ```python
-def __init__(
-    self,
-    config: Optional[GraceConfig] = None,
-    planner: Optional[Planner] = None,
+ReplanContext(
+    trigger: ReplanTrigger,
+    original_query: str,
+    failed_step_id: Optional[int] = None,
+    error_message: Optional[str] = None,
+    completed_results: Dict[int, StepResult] = field(default_factory=dict),
+    user_feedback: Optional[str] = None,
+    new_information: Optional[str] = None,
+    replan_count: int = 0,
+    created_at: datetime = field(default_factory=datetime.now)
 )
 ```
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `config` | Optional[GraceConfig] | None | GRACE設定 |
-| `planner` | Optional[Planner] | None | 計画生成用Planner（遅延初期化） |
+| `trigger` | `ReplanTrigger` | - | リプランのトリガー条件 |
+| `original_query` | `str` | - | 元のユーザークエリ |
+| `failed_step_id` | `Optional[int]` | `None` | 失敗したステップのID |
+| `error_message` | `Optional[str]` | `None` | エラーメッセージ |
+| `completed_results` | `Dict[int, StepResult]` | `{}` | 完了済みステップの結果マップ |
+| `user_feedback` | `Optional[str]` | `None` | ユーザーフィードバック |
+| `new_information` | `Optional[str]` | `None` | 新たに発見された情報 |
+| `replan_count` | `int` | `0` | 現在のリプラン回数 |
+| `created_at` | `datetime` | `datetime.now()` | コンテキスト作成日時 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `trigger: ReplanTrigger`, `original_query: str`, 他オプションフィールド |
+| **Process** | dataclassとして各フィールドを初期化 |
+| **Output** | `ReplanContext`インスタンス |
+
+```python
+# 使用例
+from grace.replan import ReplanContext, ReplanTrigger
+
+context = ReplanContext(
+    trigger=ReplanTrigger.STEP_FAILED,
+    original_query="最新のAI研究について調べてください",
+    failed_step_id=2,
+    error_message="Qdrant collection not found",
+    replan_count=0
+)
+print(context.trigger)
+# 出力: ReplanTrigger.STEP_FAILED
+```
+
+#### プロパティ: `has_completed_steps`
+
+**概要**: 完了済みステップが存在するかを判定する。
+
+```python
+@property
+def has_completed_steps(self) -> bool
+```
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | なし（selfのみ） |
+| **Process** | `completed_results`の長さが0より大きいか判定 |
+| **Output** | `bool`: 完了済みステップがある場合`True` |
+
+```python
+# 使用例
+print(context.has_completed_steps)
+# 出力: False（completed_resultsが空の場合）
+```
+
+#### プロパティ: `completed_step_ids`
+
+**概要**: 完了済みステップのIDリストをソート済みで返す。
+
+```python
+@property
+def completed_step_ids(self) -> List[int]
+```
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | なし（selfのみ） |
+| **Process** | `completed_results`のキーをソートしてリスト化 |
+| **Output** | `List[int]`: ソート済みの完了ステップIDリスト |
+
+```python
+# 使用例
+print(context.completed_step_ids)
+# 出力: [1, 3]（ステップ1,3が完了済みの場合）
+```
+
+#### メソッド: `get_completed_outputs`
+
+**概要**: 完了済みステップの出力をDict形式で取得する。出力がNoneのステップは除外される。
+
+```python
+def get_completed_outputs(self) -> Dict[int, str]
+```
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | なし（selfのみ） |
+| **Process** | `completed_results`を走査し、`output`がNoneでないものを抽出 |
+| **Output** | `Dict[int, str]`: ステップID→出力テキストのマッピング |
+
+**戻り値例**:
+```python
+{
+    1: "AI研究の最新トレンドに関する情報を取得しました",
+    3: "論文リストを整理しました"
+}
+```
+
+```python
+# 使用例
+outputs = context.get_completed_outputs()
+for step_id, output in outputs.items():
+    print(f"Step {step_id}: {output}")
+```
+
+### 4.4 ReplanResult クラス
+
+リプラン処理の結果を保持するデータクラス。成功/失敗フラグ、適用された戦略、新しい計画を含む。
+
+#### コンストラクタ: `__init__`
+
+**概要**: ReplanResultインスタンスを生成する。
+
+```python
+ReplanResult(
+    success: bool,
+    strategy: ReplanStrategy,
+    new_plan: Optional[ExecutionPlan] = None,
+    reason: str = "",
+    replan_count: int = 0,
+    created_at: datetime = field(default_factory=datetime.now)
+)
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `success` | `bool` | - | リプラン成功フラグ |
+| `strategy` | `ReplanStrategy` | - | 適用された戦略 |
+| `new_plan` | `Optional[ExecutionPlan]` | `None` | 新しい計画（失敗時はNone） |
+| `reason` | `str` | `""` | リプラン理由 |
+| `replan_count` | `int` | `0` | リプラン回数 |
+| `created_at` | `datetime` | `datetime.now()` | 結果作成日時 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `success: bool`, `strategy: ReplanStrategy`, 他オプションフィールド |
+| **Process** | dataclassとして各フィールドを初期化 |
+| **Output** | `ReplanResult`インスタンス |
+
+**戻り値例**:
+```python
+ReplanResult(
+    success=True,
+    strategy=ReplanStrategy.PARTIAL,
+    new_plan=ExecutionPlan(...),
+    reason="部分再計画",
+    replan_count=1
+)
+```
+
+```python
+# 使用例
+from grace.replan import ReplanResult, ReplanStrategy
+
+result = ReplanResult(
+    success=True,
+    strategy=ReplanStrategy.FULL,
+    reason="全体再計画"
+)
+print(f"成功: {result.success}, 戦略: {result.strategy.value}")
+# 出力: 成功: True, 戦略: full
+```
+
+### 4.5 ReplanManager クラス
+
+動的リプランニングの中核クラス。リプランの要否判定、戦略決定、新計画の生成を担う。内部で`Planner`を遅延初期化し、設定に基づいた閾値管理とリプラン履歴の記録を行う。
+
+#### コンストラクタ: `__init__`
+
+**概要**: ReplanManagerを初期化する。設定から閾値を読み込み、リプラン履歴を初期化する。
+
+```python
+ReplanManager(
+    config: Optional[GraceConfig] = None,
+    planner: Optional[Planner] = None
+)
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `config` | `Optional[GraceConfig]` | `None` | GRACE設定（Noneの場合`get_config()`で取得） |
+| `planner` | `Optional[Planner]` | `None` | 計画生成用Planner（Noneの場合は遅延初期化） |
 
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig]`, `planner: Optional[Planner]` |
-| **Process** | 1. 設定を取得<br>2. max_replans, confidence_threshold等を設定<br>3. 履歴リストを初期化 |
-| **Output** | ReplanManagerインスタンス |
+| **Process** | 1. configがNoneなら`get_config()`で取得<br>2. `config.replan`から`max_replans`, `confidence_threshold`, `partial_replan_threshold`を読み込み<br>3. `history`リストを初期化<br>4. ログ出力 |
+| **Output** | `ReplanManager`インスタンス |
 
 ```python
 # 使用例
 from grace.replan import ReplanManager
+from grace.config import get_config
 
+# デフォルト設定で初期化
 manager = ReplanManager()
-# または
-manager = ReplanManager(config=config, planner=planner)
-```
 
----
+# カスタム設定で初期化
+config = get_config()
+manager = ReplanManager(config=config)
+```
 
 #### メソッド: `should_replan`
 
-**概要**: ステップ実行結果に基づいてリプランが必要か判定します。
+**概要**: ステップ実行結果に基づいてリプランの要否を判定する。最大リプラン回数、ステップの失敗状態、信頼度閾値を評価する。
 
 ```python
 def should_replan(
@@ -470,44 +561,33 @@ def should_replan(
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `step_result` | StepResult | - | ステップ実行結果 |
-| `replan_count` | int | - | 現在のリプラン回数 |
+| `step_result` | `StepResult` | - | ステップ実行結果 |
+| `replan_count` | `int` | - | 現在のリプラン回数 |
 
 | 項目 | 内容 |
 |------|------|
 | **Input** | `step_result: StepResult`, `replan_count: int` |
-| **Process** | 1. 最大リプラン回数チェック<br>2. ステップ失敗チェック<br>3. 低信頼度チェック |
-| **Output** | `tuple[bool, Optional[ReplanTrigger]]`: (リプラン要否, トリガー) |
-
-**判定ロジック**:
-
-| 条件 | 結果 |
-|------|------|
-| `replan_count >= max_replans` | (False, None) |
-| `step_result.status == "failed"` | (True, STEP_FAILED) |
-| `step_result.confidence < confidence_threshold` | (True, LOW_CONFIDENCE) |
-| それ以外 | (False, None) |
+| **Process** | 1. `replan_count >= max_replans`なら`(False, None)`<br>2. `step_result.status == "failed"`なら`(True, STEP_FAILED)`<br>3. `step_result.confidence < confidence_threshold`なら`(True, LOW_CONFIDENCE)`<br>4. それ以外は`(False, None)` |
+| **Output** | `tuple[bool, Optional[ReplanTrigger]]`: リプラン要否とトリガー |
 
 **戻り値例**:
 ```python
-(True, ReplanTrigger.STEP_FAILED)  # リプラン必要
-(False, None)  # リプラン不要
+(True, ReplanTrigger.STEP_FAILED)
+(True, ReplanTrigger.LOW_CONFIDENCE)
+(False, None)
 ```
 
 ```python
 # 使用例
-manager = ReplanManager()
-should, trigger = manager.should_replan(step_result, replan_count=1)
-
+should, trigger = manager.should_replan(step_result, replan_count=0)
 if should:
     print(f"リプラン必要: {trigger.value}")
+# 出力: リプラン必要: step_failed
 ```
-
----
 
 #### メソッド: `should_replan_from_feedback`
 
-**概要**: ユーザーフィードバックに基づいてリプラン要否を判定します。
+**概要**: ユーザーフィードバックに基づいてリプランの要否を判定する。修正キーワード（「修正」「変更」「やり直し」「違う」「別の」）の有無で判定する。
 
 ```python
 def should_replan_from_feedback(
@@ -519,38 +599,31 @@ def should_replan_from_feedback(
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `feedback` | str | - | ユーザーフィードバック |
-| `replan_count` | int | - | 現在のリプラン回数 |
+| `feedback` | `str` | - | ユーザーフィードバック文字列 |
+| `replan_count` | `int` | - | 現在のリプラン回数 |
 
 | 項目 | 内容 |
 |------|------|
 | **Input** | `feedback: str`, `replan_count: int` |
-| **Process** | 1. 最大リプラン回数チェック<br>2. 修正キーワードの有無をチェック |
-| **Output** | `tuple[bool, Optional[ReplanTrigger]]`: (リプラン要否, トリガー) |
-
-**修正キーワード**:
-- "修正", "変更", "やり直し", "違う", "別の"
+| **Process** | 1. `replan_count >= max_replans`なら`(False, None)`<br>2. `feedback`に修正キーワードが含まれていれば`(True, USER_FEEDBACK)`<br>3. それ以外は`(False, None)` |
+| **Output** | `tuple[bool, Optional[ReplanTrigger]]`: リプラン要否とトリガー |
 
 **戻り値例**:
 ```python
-(True, ReplanTrigger.USER_FEEDBACK)  # 修正キーワード含む
-(False, None)  # 含まない
+(True, ReplanTrigger.USER_FEEDBACK)
+(False, None)
 ```
 
 ```python
 # 使用例
-should, trigger = manager.should_replan_from_feedback(
-    feedback="別のアプローチで試してください",
-    replan_count=1
-)
-# -> (True, ReplanTrigger.USER_FEEDBACK)
+should, trigger = manager.should_replan_from_feedback("結果を修正してください", 0)
+print(should)
+# 出力: True
 ```
-
----
 
 #### メソッド: `determine_strategy`
 
-**概要**: リプランコンテキストと現在の計画からリプラン戦略を決定します。
+**概要**: リプランコンテキストと現在の計画に基づき、最適なリプラン戦略を決定する。
 
 ```python
 def determine_strategy(
@@ -562,51 +635,33 @@ def determine_strategy(
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `context` | ReplanContext | - | リプランコンテキスト |
-| `current_plan` | ExecutionPlan | - | 現在の計画 |
+| `context` | `ReplanContext` | - | リプランコンテキスト |
+| `current_plan` | `ExecutionPlan` | - | 現在の実行計画 |
 
 | 項目 | 内容 |
 |------|------|
 | **Input** | `context: ReplanContext`, `current_plan: ExecutionPlan` |
-| **Process** | トリガー・進捗・代替手段の有無に基づいて戦略を決定 |
+| **Process** | 1. `replan_count >= max_replans` → `ABORT`<br>2. `STEP_FAILED`かつfallbackあり → `FALLBACK`<br>3. `TIMEOUT` → `FULL`<br>4. `USER_FEEDBACK`かつ「最初から」 → `FULL`<br>5. `USER_FEEDBACK` → `PARTIAL`<br>6. 序盤（進捗≤34%）で失敗 → `FULL`<br>7. それ以外 → `PARTIAL` |
 | **Output** | `ReplanStrategy`: 選択された戦略 |
-
-**戦略決定ロジック**:
-
-| 条件 | 戦略 |
-|------|------|
-| `replan_count >= max_replans` | ABORT |
-| STEP_FAILED + fallbackあり | FALLBACK |
-| TIMEOUT | FULL |
-| USER_FEEDBACK + "最初から"含む | FULL |
-| USER_FEEDBACK | PARTIAL |
-| 序盤の失敗（進捗≤34%） | FULL |
-| それ以外 | PARTIAL |
 
 **戻り値例**:
 ```python
-ReplanStrategy.PARTIAL  # 部分再計画
-ReplanStrategy.FULL     # 全体再計画
-ReplanStrategy.FALLBACK # 代替アクション
+ReplanStrategy.PARTIAL
+ReplanStrategy.FULL
+ReplanStrategy.FALLBACK
+ReplanStrategy.ABORT
 ```
 
 ```python
 # 使用例
-context = ReplanContext(
-    trigger=ReplanTrigger.STEP_FAILED,
-    original_query="質問",
-    failed_step_id=2,
-    replan_count=1
-)
 strategy = manager.determine_strategy(context, current_plan)
 print(f"戦略: {strategy.value}")
+# 出力: 戦略: partial
 ```
-
----
 
 #### メソッド: `create_new_plan`
 
-**概要**: 戦略に基づいて新しい計画を生成します。
+**概要**: 戦略に応じた新しい計画を生成する。FULL/PARTIAL/FALLBACK/SKIP/ABORTの各戦略に対応し、結果を履歴に記録する。
 
 ```python
 def create_new_plan(
@@ -619,56 +674,38 @@ def create_new_plan(
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `context` | ReplanContext | - | リプランコンテキスト |
-| `strategy` | ReplanStrategy | - | リプラン戦略 |
-| `current_plan` | ExecutionPlan | - | 現在の計画 |
+| `context` | `ReplanContext` | - | リプランコンテキスト |
+| `strategy` | `ReplanStrategy` | - | 適用するリプラン戦略 |
+| `current_plan` | `ExecutionPlan` | - | 現在の実行計画 |
 
 | 項目 | 内容 |
 |------|------|
 | **Input** | `context: ReplanContext`, `strategy: ReplanStrategy`, `current_plan: ExecutionPlan` |
-| **Process** | 戦略に応じた計画生成処理を実行 |
+| **Process** | 1. 戦略に応じて対応する内部メソッドを呼び出し<br>2. `FULL` → `_create_full_replan()`<br>3. `PARTIAL` → `_create_partial_replan()`<br>4. `FALLBACK` → `_apply_fallback()`<br>5. `SKIP` → `_skip_failed_step()`<br>6. `ABORT` → 失敗結果を生成<br>7. `ReplanResult`を作成し`history`に記録<br>8. 例外発生時は失敗結果を返却 |
 | **Output** | `ReplanResult`: リプラン結果 |
-
-**戦略別処理**:
-
-| 戦略 | 処理 |
-|------|------|
-| FULL | エラー情報を含めて全体を再生成 |
-| PARTIAL | 完了済みステップを保持し、残りを再生成 |
-| FALLBACK | 失敗ステップを代替アクションに置換 |
-| SKIP | 失敗ステップを除外し、依存関係を更新 |
-| ABORT | 失敗結果を返却 |
 
 **戻り値例**:
 ```python
 ReplanResult(
     success=True,
     strategy=ReplanStrategy.PARTIAL,
-    new_plan=ExecutionPlan(
-        original_query="...",
-        steps=[...],
-        requires_confirmation=True
-    ),
+    new_plan=ExecutionPlan(...),
     reason="部分再計画",
-    replan_count=2
+    replan_count=1
 )
 ```
 
 ```python
 # 使用例
 result = manager.create_new_plan(context, strategy, current_plan)
-
 if result.success:
-    print(f"新計画: {len(result.new_plan.steps)}ステップ")
-else:
-    print(f"リプラン失敗: {result.reason}")
+    print(f"リプラン成功: {result.reason}")
+    new_plan = result.new_plan
 ```
-
----
 
 #### メソッド: `can_replan`
 
-**概要**: リプラン可能か判定します。
+**概要**: 現在のリプラン回数がmax_replans未満かを判定する。
 
 ```python
 def can_replan(self, replan_count: int) -> bool
@@ -676,26 +713,24 @@ def can_replan(self, replan_count: int) -> bool
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `replan_count` | int | - | 現在のリプラン回数 |
+| `replan_count` | `int` | - | 現在のリプラン回数 |
 
 | 項目 | 内容 |
 |------|------|
 | **Input** | `replan_count: int` |
-| **Process** | `replan_count < max_replans` を判定 |
-| **Output** | `bool`: リプラン可能か |
+| **Process** | `replan_count < max_replans`を評価 |
+| **Output** | `bool`: リプラン可能な場合`True` |
 
 ```python
 # 使用例
-if manager.can_replan(replan_count=2):
-    # リプラン実行
-    pass
+if manager.can_replan(replan_count=1):
+    print("リプラン可能")
+# 出力: リプラン可能
 ```
-
----
 
 #### メソッド: `get_history`
 
-**概要**: リプラン履歴を取得します。
+**概要**: リプラン履歴のコピーを取得する。
 
 ```python
 def get_history(self) -> List[ReplanResult]
@@ -703,65 +738,274 @@ def get_history(self) -> List[ReplanResult]
 
 | 項目 | 内容 |
 |------|------|
-| **Input** | なし |
-| **Process** | 履歴リストのコピーを返却 |
-| **Output** | `List[ReplanResult]`: リプラン履歴 |
+| **Input** | なし（selfのみ） |
+| **Process** | `self.history`のコピーを返却 |
+| **Output** | `List[ReplanResult]`: リプラン履歴のコピー |
 
----
+```python
+# 使用例
+history = manager.get_history()
+print(f"リプラン実行回数: {len(history)}")
+# 出力: リプラン実行回数: 2
+```
 
 #### メソッド: `clear_history`
 
-**概要**: リプラン履歴をクリアします。
+**概要**: リプラン履歴をクリアする。
 
 ```python
-def clear_history(self)
+def clear_history(self) -> None
 ```
 
 | 項目 | 内容 |
 |------|------|
-| **Input** | なし |
-| **Process** | 履歴リストをクリア |
-| **Output** | なし |
+| **Input** | なし（selfのみ） |
+| **Process** | `self.history.clear()`を実行 |
+| **Output** | `None` |
 
----
+```python
+# 使用例
+manager.clear_history()
+print(len(manager.get_history()))
+# 出力: 0
+```
+
+#### メソッド: `_get_planner`
+
+**概要**: Plannerインスタンスを遅延初期化で取得する。未初期化の場合は`create_planner()`で作成する。
+
+```python
+def _get_planner(self) -> Planner
+```
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | なし（selfのみ） |
+| **Process** | 1. `self.planner`がNoneなら`create_planner(config=self.config)`で作成<br>2. `self.planner`を返却 |
+| **Output** | `Planner`: Plannerインスタンス |
+
+#### メソッド: `_create_full_replan`
+
+**概要**: エラー情報を含めたクエリで全体を再計画する。
+
+```python
+def _create_full_replan(self, context: ReplanContext) -> ExecutionPlan
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `context` | `ReplanContext` | - | リプランコンテキスト |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `context: ReplanContext` |
+| **Process** | 1. `_enhance_query_with_context()`でエラー情報付きクエリ生成<br>2. `Planner.create_plan()`で新計画生成<br>3. `requires_confirmation = True`を設定 |
+| **Output** | `ExecutionPlan`: 新しい実行計画 |
+
+#### メソッド: `_create_partial_replan`
+
+**概要**: 失敗ステップ以降を再生成し、完了済みステップと結合する。
+
+```python
+def _create_partial_replan(
+    self,
+    context: ReplanContext,
+    current_plan: ExecutionPlan
+) -> ExecutionPlan
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `context` | `ReplanContext` | - | リプランコンテキスト |
+| `current_plan` | `ExecutionPlan` | - | 現在の実行計画 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `context: ReplanContext`, `current_plan: ExecutionPlan` |
+| **Process** | 1. `failed_step_id`がなければ`current_plan`をそのまま返却<br>2. 完了済みステップ（`step_id < failed_step_id`）を保持<br>3. `_create_remaining_query()`で残りクエリ生成<br>4. `Planner.create_plan()`で残りステップ生成<br>5. `_adjust_step_ids()`でID・依存関係調整<br>6. 完了済み＋新ステップを結合した`ExecutionPlan`を返却 |
+| **Output** | `ExecutionPlan`: 部分再計画された実行計画 |
+
+#### メソッド: `_apply_fallback`
+
+**概要**: 失敗ステップを代替アクション（`step.fallback`）に置き換える。
+
+```python
+def _apply_fallback(
+    self,
+    context: ReplanContext,
+    current_plan: ExecutionPlan
+) -> ExecutionPlan
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `context` | `ReplanContext` | - | リプランコンテキスト |
+| `current_plan` | `ExecutionPlan` | - | 現在の実行計画 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `context: ReplanContext`, `current_plan: ExecutionPlan` |
+| **Process** | 1. `failed_step_id`がなければ`current_plan`をそのまま返却<br>2. 失敗ステップの`fallback`を`action`に設定した新ステップで置換<br>3. `description`に`[代替]`プレフィックスを付与<br>4. `requires_confirmation = False`で返却 |
+| **Output** | `ExecutionPlan`: 代替アクション適用済みの計画 |
+
+#### メソッド: `_skip_failed_step`
+
+**概要**: 失敗ステップを計画から除外し、依存関係を更新する。
+
+```python
+def _skip_failed_step(
+    self,
+    context: ReplanContext,
+    current_plan: ExecutionPlan
+) -> ExecutionPlan
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `context` | `ReplanContext` | - | リプランコンテキスト |
+| `current_plan` | `ExecutionPlan` | - | 現在の実行計画 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `context: ReplanContext`, `current_plan: ExecutionPlan` |
+| **Process** | 1. `failed_step_id`がなければ`current_plan`をそのまま返却<br>2. 失敗ステップを除外<br>3. 残ステップの`depends_on`から失敗ステップIDを除去 |
+| **Output** | `ExecutionPlan`: 失敗ステップスキップ済みの計画 |
+
+#### メソッド: `_enhance_query_with_context`
+
+**概要**: エラーメッセージ、完了済みステップ情報、フィードバック、新情報をクエリに追加する。
+
+```python
+def _enhance_query_with_context(
+    self,
+    original_query: str,
+    context: ReplanContext
+) -> str
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `original_query` | `str` | - | 元のクエリ |
+| `context` | `ReplanContext` | - | リプランコンテキスト |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `original_query: str`, `context: ReplanContext` |
+| **Process** | 1. コンテキストからヒント情報を収集（エラー、完了済みステップ、フィードバック、新情報）<br>2. ヒントがあれば`【追加情報】`セクションとして元クエリに付加 |
+| **Output** | `str`: コンテキスト付きの拡張クエリ |
+
+**戻り値例**:
+```python
+"最新のAI研究について調べてください\n\n【追加情報】\n注意: 前回の試行で「collection not found」というエラーが発生\n進捗: ステップ1は完了済み"
+```
+
+#### メソッド: `_create_remaining_query`
+
+**概要**: 部分再計画用のクエリを生成する。完了済みステップ数と失敗理由を含む。
+
+```python
+def _create_remaining_query(
+    self,
+    context: ReplanContext,
+    completed_steps: List[PlanStep]
+) -> str
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `context` | `ReplanContext` | - | リプランコンテキスト |
+| `completed_steps` | `List[PlanStep]` | - | 完了済みステップのリスト |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `context: ReplanContext`, `completed_steps: List[PlanStep]` |
+| **Process** | 元の質問、完了済みステップ数、失敗理由を含むプロンプト文字列を構築。JSONスキーマ準拠のアクション指定を含む |
+| **Output** | `str`: 残りステップ再計画用のプロンプト文字列 |
+
+#### メソッド: `_adjust_step_ids`
+
+**概要**: 新しいステップのIDと依存関係を調整する。最初のステップは最後の完了ステップに依存し、以降は直前のステップに依存する。
+
+```python
+def _adjust_step_ids(
+    self,
+    steps: List[PlanStep],
+    start_id: int,
+    completed_count: int
+) -> List[PlanStep]
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `steps` | `List[PlanStep]` | - | 調整対象のステップリスト |
+| `start_id` | `int` | - | 開始ステップID |
+| `completed_count` | `int` | - | 完了済みステップ数 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `steps: List[PlanStep]`, `start_id: int`, `completed_count: int` |
+| **Process** | 1. 各ステップに`start_id`から連番IDを割り当て<br>2. 最初のステップは`completed_count`（直前完了ステップ）に依存<br>3. 以降のステップは直前のステップIDに依存 |
+| **Output** | `List[PlanStep]`: ID・依存関係調整済みのステップリスト |
+
+#### メソッド: `_find_step`
+
+**概要**: 計画内から指定IDのステップを検索する。
+
+```python
+def _find_step(
+    self,
+    plan: ExecutionPlan,
+    step_id: int
+) -> Optional[PlanStep]
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `plan` | `ExecutionPlan` | - | 検索対象の実行計画 |
+| `step_id` | `int` | - | 検索するステップID |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `plan: ExecutionPlan`, `step_id: int` |
+| **Process** | `plan.steps`を走査し、`step.step_id == step_id`のステップを返却 |
+| **Output** | `Optional[PlanStep]`: 該当ステップ（見つからない場合`None`） |
 
 ### 4.6 ReplanOrchestrator クラス
 
-Executor と ReplanManager を統合し、リプランフローを管理するオーケストレーター。
+ExecutorとReplanManagerを統合し、自動リプランフローを管理するオーケストレーター。ステップ失敗時とユーザーフィードバック時のリプラン処理を一貫したインターフェースで提供する。
 
 #### コンストラクタ: `__init__`
 
-**概要**: ReplanOrchestratorを初期化します。
+**概要**: ReplanOrchestratorを初期化する。設定とReplanManagerを受け取る。
 
 ```python
-def __init__(
-    self,
+ReplanOrchestrator(
     config: Optional[GraceConfig] = None,
-    replan_manager: Optional[ReplanManager] = None,
+    replan_manager: Optional[ReplanManager] = None
 )
 ```
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `config` | Optional[GraceConfig] | None | GRACE設定 |
-| `replan_manager` | Optional[ReplanManager] | None | リプランマネージャー |
+| `config` | `Optional[GraceConfig]` | `None` | GRACE設定（Noneの場合`get_config()`で取得） |
+| `replan_manager` | `Optional[ReplanManager]` | `None` | リプランマネージャー（Noneの場合自動作成） |
 
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig]`, `replan_manager: Optional[ReplanManager]` |
-| **Process** | 設定を取得し、ReplanManagerを初期化 |
-| **Output** | ReplanOrchestratorインスタンス |
+| **Process** | 1. configがNoneなら`get_config()`で取得<br>2. replan_managerがNoneなら`ReplanManager(config=self.config)`で作成 |
+| **Output** | `ReplanOrchestrator`インスタンス |
 
 ```python
 # 使用例
+from grace.replan import ReplanOrchestrator
+
 orchestrator = ReplanOrchestrator()
 ```
 
----
-
 #### メソッド: `handle_step_failure`
 
-**概要**: ステップ失敗時のリプラン処理を統合的に実行します。
+**概要**: ステップ失敗時のリプラン処理を統合的に実行する。要否判定→コンテキスト作成→戦略決定→計画生成の一連フローを処理する。
 
 ```python
 def handle_step_failure(
@@ -775,16 +1019,16 @@ def handle_step_failure(
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `step_result` | StepResult | - | 失敗したステップの結果 |
-| `current_plan` | ExecutionPlan | - | 現在の計画 |
-| `completed_results` | Dict[int, StepResult] | - | 完了済み結果 |
-| `replan_count` | int | - | 現在のリプラン回数 |
+| `step_result` | `StepResult` | - | 失敗したステップの結果 |
+| `current_plan` | `ExecutionPlan` | - | 現在の実行計画 |
+| `completed_results` | `Dict[int, StepResult]` | - | 完了済みステップの結果 |
+| `replan_count` | `int` | - | 現在のリプラン回数 |
 
 | 項目 | 内容 |
 |------|------|
-| **Input** | `step_result`, `current_plan`, `completed_results`, `replan_count` |
-| **Process** | 1. リプラン要否判定<br>2. コンテキスト作成<br>3. 戦略決定<br>4. リプラン実行 |
-| **Output** | `Optional[ReplanResult]`: リプラン結果（リプランしない場合はNone） |
+| **Input** | `step_result: StepResult`, `current_plan: ExecutionPlan`, `completed_results: Dict[int, StepResult]`, `replan_count: int` |
+| **Process** | 1. `should_replan()`でリプラン要否判定<br>2. リプラン不要なら`None`を返却<br>3. `ReplanContext`を作成（trigger, original_query, failed_step_id, error_message, completed_results, replan_count）<br>4. `determine_strategy()`で戦略決定<br>5. `create_new_plan()`で新計画生成 |
+| **Output** | `Optional[ReplanResult]`: リプラン結果（リプランしない場合`None`） |
 
 **戻り値例**:
 ```python
@@ -794,34 +1038,28 @@ ReplanResult(
     strategy=ReplanStrategy.PARTIAL,
     new_plan=ExecutionPlan(...),
     reason="部分再計画",
-    replan_count=2
+    replan_count=1
 )
 
-# リプランしない場合
+# リプラン不要時
 None
 ```
 
 ```python
 # 使用例
-orchestrator = ReplanOrchestrator()
-
 result = orchestrator.handle_step_failure(
-    step_result=failed_step_result,
-    current_plan=current_plan,
-    completed_results={1: result1, 2: result2},
-    replan_count=1
+    step_result=failed_step,
+    current_plan=plan,
+    completed_results={1: step1_result},
+    replan_count=0
 )
-
 if result and result.success:
-    # 新計画で再実行
-    new_plan = result.new_plan
+    plan = result.new_plan
 ```
-
----
 
 #### メソッド: `handle_user_feedback`
 
-**概要**: ユーザーフィードバックによるリプラン処理を統合的に実行します。
+**概要**: ユーザーフィードバックによるリプラン処理を統合的に実行する。フィードバックの判定→コンテキスト作成→戦略決定→計画生成の一連フローを処理する。
 
 ```python
 def handle_user_feedback(
@@ -835,31 +1073,43 @@ def handle_user_feedback(
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `feedback` | str | - | ユーザーフィードバック |
-| `current_plan` | ExecutionPlan | - | 現在の計画 |
-| `completed_results` | Dict[int, StepResult] | - | 完了済み結果 |
-| `replan_count` | int | - | 現在のリプラン回数 |
+| `feedback` | `str` | - | ユーザーフィードバック |
+| `current_plan` | `ExecutionPlan` | - | 現在の実行計画 |
+| `completed_results` | `Dict[int, StepResult]` | - | 完了済みステップの結果 |
+| `replan_count` | `int` | - | 現在のリプラン回数 |
 
 | 項目 | 内容 |
 |------|------|
-| **Input** | `feedback`, `current_plan`, `completed_results`, `replan_count` |
-| **Process** | 1. フィードバックからリプラン要否判定<br>2. コンテキスト作成<br>3. 戦略決定<br>4. リプラン実行 |
-| **Output** | `Optional[ReplanResult]`: リプラン結果 |
+| **Input** | `feedback: str`, `current_plan: ExecutionPlan`, `completed_results: Dict[int, StepResult]`, `replan_count: int` |
+| **Process** | 1. `should_replan_from_feedback()`でリプラン要否判定<br>2. リプラン不要なら`None`を返却<br>3. `ReplanContext`を作成（trigger, original_query, user_feedback, completed_results, replan_count）<br>4. `determine_strategy()`で戦略決定<br>5. `create_new_plan()`で新計画生成 |
+| **Output** | `Optional[ReplanResult]`: リプラン結果（リプランしない場合`None`） |
+
+**戻り値例**:
+```python
+# フィードバックに修正キーワードが含まれる場合
+ReplanResult(
+    success=True,
+    strategy=ReplanStrategy.PARTIAL,
+    new_plan=ExecutionPlan(...),
+    reason="部分再計画",
+    replan_count=1
+)
+
+# 修正キーワードが含まれない場合
+None
+```
 
 ```python
 # 使用例
 result = orchestrator.handle_user_feedback(
-    feedback="違うアプローチで試してください",
-    current_plan=current_plan,
-    completed_results={1: result1},
+    feedback="結果を修正してください",
+    current_plan=plan,
+    completed_results={1: step1_result, 2: step2_result},
     replan_count=0
 )
-
 if result:
-    print(f"フィードバック反映: {result.strategy.value}")
+    print(f"リプラン戦略: {result.strategy.value}")
 ```
-
----
 
 ### 4.7 ファクトリ関数
 
@@ -870,20 +1120,20 @@ if result:
 ```python
 def create_replan_manager(
     config: Optional[GraceConfig] = None,
-    planner: Optional[Planner] = None,
+    planner: Optional[Planner] = None
 ) -> ReplanManager
 ```
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `config` | Optional[GraceConfig] | None | GRACE設定 |
-| `planner` | Optional[Planner] | None | Plannerインスタンス |
+| `config` | `Optional[GraceConfig]` | `None` | GRACE設定 |
+| `planner` | `Optional[Planner]` | `None` | 計画生成用Planner |
 
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig]`, `planner: Optional[Planner]` |
-| **Process** | ReplanManagerをインスタンス化 |
-| **Output** | `ReplanManager`: インスタンス |
+| **Process** | `ReplanManager(config=config, planner=planner)`を呼び出し |
+| **Output** | `ReplanManager`: 新しいインスタンス |
 
 ```python
 # 使用例
@@ -892,8 +1142,6 @@ from grace.replan import create_replan_manager
 manager = create_replan_manager()
 ```
 
----
-
 #### `create_replan_orchestrator`
 
 **概要**: ReplanOrchestratorインスタンスを作成するファクトリ関数。
@@ -901,20 +1149,20 @@ manager = create_replan_manager()
 ```python
 def create_replan_orchestrator(
     config: Optional[GraceConfig] = None,
-    replan_manager: Optional[ReplanManager] = None,
+    replan_manager: Optional[ReplanManager] = None
 ) -> ReplanOrchestrator
 ```
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `config` | Optional[GraceConfig] | None | GRACE設定 |
-| `replan_manager` | Optional[ReplanManager] | None | ReplanManagerインスタンス |
+| `config` | `Optional[GraceConfig]` | `None` | GRACE設定 |
+| `replan_manager` | `Optional[ReplanManager]` | `None` | リプランマネージャー |
 
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig]`, `replan_manager: Optional[ReplanManager]` |
-| **Process** | ReplanOrchestratorをインスタンス化 |
-| **Output** | `ReplanOrchestrator`: インスタンス |
+| **Process** | `ReplanOrchestrator(config=config, replan_manager=replan_manager)`を呼び出し |
+| **Output** | `ReplanOrchestrator`: 新しいインスタンス |
 
 ```python
 # 使用例
@@ -927,32 +1175,42 @@ orchestrator = create_replan_orchestrator()
 
 ## 5. 設定・定数
 
-### 5.1 ReplanConfig（リプラン設定）
+### 5.1 ReplanConfig（config.replan経由）
 
-`config.py` で定義されるリプラン関連の設定。
+`ReplanConfig`はPydantic `BaseModel`として定義される（`config.py` L100-105）。`ReplanManager`は`GraceConfig.replan`から以下の設定値を読み込む。
 
 ```python
 class ReplanConfig(BaseModel):
+    """リプラン設定"""
     max_replans: int = 3
     confidence_threshold: float = 0.4
     partial_replan_threshold: float = 0.6
     cooldown_seconds: int = 5
 ```
 
-| キー | デフォルト値 | 説明 |
-|-----|-------------|------|
-| `max_replans` | 3 | 最大リプラン回数 |
-| `confidence_threshold` | 0.4 | リプラン発動の信頼度閾値 |
-| `partial_replan_threshold` | 0.6 | 部分リプランの閾値 |
-| `cooldown_seconds` | 5 | リプラン間の待機時間（秒） |
+| キー | 型 | デフォルト値 | 説明 |
+|-----|------|-------------|------|
+| `max_replans` | `int` | `3` | 最大リプラン回数 |
+| `confidence_threshold` | `float` | `0.4` | 信頼度閾値（これ未満で`LOW_CONFIDENCE`トリガー） |
+| `partial_replan_threshold` | `float` | `0.6` | 部分再計画の閾値 |
+| `cooldown_seconds` | `int` | `5` | リプラン間のクールダウン秒数（※現在の`replan.py`では未使用） |
+
+> 📝 **注意**: `cooldown_seconds`は`ReplanConfig`に定義されているが、現在の`replan.py`実装では参照されていない。将来的なリプラン間隔制御に使用される予定と推測される。
 
 ### 5.2 修正キーワード
 
-フィードバックからリプラン要否を判定するキーワード。
+`should_replan_from_feedback()`で使用するフィードバック判定キーワード。
 
 ```python
 modification_keywords = ["修正", "変更", "やり直し", "違う", "別の"]
 ```
+
+### 5.3 戦略決定ロジック定数
+
+| 条件 | 閾値 | 結果 |
+|------|------|------|
+| 序盤失敗判定 | 進捗 ≤ 0.34（34%） | `FULL`（全体再計画） |
+| 全体リプラン要求キーワード | `"最初から"` | `FULL` |
 
 ---
 
@@ -963,133 +1221,77 @@ modification_keywords = ["修正", "変更", "やり直し", "違う", "別の"]
 ```python
 from grace.replan import (
     ReplanManager,
+    ReplanOrchestrator,
     ReplanContext,
     ReplanTrigger,
     create_replan_manager,
+    create_replan_orchestrator,
 )
-from grace.schemas import StepResult
 
-# 1. ReplanManagerを作成
+# 1. 初期化
 manager = create_replan_manager()
+orchestrator = create_replan_orchestrator()
 
-# 2. ステップ実行結果を作成（失敗例）
-step_result = StepResult(
-    step_id=2,
-    status="failed",
-    output=None,
-    confidence=0.0,
-    error="検索結果が見つかりませんでした"
+# 2. ステップ失敗時のリプラン
+result = orchestrator.handle_step_failure(
+    step_result=failed_step_result,
+    current_plan=current_plan,
+    completed_results={1: step1_result},
+    replan_count=0
 )
 
-# 3. リプラン要否を判定
-should, trigger = manager.should_replan(step_result, replan_count=0)
-
-if should:
-    print(f"リプラン必要: {trigger.value}")
-
-    # 4. コンテキストを作成
-    context = ReplanContext(
-        trigger=trigger,
-        original_query="東京の天気を教えて",
-        failed_step_id=step_result.step_id,
-        error_message=step_result.error,
-        completed_results={1: previous_result},
-        replan_count=0
-    )
-
-    # 5. 戦略を決定
-    strategy = manager.determine_strategy(context, current_plan)
-    print(f"戦略: {strategy.value}")
-
-    # 6. 新計画を生成
-    result = manager.create_new_plan(context, strategy, current_plan)
-
-    if result.success:
-        print(f"リプラン成功: {len(result.new_plan.steps)}ステップ")
-    else:
-        print(f"リプラン失敗: {result.reason}")
+# 3. 結果確認
+if result and result.success:
+    print(f"リプラン成功: {result.strategy.value}")
+    new_plan = result.new_plan
+else:
+    print("リプラン不要またはリプラン失敗")
 ```
 
 ### 6.2 ユーザーフィードバックによるリプラン
 
 ```python
-from grace.replan import create_replan_manager
+# ユーザーフィードバックでリプラン
+result = orchestrator.handle_user_feedback(
+    feedback="検索結果を修正して、もっと最新の情報にしてください",
+    current_plan=current_plan,
+    completed_results=completed_results,
+    replan_count=0
+)
 
+if result and result.success:
+    print(f"戦略: {result.strategy.value}, 理由: {result.reason}")
+```
+
+### 6.3 手動でのリプラン制御
+
+```python
+# ReplanManagerを直接使用
 manager = create_replan_manager()
 
-# ユーザーフィードバックを受信
-feedback = "違うアプローチで、Web検索も使って調べてください"
-
-# リプラン要否を判定
-should, trigger = manager.should_replan_from_feedback(feedback, replan_count=0)
-
+# リプラン要否判定
+should, trigger = manager.should_replan(step_result, replan_count=0)
 if should:
+    # コンテキスト構築
     context = ReplanContext(
         trigger=trigger,
-        original_query="東京の観光スポットを教えて",
-        user_feedback=feedback,
-        completed_results={1: result1, 2: result2},
+        original_query="AIの最新動向を調べてください",
+        failed_step_id=step_result.step_id,
+        error_message=step_result.error,
+        completed_results=completed_results,
         replan_count=0
     )
 
+    # 戦略決定
     strategy = manager.determine_strategy(context, current_plan)
-    # フィードバックによる場合は通常 PARTIAL が選択される
 
+    # 計画生成
     result = manager.create_new_plan(context, strategy, current_plan)
-    print(f"フィードバック反映完了: {result.strategy.value}")
-```
+    print(f"戦略: {strategy.value}, 成功: {result.success}")
 
-### 6.3 Orchestratorを使用した統合フロー
-
-```python
-from grace.replan import create_replan_orchestrator
-
-# 1. Orchestratorを作成
-orchestrator = create_replan_orchestrator()
-
-# 2. ステップ実行ループ
-replan_count = 0
-current_plan = initial_plan
-completed_results = {}
-
-for step in current_plan.steps:
-    # ステップ実行
-    result = execute_step(step)
-
-    if result.status == "success":
-        completed_results[step.step_id] = result
-    else:
-        # 失敗時のリプラン処理
-        replan_result = orchestrator.handle_step_failure(
-            step_result=result,
-            current_plan=current_plan,
-            completed_results=completed_results,
-            replan_count=replan_count
-        )
-
-        if replan_result and replan_result.success:
-            # 新計画で再開
-            current_plan = replan_result.new_plan
-            replan_count = replan_result.replan_count
-            print(f"リプラン実行: {replan_result.strategy.value}")
-            break  # 新計画で再ループ
-        elif replan_result and not replan_result.success:
-            # リプラン失敗（中断）
-            print(f"実行中断: {replan_result.reason}")
-            break
-
-# ユーザーフィードバック処理
-user_input = get_user_input()
-if user_input:
-    feedback_result = orchestrator.handle_user_feedback(
-        feedback=user_input,
-        current_plan=current_plan,
-        completed_results=completed_results,
-        replan_count=replan_count
-    )
-
-    if feedback_result and feedback_result.success:
-        current_plan = feedback_result.new_plan
+# 履歴確認
+for r in manager.get_history():
+    print(f"  {r.strategy.value}: {r.reason}")
 ```
 
 ---
@@ -1124,213 +1326,48 @@ __all__ = [
 
 | バージョン | 変更内容 |
 |-----------|---------|
-| 1.0 | 初版作成（2025-01-29） |
-| 1.1 | planner.pyの情報を反映：Plannerとの連携詳細、未使用機能の説明を追加 |
-| 1.2 | Planner連携詳細を拡充：`_enhance_query_with_context()`、フォールバック動作、プロンプトルールを追加 |
+| 1.0 | 初版作成 |
+| 1.1 | IPO詳細の追加、使用例の充実 |
+| 1.2 | アーキテクチャ構成図・モジュール構成図追加、プライベートメソッドの詳細記述 |
+| 1.3 | フォーマット仕様v1.4準拠: 「各責務対応のモジュール」テーブル追加、ASCII図をMermaid v9フローチャートに変更、クラス一覧・関数一覧の構成を仕様に準拠、ReplanContext/ReplanResultのIPO詳細にコンストラクタ・プロパティ・メソッドを個別記述化、config.pyのReplanConfig定義に基づく設定・定数セクションの正確化（cooldown_seconds追加・未使用注記） |
 
 ---
 
 ## 付録: 依存関係図
 
+```mermaid
+flowchart LR
+    REPLAN[replan.py]
+
+    subgraph STDLIB["標準ライブラリ"]
+        LOGGING[logging]
+        DATACLASSES[dataclasses]
+        TYPING[typing]
+        ENUM[enum]
+        DATETIME[datetime]
+    end
+
+    subgraph INTERNAL["内部モジュール"]
+        SCHEMAS[.schemas]
+        PLANNER[.planner]
+        CONFIG[.config]
+    end
+
+    REPLAN --> LOGGING
+    REPLAN --> DATACLASSES
+    REPLAN --> TYPING
+    REPLAN --> ENUM
+    REPLAN --> DATETIME
+    REPLAN --> SCHEMAS
+    REPLAN --> PLANNER
+    REPLAN --> CONFIG
+
+    SCHEMAS --> S1[ExecutionPlan]
+    SCHEMAS --> S2[PlanStep]
+    SCHEMAS --> S3[StepResult]
+    PLANNER --> P1[Planner]
+    PLANNER --> P2[create_planner]
+    CONFIG --> C1["get_config()"]
+    CONFIG --> C2[GraceConfig]
+    CONFIG --> C3[ReplanConfig]
 ```
-replan.py
-    │
-    ├──► dataclasses
-    │        └── dataclass
-    │        └── field
-    │
-    ├──► typing
-    │        └── Optional, List, Dict, Any
-    │
-    ├──► enum
-    │        └── Enum
-    │
-    ├──► datetime
-    │        └── datetime
-    │
-    ├──► logging
-    │        └── getLogger
-    │
-    ├──► .schemas (内部)
-    │        └── ExecutionPlan
-    │        └── PlanStep
-    │        └── StepResult
-    │
-    ├──► .planner (内部)
-    │        └── Planner
-    │        │     ├── __init__(config, model_name)
-    │        │     ├── create_plan(query) → ExecutionPlan
-    │        │     ├── refine_plan(plan, feedback) → ExecutionPlan
-    │        │     ├── estimate_complexity(query) → float
-    │        │     ├── estimate_complexity_with_llm(query) → float
-    │        │     ├── _create_fallback_plan(query) → ExecutionPlan
-    │        │     └── _get_available_collections() → list
-    │        └── create_planner(config, model_name) → Planner
-    │
-    └──► .config (内部)
-             └── get_config()
-             └── GraceConfig
-                   └── replan: ReplanConfig
-                         ├── max_replans: int = 3
-                         ├── confidence_threshold: float = 0.4
-                         ├── partial_replan_threshold: float = 0.6
-                         └── cooldown_seconds: int = 5
-```
-
-### Planner → Gemini API 連携
-
-```
-ReplanManager
-    │
-    └──► Planner.create_plan(enhanced_query)
-              │
-              ├── estimate_complexity_with_llm(query)
-              │        └── Gemini API (temperature=0.1, max_tokens=10)
-              │
-              └── generate_content(PLAN_GENERATION_PROMPT)
-                       └── Gemini API (response_schema=ExecutionPlan)
-                                │
-                                └── ExecutionPlan (JSON)
-```
-
----
-
-## 関連ドキュメント
-
-| ドキュメント | 説明 |
-|-------------|------|
-| `config.md` | GraceConfig設定管理の詳細ドキュメント |
-| `schemas.md` | ExecutionPlan, PlanStep, StepResultの詳細 |
-| `planner.md` | Plannerクラスの詳細ドキュメント（計画生成ロジック） |
-| `executor.md` | 計画実行エージェントのドキュメント |
-| `confidence.md` | 信頼度計算システムのドキュメント |
-
----
-
-## 補足情報
-
-### Planner との連携詳細
-
-ReplanManager は内部で Planner を使用して新計画を生成します。以下に連携の詳細を示します。
-
-**Planner クラスの概要**:
-
-| メソッド | 用途 | ReplanManagerでの使用 |
-|---------|------|----------------------|
-| `create_plan(query)` | クエリから新規計画を生成 | `_create_full_replan()`, `_create_partial_replan()` |
-| `refine_plan(plan, feedback)` | フィードバックに基づく計画修正 | （将来の拡張用） |
-| `estimate_complexity_with_llm(query)` | LLMで複雑度を推定 | 間接的に使用（create_plan内部） |
-
-**`_create_full_replan()` での使用**:
-```python
-def _create_full_replan(self, context: ReplanContext) -> ExecutionPlan:
-    # エラー情報を含めたクエリを生成
-    enhanced_query = self._enhance_query_with_context(
-        context.original_query,
-        context
-    )
-
-    # Planner.create_plan() を呼び出して新計画を生成
-    planner = self._get_planner()
-    new_plan = planner.create_plan(enhanced_query)
-
-    # リプラン後は確認を推奨
-    new_plan.requires_confirmation = True
-    return new_plan
-```
-
-**`_create_partial_replan()` での使用**:
-```python
-def _create_partial_replan(self, context, current_plan) -> ExecutionPlan:
-    # 完了済みステップを保持
-    completed_steps = [step for step in current_plan.steps
-                       if step.step_id < context.failed_step_id]
-
-    # 残りステップ用のクエリを生成
-    remaining_query = self._create_remaining_query(context, completed_steps)
-
-    # Planner.create_plan() で残りを再計画
-    planner = self._get_planner()
-    new_partial = planner.create_plan(remaining_query)
-
-    # ステップIDを調整して結合
-    adjusted_steps = self._adjust_step_ids(new_partial.steps, ...)
-    final_steps = completed_steps + adjusted_steps
-
-    return ExecutionPlan(steps=final_steps, ...)
-```
-
-**`_enhance_query_with_context()` によるクエリ拡張**:
-
-リプラン時には、エラー情報や進捗情報を含めた拡張クエリがPlannerに渡されます：
-
-```python
-def _enhance_query_with_context(self, original_query, context) -> str:
-    hints = []
-
-    if context.error_message:
-        hints.append(f"注意: 前回の試行で「{context.error_message}」というエラーが発生")
-
-    if context.completed_results:
-        completed_info = [f"ステップ{sid}は完了済み"
-                         for sid in sorted(context.completed_results.keys())]
-        hints.append(f"進捗: {', '.join(completed_info)}")
-
-    if context.user_feedback:
-        hints.append(f"ユーザーフィードバック: {context.user_feedback}")
-
-    if context.new_information:
-        hints.append(f"追加情報: {context.new_information}")
-
-    if hints:
-        return f"{original_query}\n\n【追加情報】\n" + "\n".join(hints)
-
-    return original_query
-```
-
-**Plannerのフォールバック動作**:
-
-Plannerは計画生成に失敗した場合、自動的にフォールバック計画を生成します：
-
-```python
-# Planner._create_fallback_plan() の構造
-ExecutionPlan(
-    original_query=query,
-    complexity=0.5,
-    estimated_steps=2,
-    requires_confirmation=False,
-    steps=[
-        PlanStep(step_id=1, action="rag_search", collection="wikipedia_ja", ...),
-        PlanStep(step_id=2, action="reasoning", depends_on=[1], ...)
-    ],
-    success_criteria="ユーザーの質問に適切に回答できている"
-)
-```
-
-### 未使用・将来の拡張機能
-
-以下の機能は定義されていますが、現在のコードでは未使用または将来の拡張用です：
-
-| 項目 | 状態 | 説明 |
-|------|------|------|
-| `ReplanTrigger.NEW_INFORMATION` | 未使用 | 新情報発見時のトリガー（将来の拡張用） |
-| `config.replan.cooldown_seconds` | 未使用 | リプラン間隔の制御（将来の拡張用） |
-| `Planner.refine_plan()` | 未使用 | フィードバック反映（現在は `create_plan()` で代替） |
-| `Planner._create_plan_legacy()` | バックアップ | Legacy Agent委譲版（run_legacy_agentアクション使用） |
-
-### Planner が使用するプロンプト
-
-**PLAN_GENERATION_PROMPT の主要ルール**:
-
-1. **検索アクション統合**: `rag_search` は可能な限り1ステップにまとめる
-2. **クエリ保持**: ユーザーの元の質問文を完全一致でコピー
-3. **コレクション省略**: `collection` 引数は原則 `null`（システムが自動選択）
-4. **最終ステップ**: 必ず `reasoning` で回答を生成
-
-**複雑度の目安**:
-
-| 範囲 | 説明 | ステップ数 |
-|------|------|-----------|
-| 0.0-0.3 | 単純な質問 | 1-2 |
-| 0.4-0.6 | 中程度の質問 | 2-3 |
-| 0.7-1.0 | 複雑な質問 | 4以上 |

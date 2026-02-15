@@ -252,12 +252,52 @@ def show_grace_chat_page():
                     with st.spinner("計画を生成中..."):
                         plan: ExecutionPlan = st.session_state.grace_planner.create_plan(prompt)
 
-                    # 計画の表示
+                    # --- 計画概要 ---
                     st.markdown(f"**目標**: {plan.original_query}")
-                    st.markdown(f"**複雑度**: {plan.complexity:.1f} | **ステップ数**: {plan.estimated_steps}")
+                    col_plan1, col_plan2, col_plan3 = st.columns(3)
+                    with col_plan1:
+                        st.metric("複雑度", f"{plan.complexity:.1f}")
+                    with col_plan2:
+                        st.metric("ステップ数", plan.estimated_steps)
+                    with col_plan3:
+                        st.metric("要確認", "⚠️ はい" if plan.requires_confirmation else "✅ いいえ")
+
+                    if plan.success_criteria:
+                        st.caption(f"🎯 成功基準: {plan.success_criteria}")
+
+                    st.divider()
+
+                    # --- 各ステップ詳細 ---
                     for step in plan.steps:
-                        deps = f" (依存: {step.depends_on})" if step.depends_on else ""
-                        st.markdown(f"  {step.step_id}. **[{step.action}]** {step.description}{deps}")
+                        action_icon = {
+                            "rag_search": "🔍",
+                            "web_search": "🌐",
+                            "reasoning": "🧠",
+                            "ask_user": "💬",
+                            "code_execute": "💻",
+                            "run_legacy_agent": "🤖",
+                        }.get(step.action, "▶️")
+
+                        deps = f"  ← 依存: Step {step.depends_on}" if step.depends_on else ""
+                        st.markdown(f"**{action_icon} Step {step.step_id}: [{step.action}]** {step.description}{deps}")
+
+                        detail_parts = []
+                        if step.query:
+                            detail_parts.append(f"🔑 **Query**: `{step.query}`")
+                        if step.collection:
+                            detail_parts.append(f"📁 **Collection**: `{step.collection}`")
+                        if step.expected_output:
+                            detail_parts.append(f"📤 **期待出力**: {step.expected_output}")
+                        if step.fallback:
+                            detail_parts.append(f"🔄 **Fallback**: `{step.fallback}`")
+
+                        if detail_parts:
+                            for part in detail_parts:
+                                st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{part}")
+
+                    # --- Plan JSON (デバッグ用) ---
+                    with st.expander("🔧 Plan JSON (raw)", expanded=False):
+                        st.json(plan.model_dump(mode="json", exclude={"created_at"}))
 
                 # ============================================================
                 # Phase 2-4: Execute — 実行 (Confidence/Intervention/Replan)

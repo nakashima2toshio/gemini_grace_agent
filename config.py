@@ -37,7 +37,7 @@ class ModelConfig:
     ]
 
     # デフォルトモデル
-    DEFAULT_MODEL: str = "gemini-2.5-flash"
+    DEFAULT_MODEL: str = "gemini-3-flash-preview"
 
     # temperatureパラメータをサポートしないモデル
     # Geminiでは全モデルでtemperatureがサポートされる

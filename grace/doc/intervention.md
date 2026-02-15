@@ -1,6 +1,6 @@
 # intervention.py - HITL介入システム ドキュメント
 
-**Version 1.0** | 最終更新: 2025-01-29
+**Version 1.1** | 最終更新: 2026-02-13
 
 ---
 
@@ -31,6 +31,16 @@
 - ユーザーフィードバックに基づく動的閾値調整
 - 介入履歴の記録と管理
 
+### 各責務対応のモジュール
+
+| # | 責務 | 対応モジュール | 説明 |
+|---|------|--------------|------|
+| 1 | 信頼度レベルに応じた介入リクエストの生成 | `intervention.py` | InterventionHandlerが信頼度レベル別にリクエストを生成 |
+| 2 | ユーザーからの介入レスポンスの処理 | `intervention.py` | コールバック経由でユーザー応答を取得・処理 |
+| 3 | 計画確認フロー（確認→修正→実行）の管理 | `intervention.py` | ConfirmationFlowが確認ループを制御 |
+| 4 | ユーザーフィードバックに基づく動的閾値調整 | `intervention.py` | DynamicThresholdAdjusterがFP/FN率を監視し閾値を学習 |
+| 5 | 介入履歴の記録と管理 | `intervention.py` | InterventionHandlerが全介入の履歴を保持 |
+
 ### 主要機能一覧
 
 | 機能 | 説明 |
@@ -58,31 +68,36 @@
 
 ### 1.1 システム全体構成
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                        クライアント層                            │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │
-│  │    Orchestrator  │  │     Executor     │  │   Planner    │  │
-│  └────────┬─────────┘  └────────┬─────────┘  └──────┬───────┘  │
-└───────────┼─────────────────────┼───────────────────┼──────────┘
-            │                     │                   │
-            └──────────────────┬──┴───────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     intervention.py                             │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  InterventionHandler  │  DynamicThresholdAdjuster          │ │
-│  │  ConfirmationFlow     │  InterventionRequest/Response      │ │
-│  └────────────────────────────────────────────────────────────┘ │
-└───────────────────────────────┬─────────────────────────────────┘
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       依存モジュール層                             │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐     │
-│  │    schemas     │  │   confidence   │  │     config     │     │
-│  │ (ExecutionPlan)│  │(InterventionLv)│  │  (GraceConfig) │     │
-│  └────────────────┘  └────────────────┘  └────────────────┘     │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph CLIENT["クライアント層"]
+        ORCH[Orchestrator]
+        EXEC[Executor]
+        PLAN[Planner]
+    end
+
+    subgraph MODULE["intervention.py"]
+        HANDLER[InterventionHandler]
+        ADJUSTER[DynamicThresholdAdjuster]
+        FLOW[ConfirmationFlow]
+        REQ[InterventionRequest / Response]
+    end
+
+    subgraph EXTERNAL["依存モジュール層"]
+        SCHEMAS[schemas - ExecutionPlan / PlanStep]
+        CONF[confidence - InterventionLevel / ActionDecision]
+        CONFIG[config - GraceConfig]
+    end
+
+    ORCH --> HANDLER
+    EXEC --> HANDLER
+    PLAN --> FLOW
+    FLOW --> HANDLER
+    HANDLER --> SCHEMAS
+    HANDLER --> CONF
+    HANDLER --> CONFIG
+    ADJUSTER --> CONF
+    ADJUSTER --> CONFIG
 ```
 
 ### 1.2 データフロー
@@ -98,49 +113,70 @@
 
 ### 2.1 内部モジュール構成
 
-```
-intervention.py
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```mermaid
+flowchart TB
+    subgraph DATA["データクラス"]
+        REQ[InterventionRequest]
+        RES[InterventionResponse]
+        FB[FeedbackRecord]
+    end
 
-[データクラス]
-  ├── InterventionRequest      - 介入リクエスト
-  ├── InterventionResponse     - 介入レスポンス
-  └── FeedbackRecord           - フィードバック記録
+    subgraph ENUM["列挙型"]
+        ACT[InterventionAction]
+    end
 
-[列挙型]
-  └── InterventionAction       - 介入アクション
-        ├── PROCEED            - そのまま進行
-        ├── MODIFY             - 計画を修正して進行
-        ├── CANCEL             - キャンセル
-        ├── INPUT              - ユーザー入力を受け取る
-        ├── RETRY              - 再試行
-        └── SKIP               - 現在のステップをスキップ
+    subgraph HANDLER_CLS["InterventionHandler"]
+        H_INIT["__init__()"]
+        H_HANDLE["handle()"]
+        H_SILENT["_handle_silent()"]
+        H_NOTIFY["_handle_notify()"]
+        H_CONFIRM["_handle_confirm()"]
+        H_ESCALATE["_handle_escalate()"]
+        H_TIMEOUT["_handle_timeout()"]
+        H_REQ_CONF["request_confirmation()"]
+        H_REQ_CLAR["request_clarification()"]
+        H_STATUS["notify_status()"]
+        H_HISTORY["get_history()"]
+        H_CLEAR["clear_history()"]
+    end
 
-[クラス]
-  ├── InterventionHandler      - 介入ハンドラー
-  │     ├── __init__()
-  │     ├── handle()
-  │     ├── request_confirmation()
-  │     ├── request_clarification()
-  │     ├── notify_status()
-  │     ├── get_history()
-  │     └── clear_history()
-  │
-  ├── DynamicThresholdAdjuster - 動的閾値調整
-  │     ├── __init__()
-  │     ├── record_feedback()
-  │     ├── get_level()
-  │     ├── get_current_thresholds()
-  │     └── reset_thresholds()
-  │
-  └── ConfirmationFlow         - 計画確認フロー
-        ├── __init__()
-        └── confirm_plan()
+    subgraph ADJUSTER_CLS["DynamicThresholdAdjuster"]
+        A_INIT["__init__()"]
+        A_RECORD["record_feedback()"]
+        A_ADJUST["_adjust_thresholds()"]
+        A_RAISE["_raise_thresholds()"]
+        A_LOWER["_lower_thresholds()"]
+        A_LEVEL["get_level()"]
+        A_GET["get_current_thresholds()"]
+        A_RESET["reset_thresholds()"]
+    end
 
-[ファクトリ関数]
-  ├── create_intervention_handler()
-  ├── create_threshold_adjuster()
-  └── create_confirmation_flow()
+    subgraph FLOW_CLS["ConfirmationFlow"]
+        F_INIT["__init__()"]
+        F_CONFIRM["confirm_plan()"]
+    end
+
+    subgraph FACTORY["ファクトリ関数"]
+        CF_HANDLER["create_intervention_handler()"]
+        CF_ADJUSTER["create_threshold_adjuster()"]
+        CF_FLOW["create_confirmation_flow()"]
+    end
+
+    DATA --> HANDLER_CLS
+    ENUM --> HANDLER_CLS
+    ACT --> RES
+    FB --> ADJUSTER_CLS
+    H_HANDLE --> H_SILENT
+    H_HANDLE --> H_NOTIFY
+    H_HANDLE --> H_CONFIRM
+    H_HANDLE --> H_ESCALATE
+    A_RECORD --> A_ADJUST
+    A_ADJUST --> A_RAISE
+    A_ADJUST --> A_LOWER
+    F_CONFIRM --> H_REQ_CONF
+    CF_HANDLER --> H_INIT
+    CF_ADJUSTER --> A_INIT
+    CF_FLOW --> F_INIT
 ```
 
 ### 2.2 外部依存関係
@@ -1231,42 +1267,46 @@ __all__ = [
 | バージョン | 変更内容 |
 |-----------|---------|
 | 1.0 | 初版作成 |
+| 1.1 | フォーマット仕様v1.4準拠: 「各責務対応のモジュール」テーブル追加、ASCII図をMermaid v9フローチャートに変更（アーキテクチャ構成図・モジュール構成図・付録依存関係図） |
 
 ---
 
 ## 付録: 依存関係図
 
-```
-intervention.py
-    │
-    ├──► logging (標準ライブラリ)
-    │        └── getLogger()
-    │
-    ├──► time (標準ライブラリ)
-    │        └── time()
-    │
-    ├──► dataclasses (標準ライブラリ)
-    │        └── dataclass, field
-    │
-    ├──► typing (標準ライブラリ)
-    │        └── Optional, List, Callable, Any, Literal, Dict
-    │
-    ├──► enum (標準ライブラリ)
-    │        └── Enum
-    │
-    ├──► datetime (標準ライブラリ)
-    │        └── datetime
-    │
-    ├──► grace.schemas (内部)
-    │        └── ExecutionPlan
-    │        └── PlanStep
-    │
-    ├──► grace.confidence (内部)
-    │        └── InterventionLevel
-    │        └── ConfidenceScore
-    │        └── ActionDecision
-    │
-    └──► grace.config (内部)
-             └── get_config()
-             └── GraceConfig
+```mermaid
+flowchart LR
+    INTERVENTION[intervention.py]
+
+    subgraph STDLIB["標準ライブラリ"]
+        LOGGING[logging]
+        TIME[time]
+        DATACLASSES[dataclasses]
+        TYPING[typing]
+        ENUM_LIB[enum]
+        DATETIME[datetime]
+    end
+
+    subgraph INTERNAL["内部モジュール"]
+        SCHEMAS[".schemas"]
+        CONFIDENCE[".confidence"]
+        CONFIG[".config"]
+    end
+
+    INTERVENTION --> LOGGING
+    INTERVENTION --> TIME
+    INTERVENTION --> DATACLASSES
+    INTERVENTION --> TYPING
+    INTERVENTION --> ENUM_LIB
+    INTERVENTION --> DATETIME
+    INTERVENTION --> SCHEMAS
+    INTERVENTION --> CONFIDENCE
+    INTERVENTION --> CONFIG
+
+    SCHEMAS --> S1[ExecutionPlan]
+    SCHEMAS --> S2[PlanStep]
+    CONFIDENCE --> C1[InterventionLevel]
+    CONFIDENCE --> C2[ConfidenceScore]
+    CONFIDENCE --> C3[ActionDecision]
+    CONFIG --> CF1["get_config()"]
+    CONFIG --> CF2[GraceConfig]
 ```

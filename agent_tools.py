@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)  # Configure logger for this module
 client: QdrantClient = get_qdrant_client()
 
 
+# ============ コサイン類似度閾値 ============
+COSINE_SIMILARITY_THRESHOLD: float = 0.7  # Cohere Rerank廃止 → コサイン類似度で直接フィルタ
+
+
 # ============ コレクション一覧キャッシュ（Phase 3 STEP 6 改善）============
 _collections_cache: Optional[List[str]] = None
 _collections_cache_time: float = 0.0
@@ -286,30 +290,99 @@ def rerank_results(
         return sorted_results[:top_k]
 
 
-# Phase 4 STEP 9 整理: 薄いラッパーに簡素化
-# ※ agent_service.py では search_rag_knowledge_base_cached() にインターセプトされるため
-#    この関数が直接呼ばれるケースは限定的（Gemini tools API の関数定義として必要）
 def search_rag_knowledge_base(
         query: str,
         collection_name: Optional[str] = None,
         use_hybrid_search: bool = True
 ) -> str:
     """
-    Qdrantデータベースから専門的な知識を検索します。
+    【上位モジュール】全コレクション並列検索 + コサイン類似度閾値フィルタ
+
+    Gemini SDK (AFC) から直接呼ばれるツール関数。
+    collection_name はモデルが指定しても無視し、全コレクションを検索する。
+
+    処理フロー:
+      1. Embedding生成（Dense + Sparse、1回だけ）
+      2. 全コレクション一覧取得
+      3. 並列検索（下位モジュール: search_rag_knowledge_base_structured）
+      4. コサイン類似度 >= COSINE_SIMILARITY_THRESHOLD でフィルタ
+      5. スコア順ソート、上位5件をフォーマットして返す
 
     Args:
         query: 検索クエリ
-        collection_name: 検索対象のコレクション名（省略時はデフォルト）
-        use_hybrid_search: ハイブリッド検索（Sparse + Dense）を使用するか（デフォルト: True）
+        collection_name: モデルが指定しても無視される（全コレクション検索）
+        use_hybrid_search: ハイブリッド検索を使用するか
     """
-    effective_collection = collection_name if collection_name else AgentConfig.RAG_DEFAULT_COLLECTION
+    start_time = time.time()
+    hybrid_status = "有効 (Sparse+Dense)" if use_hybrid_search else "無効 (Denseのみ)"
+    logger.info(f"\n{'=' * 60}")
+    logger.info(f"🔍 全コレクション検索開始")
+    logger.info(f"   Query: '{query}'")
+    logger.info(f"   Hybrid Search: {hybrid_status}")
+    logger.info(f"   コサイン類似度閾値: {COSINE_SIMILARITY_THRESHOLD}")
+    logger.info(f"{'=' * 60}")
 
-    results = search_rag_knowledge_base_structured(query, collection_name, use_hybrid_search=use_hybrid_search)
+    # Step 1: Embedding生成（1回だけ、全コレクションで共有）
+    try:
+        query_vector: List[float] = embed_query(query)
+        if query_vector is None:
+            return "[[RAG_TOOL_ERROR]] クエリの埋め込み生成に失敗しました。"
+    except Exception as e:
+        logger.error(f"Dense Embedding生成エラー: {e}")
+        return f"[[RAG_TOOL_ERROR]] Embedding生成エラー: {str(e)}"
 
-    if isinstance(results, str):  # Error or No Result strings
-        return results
+    sparse_vector = None
+    if use_hybrid_search:
+        try:
+            sparse_vector = embed_sparse_query_unified(query)
+            logger.debug("Sparseベクトル生成成功（1回のみ）")
+        except Exception as e:
+            logger.debug(f"Sparseベクトル生成スキップ: {e}")
 
-    return _format_results(results, effective_collection)
+    logger.info(f"✅ Embedding生成完了（Dense: {len(query_vector)}D, Sparse: {'あり' if sparse_vector else 'なし'}）")
+
+    # Step 2: 全コレクション一覧取得
+    try:
+        all_collections = get_existing_collections_cached()
+        logger.info(f"🔍 全コレクション並列検索: {len(all_collections)}コレクション")
+    except Exception as e:
+        logger.error(f"コレクション一覧取得エラー: {e}")
+        return f"[[RAG_TOOL_ERROR]] コレクション一覧の取得に失敗しました: {str(e)}"
+
+    if not all_collections:
+        return "[[NO_RAG_RESULT]] 利用可能なコレクションがありません。"
+
+    # Step 3: 並列検索（下位モジュールを各コレクションに対して呼ぶ）
+    def search_single(q: str, col: str):
+        """1コレクション検索（事前計算ベクトルを共有）"""
+        return search_rag_knowledge_base_structured(
+            q, col,
+            use_hybrid_search=use_hybrid_search,
+            precomputed_query_vector=query_vector,
+            precomputed_sparse_vector=sparse_vector
+        )
+
+    all_results = parallel_search_engine.search_all_collections(
+        query=query,
+        collections=all_collections,
+        search_func=search_single
+    )
+
+    # Step 4: コサイン類似度閾値フィルタ（下位モジュールでもフィルタ済みだが、安全のため再度確認）
+    filtered = [r for r in all_results if r.get('score', 0.0) >= COSINE_SIMILARITY_THRESHOLD]
+
+    elapsed = (time.time() - start_time) * 1000
+    logger.info(f"✅ 全コレクション検索完了: {len(all_results)}件中 {len(filtered)}件が閾値以上 ({elapsed:.0f}ms)")
+    logger.info(f"{'=' * 60}\n")
+
+    if not filtered:
+        return (
+            f"[[NO_RAG_RESULT_LOW_SCORE]] 全コレクションを検索しましたが、"
+            f"コサイン類似度 >= {COSINE_SIMILARITY_THRESHOLD} の結果が見つかりませんでした。"
+        )
+
+    # Step 5: 上位5件をフォーマットして返す
+    return _format_results(filtered[:5], "複数コレクション")
 
 
 # ★変更: use_hybrid_search パラメータを追加
@@ -399,25 +472,37 @@ def search_rag_knowledge_base_structured(
             _search_metrics_log.append(metrics)
             return f"[[NO_RAG_RESULT]] 検索結果が見つかりませんでした。コレクション: '{collection_name}'."
 
-        # 2. Re-ranking (Cohere)
-        # ここでスコアが「順位スコア(0.66...)」から「確率スコア(0.902...)」に変わる
-        # Cohere APIキーがない場合は、ここでの変更は行われず、RRFスコアのままフィルタリングに進む
-        # スコア閾値を0.2に設定し、より多くの結果を残すようにする
-        reranked_results = rerank_results(query, candidates, top_k=AgentConfig.RAG_SEARCH_LIMIT, threshold=0.2)
+        # 2. コサイン類似度閾値フィルタ（Cohere Rerank 廃止）
+        filtered_results = [
+            r for r in candidates
+            if r.get("score", 0.0) >= COSINE_SIMILARITY_THRESHOLD
+        ]
+        filtered_results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+        filtered_results = filtered_results[:AgentConfig.RAG_SEARCH_LIMIT]
 
         # 3. Metrics & Return
-        scores: List[float] = [res.get("score", 0.0) for res in reranked_results]
+        scores: List[float] = [res.get("score", 0.0) for res in filtered_results]
         metrics.scores = scores
         metrics.top_score = max(scores) if scores else 0.0
-        metrics.filtered_results = len(reranked_results)
+        metrics.filtered_results = len(filtered_results)
 
         metrics.latency_ms = (time.time() - start_time) * 1000.0
         _search_metrics_log.append(metrics)
 
-        if not reranked_results:
-            return f"[[NO_RAG_RESULT_LOW_SCORE]] スコア閾値未満の結果のみでした。最高スコア: {metrics.top_score:.2f}"
+        if not filtered_results:
+            all_scores = [r.get('score', 0.0) for r in candidates]
+            max_score = max(all_scores) if all_scores else 0.0
+            return (
+                f"[[NO_RAG_RESULT_LOW_SCORE]] スコア閾値未満の結果のみでした。"
+                f"最高スコア: {max_score:.2f} (閾値: {COSINE_SIMILARITY_THRESHOLD})"
+            )
 
-        return reranked_results
+        logger.info(
+            f"コサイン類似度フィルタ: {len(candidates)} -> {len(filtered_results)}件 "
+            f"(Top: {filtered_results[0]['score']:.4f}, 閾値: {COSINE_SIMILARITY_THRESHOLD})"
+        )
+
+        return filtered_results
 
     except Exception as e:
         logger.error(f"RAGツールエラー: {e}", exc_info=True)
@@ -607,22 +692,14 @@ def _format_results(results: List[Dict[str, Any]], source_label: str) -> str:
     formatted_results = []
     for i, res in enumerate(results, 1):
         score = res.get("score", 0.0)
-        original_score = res.get("original_score", 0.0)
-        rerank_score = res.get("rerank_score", 0.0)
         collection = res.get("collection_name", source_label)
 
         payload = res.get("payload", {})
         q = payload.get("question", "N/A")
         a = payload.get("answer", "N/A")
 
-        # スコア表示を改善
-        if original_score > 0:
-            score_info = f"Rerank: {rerank_score:.4f} (Original: {original_score:.4f})"
-        else:
-            score_info = f"{score:.4f}"
-
         formatted_results.append(
-            f"--- Result {i} [Score: {score_info}] ---\n"
+            f"--- Result {i} [Cosine: {score:.4f}] ---\n"
             f"Q: {q}\n"
             f"A: {a}\n"
             f"Source: {collection}\n"

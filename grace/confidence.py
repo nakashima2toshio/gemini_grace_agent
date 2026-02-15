@@ -4,7 +4,6 @@ GRACE Confidence - 信頼度計算システム
 ハイブリッド方式（重み付き平均 + LLM自己評価）による
 多軸信頼度計算を実装
 ーー改修： 2025-12-26 LLM化する。
-
 """
 
 import logging
@@ -14,7 +13,7 @@ from enum import Enum
 
 from google import genai
 from google.genai import types
-
+from pydantic import BaseModel
 from .config import get_config, GraceConfig
 
 logger = logging.getLogger(__name__)
@@ -23,6 +22,11 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # 信頼度要素
 # =============================================================================
+# Gemini Structured Output用スキーマ
+class EvaluationResult(BaseModel):      # ← 追加
+    """LLM信頼度評価の応答スキーマ"""     # ← 追加
+    score: float                         # ← 追加
+    reason: str
 
 @dataclass
 class ConfidenceFactors:
@@ -275,7 +279,7 @@ class ConfidenceCalculator:
         # --- ガードレール: 検索スコアの優先 ---
         # 検索ステップで、かつ検索システムのスコアが高い場合は、機械的なスコアを尊重する
         # (LLMがハルシネーションや過度な慎重さでスコアを下げすぎるのを防ぐ)
-        if factors.is_search_step and factors.search_max_score > 0.9:
+        if factors.is_search_step and factors.search_max_score > 0.7:
             if factors.search_max_score > final_score:
                 logger.info(f"Override LLM score ({final_score:.4f}) with Search Score ({factors.search_max_score:.4f})")
                 final_score = factors.search_max_score
@@ -478,14 +482,20 @@ class LLMSelfEvaluator:
             # --- [IPO LOG] PROCESS INPUT (GRACE SELF-EVAL) ---
             logger.info(f"\n{'='*20} [GRACE SELF-EVAL IPO: INPUT] {'='*20}\n{prompt}\n{'='*60}")
 
+            import time as _time
+            t0 = _time.time()
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.0,  # 一貫性のため低温度
-                    max_output_tokens=10
+                    max_output_tokens=10,
+                    # AFC無効化: AFC永続化による空レスポンス/ハングを防止
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                 )
             )
+            elapsed = _time.time() - t0
+            logger.info(f"[API時間] LLMSelfEvaluator.evaluate: {elapsed:.1f}秒")
 
             # レスポンスがNoneの場合の処理
             if response is None or response.text is None:
@@ -579,22 +589,30 @@ class LLMSelfEvaluator:
                 config=types.GenerateContentConfig(
                     temperature=0.0,
                     max_output_tokens=200,
-                    response_mime_type="application/json"
+                    response_mime_type="application/json",
+                    response_schema=EvaluationResult,
                 )
             )
 
             if not response or not response.text:
+                logger.warning("evaluate_with_factors: empty response from LLM")
+                if factors.search_max_score > 0:
+                    logger.info(f"Fallback to search_max_score: {factors.search_max_score:.4f}")
+                    return {"score": factors.search_max_score, "reason": "LLM empty response, using search score"}
                 return {"score": 0.5, "reason": "No response from LLM"}
 
-            result = json.loads(response.text)
-            score = float(result.get("score", 0.5))
-            reason = result.get("reason", "No reason provided")
-            
+            result = response.parsed  # EvaluationResult オブジェクト
+            score = float(result.score)
+            reason = result.reason or "No reason provided"
+
             return {"score": score, "reason": reason}
 
         except Exception as e:
-            logger.error(f"evaluate_with_factors failed: {e}")
-            return {"score": 0.5, "reason": f"Evaluation error: {str(e)}"}
+                    logger.error(f"evaluate_with_factors failed: {e}")
+                    if factors.search_max_score > 0:
+                        logger.info(f"Fallback to search_max_score: {factors.search_max_score:.4f}")
+                        return {"score": factors.search_max_score, "reason": f"LLM evaluation failed, using search score"}
+                    return {"score": 0.5, "reason": f"Evaluation error: {str(e)}"}
 
 
 # =============================================================================
@@ -719,14 +737,25 @@ class QueryCoverageCalculator:
         prompt = self.COVERAGE_PROMPT.format(query=query, answer=answer)
 
         try:
+            import time as _time
+            t0 = _time.time()
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.0,
-                    max_output_tokens=10
+                    max_output_tokens=10,
+                    # AFC無効化: AFC永続化による空レスポンス/ハングを防止
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                 )
             )
+            elapsed = _time.time() - t0
+            logger.info(f"[API時間] QueryCoverageCalculator: {elapsed:.1f}秒")
+
+            # Noneガード
+            if response is None or response.text is None:
+                logger.warning("QueryCoverageCalculator: empty response")
+                return 0.5
 
             text = response.text.strip()
             coverage = float(text)

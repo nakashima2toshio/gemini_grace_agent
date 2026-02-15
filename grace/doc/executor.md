@@ -1,6 +1,6 @@
 # executor.py - GRACE計画実行エージェント ドキュメント
 
-**Version 1.0** | 最終更新: 2025-01-28
+**Version 2.0** | 最終更新: 2026-02-12
 
 ---
 
@@ -8,6 +8,7 @@
 
 1. [概要](#概要)
    - [主な責務](#主な責務)
+   - [各責務対応のモジュール](#各責務対応のモジュール)
    - [主要機能一覧](#主要機能一覧)
 2. [アーキテクチャ構成図](#1-アーキテクチャ構成図)
    - [システム全体構成](#11-システム全体構成)
@@ -46,11 +47,23 @@
 
 - 計画の順次実行（ブロッキング版/ジェネレータ版）
 - ステップ間の依存関係管理
-- ツールの呼び出しと結果管理
-- 信頼度（Confidence）の計算と評価
-- Human-in-the-Loop（HITL）介入処理
-- 失敗時のリプラン連携
+- ツールの呼び出しと結果管理（ToolRegistry経由）
+- 信頼度（Confidence）の計算と評価（LLM版/Heuristic版）
+- Human-in-the-Loop（HITL）介入処理（NOTIFY/CONFIRM/ESCALATE）
+- 失敗時のリプラン連携（ReplanOrchestrator）
 - 実行状態の追跡とコールバック通知
+
+### 各責務対応のモジュール
+
+| # | 責務 | 対応モジュール | 説明 |
+|---|------|--------------|------|
+| 1 | 計画の順次実行 | `executor.py` | ブロッキング版（`execute_plan`）とジェネレータ版（`execute_plan_generator`）の2モード |
+| 2 | ステップ間の依存関係管理 | `executor.py` | `_check_dependencies`で依存ステップの成否を確認 |
+| 3 | ツールの呼び出しと結果管理 | `grace.tools` | ToolRegistryから取得したツールを`_execute_step`で実行 |
+| 4 | 信頼度の計算と評価 | `grace.confidence` | LLM版（`_llm_calculate_step_confidence`）とHeuristic版（`_calculate_step_confidence`）の二重構成 |
+| 5 | HITL介入処理 | `grace.intervention` | InterventionHandlerを通じてNOTIFY/CONFIRM/ESCALATEレベルの介入を処理 |
+| 6 | 失敗時のリプラン連携 | `grace.replan` | ReplanOrchestratorを通じてステップ失敗時に計画を再生成 |
+| 7 | 実行状態の追跡 | `executor.py` | ExecutionStateデータクラスで状態を管理、コールバックでUIに通知 |
 
 ### 主要機能一覧
 
@@ -66,9 +79,12 @@
 | `Executor.__init__()` | コンストラクタ（各種コンポーネントの初期化） |
 | `Executor.execute_plan()` | 計画を同期実行（ブロッキング版） |
 | `Executor.execute_plan_generator()` | 計画をジェネレータで実行（UI連携用） |
-| `Executor._execute_step()` | 個別ステップの実行 |
+| `Executor._execute_step()` | 個別ステップの実行（ジェネレータ対応） |
+| `Executor._execute_legacy_agent_step()` | Legacy ReActAgentを使用したステップ実行 |
 | `Executor._check_dependencies()` | ステップの依存関係を確認 |
-| `Executor._calculate_overall_confidence()` | 全体信頼度の計算 |
+| `Executor._llm_calculate_step_confidence()` | LLMを使用したステップ信頼度計算 |
+| `Executor._calculate_step_confidence()` | Heuristicベースのステップ信頼度計算 |
+| `Executor._calculate_overall_confidence()` | 全体信頼度の計算（LLMSelfEvaluator + QueryCoverage + Aggregator） |
 | `Executor.cancel()` | 実行をキャンセル |
 | `Executor.resume()` | 実行を再開 |
 | `create_executor()` | Executorインスタンスを作成するファクトリ関数 |
@@ -79,84 +95,54 @@
 
 ### 1.1 システム全体構成
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           GRACE Executor Architecture                           │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                 │
-│  ┌──────────────┐                                                               │
-│  │ Execution    │                                                               │
-│  │    Plan      │ (from Planner)                                                │
-│  └──────┬───────┘                                                               │
-│         │                                                                       │
-│         ▼                                                                       │
-│  ┌──────────────────────────────────────────────────────────────────────────┐   │
-│  │                          EXECUTOR MODULE                                 │   │
-│  │  ┌────────────────────────────────────────────────────────────────────┐  │   │
-│  │  │                     ExecutionState (Dataclass)                     │  │   │
-│  │  │  • plan              • step_results      • overall_confidence      │  │   │
-│  │  │  • current_step_id   • step_statuses     • is_cancelled/paused     │  │   │
-│  │  │  • replan_count      • intervention_request                        │  │   │
-│  │  └────────────────────────────────────────────────────────────────────┘  │   │
-│  │                                                                          │   │
-│  │  ┌────────────────────────────────────────────────────────────────────┐  │   │
-│  │  │                        Executor Class                              │  │   │
-│  │  │  ┌─────────────────┐  ┌─────────────────┐  ┌────────────────────┐  │  │   │
-│  │  │  │ execute_plan()  │  │execute_plan_    │  │ _execute_step()    │  │  │   │
-│  │  │  │  (blocking)     │  │  generator()    │  │                    │  │  │   │
-│  │  │  └────────┬────────┘  └────────┬────────┘  └────────┬───────────┘  │  │   │
-│  │  │           │                    │                    │              │  │   │
-│  │  │           └────────────────────┼────────────────────┘              │  │   │
-│  │  │                                │                                   │  │   │
-│  │  │                                ▼                                   │  │   │
-│  │  │  ┌─────────────────────────────────────────────────────────────┐   │  │   │
-│  │  │  │                    ToolRegistry                             │   │  │   │
-│  │  │  │  ┌───────────┐  ┌───────────┐  ┌───────────┐                │   │  │   │
-│  │  │  │  │RAGSearch  │  │Reasoning  │  │ AskUser   │  ...           │   │  │   │
-│  │  │  │  │   Tool    │  │   Tool    │  │   Tool    │                │   │  │   │
-│  │  │  │  └───────────┘  └───────────┘  └───────────┘                │   │  │   │
-│  │  │  └─────────────────────────────────────────────────────────────┘   │  │   │
-│  │  │                                │                                   │  │   │
-│  │  │                                ▼                                   │  │   │
-│  │  │  ┌─────────────────────────────────────────────────────────────┐   │  │   │
-│  │  │  │              Confidence System (Phase 2)                    │   │  │   │
-│  │  │  │  ┌─────────────────┐  ┌─────────────────┐                   │   │  │   │
-│  │  │  │  │Confidence       │  │LLMSelfEvaluator │                   │   │  │   │
-│  │  │  │  │  Calculator     │  │                 │                   │   │  │   │
-│  │  │  │  └─────────────────┘  └─────────────────┘                   │   │  │   │
-│  │  │  │  ┌─────────────────┐  ┌─────────────────┐                   │   │  │   │
-│  │  │  │  │QueryCoverage    │  │Confidence       │                   │   │  │   │
-│  │  │  │  │  Calculator     │  │  Aggregator     │                   │   │  │   │
-│  │  │  │  └─────────────────┘  └─────────────────┘                   │   │  │   │
-│  │  │  └─────────────────────────────────────────────────────────────┘   │  │   │
-│  │  │                                │                                   │  │   │
-│  │  │                                ▼                                   │  │   │
-│  │  │  ┌─────────────────────────────────────────────────────────────┐   │  │   │
-│  │  │  │            Intervention System (Phase 3)                    │   │  │   │
-│  │  │  │  ┌─────────────────┐                                        │   │  │   │
-│  │  │  │  │Intervention     │ ──▶ NOTIFY / CONFIRM / ESCALATE        │   │  │   │
-│  │  │  │  │   Handler       │                                        │   │  │   │
-│  │  │  │  └─────────────────┘                                        │   │  │   │
-│  │  │  └─────────────────────────────────────────────────────────────┘   │  │   │
-│  │  │                                │                                   │  │   │
-│  │  │                                ▼                                   │  │   │
-│  │  │  ┌─────────────────────────────────────────────────────────────┐   │  │   │
-│  │  │  │              Replan System (Phase 4)                        │   │  │   │
-│  │  │  │  ┌─────────────────┐                                        │   │  │   │
-│  │  │  │  │Replan           │ ──▶ 失敗時の計画再生成                    │   │  │   │
-│  │  │  │  │  Orchestrator   │                                        │   │  │   │
-│  │  │  │  └─────────────────┘                                        │   │  │   │
-│  │  │  └─────────────────────────────────────────────────────────────┘   │  │   │
-│  │  └────────────────────────────────────────────────────────────────────┘  │   │
-│  └──────────────────────────────────────────────────────────────────────────┘   │
-│         │                                                                       │
-│         ▼                                                                       │
-│  ┌──────────────┐                                                               │
-│  │ Execution    │                                                               │
-│  │   Result     │───────────────────────────────────────────────────────────────┼──▶ User/UI
-│  └──────────────┘                                                               │
-│                                                                                 │
-└─────────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    PLAN[ExecutionPlan\nfrom Planner] --> EXECUTOR
+
+    subgraph EXECUTOR["EXECUTOR MODULE"]
+        subgraph STATE_BOX["ExecutionState"]
+            STATE["plan / step_results / step_statuses\ncurrent_step_id / overall_confidence\nis_cancelled / is_paused\nreplan_count / intervention_request"]
+        end
+
+        subgraph EXEC_CLASS["Executor Class"]
+            EXEC_PLAN["execute_plan\nblocking"]
+            EXEC_GEN["execute_plan_generator\nyield state"]
+            EXEC_STEP["_execute_step"]
+        end
+
+        subgraph TOOLS["ToolRegistry"]
+            RAG[RAGSearch Tool]
+            REASON[Reasoning Tool]
+            ASK[AskUser Tool]
+            LEGACY[Legacy ReActAgent]
+        end
+
+        subgraph CONFIDENCE["Confidence System Phase 2"]
+            CONF_CALC[ConfidenceCalculator\nLLM + Heuristic]
+            LLM_EVAL[LLMSelfEvaluator]
+            QC_CALC[QueryCoverageCalculator]
+            CONF_AGG[ConfidenceAggregator]
+        end
+
+        subgraph INTERVENTION["Intervention System Phase 3"]
+            INT_HANDLER[InterventionHandler]
+            INT_LEVELS["NOTIFY / CONFIRM / ESCALATE"]
+        end
+
+        subgraph REPLAN["Replan System Phase 4"]
+            REPLAN_ORCH[ReplanOrchestrator]
+            REPLAN_DESC["失敗時の計画再生成"]
+        end
+    end
+
+    EXEC_CLASS --> TOOLS
+    EXEC_CLASS --> CONFIDENCE
+    EXEC_CLASS --> INTERVENTION
+    EXEC_CLASS --> REPLAN
+    INT_HANDLER --> INT_LEVELS
+    REPLAN_ORCH --> REPLAN_DESC
+
+    EXECUTOR --> RESULT[ExecutionResult] --> USER[User / UI]
 ```
 
 ### 1.2 データフロー
@@ -164,10 +150,11 @@
 1. Plannerから`ExecutionPlan`を受信
 2. `ExecutionState`を初期化し、全ステップをPENDINGに設定
 3. 各ステップを順次実行（依存関係を確認）
-4. ツールを呼び出し、結果を取得
-5. 信頼度を計算し、必要に応じて介入を処理
-6. 失敗時はリプランを実行
-7. `ExecutionResult`を生成して返却
+4. ツールを呼び出し、結果を取得（中間結果をyieldでUI通知）
+5. 信頼度を計算し（LLM版優先、低スコア時はHeuristicと比較）、必要に応じて介入を処理
+6. 失敗時はリプランを実行（最大3回）
+7. 全体信頼度を計算（LLMSelfEvaluator + QueryCoverage + Aggregator）
+8. `ExecutionResult`を生成して返却
 
 ---
 
@@ -175,58 +162,72 @@
 
 ### 2.1 内部モジュール構成
 
-```
-executor.py
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```mermaid
+flowchart TB
+    subgraph CONST["設定・定数"]
+        LEGACY_FLAG["LEGACY_AGENT_AVAILABLE\nインポート可否フラグ"]
+    end
 
-[設定・定数]
-  • LEGACY_AGENT_AVAILABLE       - Legacy Agentインポート可否フラグ
+    subgraph DATACLASS["データクラス"]
+        ES["ExecutionState"]
+        ES_POST["__post_init__()"]
+        ES_OUT["get_completed_outputs()"]
+        ES_SRC["get_completed_sources()"]
+        ES_REP["can_replan()"]
+        ES_TIME["get_execution_time_ms()"]
+        ES --> ES_POST
+        ES --> ES_OUT
+        ES --> ES_SRC
+        ES --> ES_REP
+        ES --> ES_TIME
+    end
 
-[データクラス]
-  └── ExecutionState             - 実行状態管理
-        ├── __post_init__()
-        ├── get_completed_outputs()
-        ├── get_completed_sources()
-        ├── can_replan()
-        └── get_execution_time_ms()
+    subgraph EXEC["Executor クラス"]
+        INIT["__init__()"]
 
-[クラス]
-  └── Executor                   - 計画実行エージェント
-        ├── __init__()
-        │
-        ├── [実行メソッド]
-        │   ├── execute_plan()
-        │   └── execute_plan_generator()
-        │
-        ├── [ステップ実行]
-        │   ├── _execute_step()
-        │   ├── _execute_legacy_agent_step()
-        │   ├── _execute_fallback()
-        │   └── _check_dependencies()
-        │
-        ├── [信頼度計算]
-        │   ├── _calculate_step_confidence()
-        │   ├── _llm_calculate_step_confidence()
-        │   └── _calculate_overall_confidence()
-        │
-        ├── [介入処理]
-        │   ├── _handle_intervention_notify()
-        │   ├── _handle_intervention_confirm()
-        │   ├── _handle_intervention_escalate()
-        │   └── _handle_intervention_if_needed()
-        │
-        ├── [ユーティリティ]
-        │   ├── _prepare_tool_kwargs()
-        │   ├── _extract_sources()
-        │   ├── _format_output()
-        │   └── _create_execution_result()
-        │
-        └── [制御]
-            ├── cancel()
-            └── resume()
+        subgraph EXEC_METHODS["実行メソッド"]
+            EP["execute_plan()"]
+            EPG["execute_plan_generator()"]
+        end
 
-[ファクトリ関数]
-  └── create_executor()          - Executorインスタンス生成
+        subgraph STEP_METHODS["ステップ実行"]
+            ES_STEP["_execute_step()"]
+            ES_LEGACY["_execute_legacy_agent_step()"]
+            ES_FALLBACK["_execute_fallback()"]
+            ES_CHECK["_check_dependencies()"]
+        end
+
+        subgraph CONF_METHODS["信頼度計算"]
+            CSC_H["_calculate_step_confidence()\nHeuristic版"]
+            CSC_L["_llm_calculate_step_confidence()\nLLM版"]
+            COC["_calculate_overall_confidence()"]
+        end
+
+        subgraph INT_METHODS["介入処理"]
+            HN["_handle_intervention_notify()"]
+            HC["_handle_intervention_confirm()"]
+            HE["_handle_intervention_escalate()"]
+            HIN["_handle_intervention_if_needed()"]
+        end
+
+        subgraph UTIL_METHODS["ユーティリティ"]
+            PTK["_prepare_tool_kwargs()"]
+            EXT["_extract_sources()"]
+            FMT["_format_output()"]
+            CER["_create_execution_result()"]
+        end
+
+        subgraph CTRL_METHODS["制御"]
+            CANCEL["cancel()"]
+            RESUME["resume()"]
+        end
+    end
+
+    subgraph FACTORY_GRP["ファクトリ関数"]
+        CE["create_executor()"]
+    end
+
+    CE --> INIT
 ```
 
 ### 2.2 外部依存関係
@@ -236,18 +237,19 @@ executor.py
 | `logging` | 標準ライブラリ | ログ出力 |
 | `time` | 標準ライブラリ | 実行時間計測 |
 | `dataclasses` | 標準ライブラリ | データクラス定義 |
+| `enum` | 標準ライブラリ | 列挙型（Enum） |
 
 ### 2.3 内部依存モジュール
 
 | モジュール | 用途 |
 |-----------|------|
-| `grace.schemas` | ExecutionPlan, PlanStep, StepResult, ExecutionResult, StepStatus等のデータモデル |
+| `grace.schemas` | ExecutionPlan, PlanStep, StepResult, ExecutionResult, StepStatus, create_plan_id |
 | `grace.tools` | ToolRegistry, ToolResult, create_tool_registry |
 | `grace.config` | get_config, GraceConfig設定管理 |
-| `grace.confidence` | ConfidenceCalculator, LLMSelfEvaluator, ConfidenceAggregator等の信頼度計算 |
-| `grace.intervention` | InterventionHandler, InterventionRequest, InterventionResponse等の介入処理 |
+| `grace.confidence` | ConfidenceCalculator, ConfidenceFactors, ConfidenceScore, LLMSelfEvaluator, ConfidenceAggregator, ActionDecision, InterventionLevel, create_confidence_calculator, create_llm_evaluator, create_confidence_aggregator, create_query_coverage_calculator |
+| `grace.intervention` | InterventionHandler, InterventionRequest, InterventionResponse, InterventionAction, create_intervention_handler |
 | `grace.replan` | ReplanOrchestrator, create_replan_orchestrator |
-| `services.agent_service` | ReActAgent（オプション、Legacy Agent用） |
+| `services.agent_service` | ReActAgent, get_available_collections_from_qdrant_helper（オプション、Legacy Agent用） |
 
 ---
 
@@ -272,13 +274,13 @@ executor.py
 | `__init__(config, tool_registry, ...)` | コンストラクタ（各種コンポーネントの初期化） |
 | `execute_plan(plan)` | 計画を同期実行（ブロッキング版） |
 | `execute_plan_generator(plan, state)` | 計画をジェネレータで実行（UI連携用） |
-| `_execute_step(step, state)` | 個別ステップの実行 |
+| `_execute_step(step, state)` | 個別ステップの実行（ジェネレータ対応） |
 | `_execute_legacy_agent_step(step, state, start_time)` | Legacy ReActAgentを使用したステップ実行 |
-| `_execute_fallback(step, state, start_time)` | フォールバックアクションの実行 |
+| `_execute_fallback(step, state)` | フォールバックアクションの実行 |
 | `_check_dependencies(step, state)` | ステップの依存関係を確認 |
 | `_prepare_tool_kwargs(step, state)` | ツール実行引数の準備 |
-| `_calculate_step_confidence(tool_result)` | ステップ信頼度の計算（Heuristic版） |
 | `_llm_calculate_step_confidence(tool_result, step, state)` | ステップ信頼度の計算（LLM版） |
+| `_calculate_step_confidence(tool_result, step, state)` | ステップ信頼度の計算（Heuristic版） |
 | `_calculate_overall_confidence(state)` | 全体信頼度の計算 |
 | `_extract_sources(tool_result)` | ツール結果からソースを抽出 |
 | `_format_output(output)` | 出力を文字列にフォーマット |
@@ -317,7 +319,7 @@ executor.py
 | `overall_confidence` | float | 0.0 | 全体の信頼度スコア (0.0-1.0) |
 | `is_cancelled` | bool | False | キャンセルフラグ |
 | `is_paused` | bool | False | 一時停止フラグ |
-| `intervention_request` | Optional[Any] | None | 保留中の介入リクエスト |
+| `intervention_request` | Optional[Any] | None | 保留中の介入リクエスト（InterventionRequest） |
 | `replan_count` | int | 0 | リプラン実行回数 |
 | `max_replans` | int | 3 | 最大リプラン回数 |
 | `start_time` | Optional[float] | None | 実行開始時刻 |
@@ -397,7 +399,7 @@ def can_replan(self) -> bool
 | 項目 | 内容 |
 |------|------|
 | **Input** | なし（selfのみ） |
-| **Process** | リプラン回数が上限未満かつキャンセルされていないか確認 |
+| **Process** | リプラン回数が上限未満（`replan_count < max_replans`）かつキャンセルされていないか確認 |
 | **Output** | `bool`: リプラン可能ならTrue |
 
 ---
@@ -460,7 +462,7 @@ Executor(
 | 項目 | 内容 |
 |------|------|
 | **Input** | 上記パラメータ |
-| **Process** | 1. 設定の取得<br>2. ToolRegistryの初期化<br>3. Confidenceコンポーネントの初期化<br>4. コールバックの設定<br>5. InterventionHandlerの初期化<br>6. ReplanOrchestratorの初期化 |
+| **Process** | 1. 設定の取得（`get_config()`）<br>2. ToolRegistryの初期化（`create_tool_registry`）<br>3. Confidenceコンポーネントの初期化（Calculator, LLMEvaluator, QueryCoverage, Aggregator）<br>4. コールバックの設定（5種）<br>5. InterventionHandlerの初期化（notify/confirm/escalateコールバック付き）<br>6. ReplanOrchestratorの初期化（指定/自動生成/無効の3パターン）<br>7. `step_confidence_scores`辞書の初期化 |
 | **Output** | Executorインスタンス |
 
 ```python
@@ -480,7 +482,7 @@ executor = Executor(config=config, enable_replan=False)
 
 #### メソッド: `execute_plan`
 
-**概要**: 計画を同期実行します（ブロッキング版）。全ステップを順次実行し、最終結果を返します。
+**概要**: 計画を同期実行します（ブロッキング版）。全ステップを順次実行し、最終結果を返します。ジェネレータ版と異なり、中間状態のyieldは行いません。
 
 ```python
 def execute_plan(self, plan: ExecutionPlan) -> ExecutionResult
@@ -493,13 +495,13 @@ def execute_plan(self, plan: ExecutionPlan) -> ExecutionResult
 | 項目 | 内容 |
 |------|------|
 | **Input** | `plan: ExecutionPlan` |
-| **Process** | 1. ExecutionStateの初期化<br>2. 各ステップを順次実行<br>3. 依存関係の確認<br>4. ツール実行と結果保存<br>5. 失敗時のリプラン処理<br>6. 全体信頼度の計算<br>7. ExecutionResultの生成 |
+| **Process** | 1. 受信した計画内容をログ出力<br>2. ExecutionStateの初期化（開始時刻を記録）<br>3. 各ステップを順次実行（キャンセルチェック → 依存関係チェック → ツール実行）<br>4. `_execute_step`の戻り値がGeneratorの場合は最後まで消費して結果を取得<br>5. 結果を保存し、ステータスを更新<br>6. ask_userステップの場合は`on_intervention_required`で応答を取得<br>7. 失敗時はReplanOrchestratorで計画を再生成し再帰実行<br>8. 全体信頼度を計算（`_calculate_overall_confidence`）<br>9. ExecutionResultを生成 |
 | **Output** | `ExecutionResult`: 実行結果 |
 
 **戻り値例**:
 ```python
 ExecutionResult(
-    plan_id="plan_20250128_123456_abc123",
+    plan_id="plan_20260212_123456_abc123",
     original_query="『金色夜叉』の作者は誰ですか？",
     final_answer="『金色夜叉』の作者は尾崎紅葉です。",
     step_results=[...],
@@ -530,7 +532,7 @@ print(f"回答: {result.final_answer}")
 
 #### メソッド: `execute_plan_generator`
 
-**概要**: 計画をジェネレータで実行します（UI連携用）。各ステップ完了後に状態をyieldし、リアルタイム表示を可能にします。
+**概要**: 計画をジェネレータで実行します（UI連携用）。各ステップ完了後に状態をyieldし、リアルタイム表示を可能にします。介入が必要な場合は一時停止状態をyieldして返却します。
 
 ```python
 def execute_plan_generator(
@@ -548,7 +550,7 @@ def execute_plan_generator(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `plan: ExecutionPlan`, `state: Optional[ExecutionState] = None` |
-| **Process** | execute_planと同様だが、各ステップ完了時に`yield state`で状態を返す |
+| **Process** | 1. 受信した計画内容をログ出力<br>2. ExecutionStateの初期化（未指定時）<br>3. 未完了ステップのリストを取得<br>4. 各ステップを順次実行（キャンセルチェック → 依存関係チェック → ツール実行）<br>5. `_execute_step`がGeneratorの場合は`yield from`で中間イベントを中継<br>6. CONFIRM/ESCALATE介入時はInterventionRequestを作成し、一時停止状態をyield後にreturn<br>7. 失敗時はReplanOrchestratorで計画を再生成し再帰的にyield from<br>8. 全体信頼度を計算してExecutionResultをreturn |
 | **Yields** | `ExecutionState`: 各ステップ完了後の状態 |
 | **Returns** | `ExecutionResult`: 最終実行結果 |
 
@@ -579,7 +581,7 @@ except StopIteration as e:
 
 #### メソッド: `_execute_step`
 
-**概要**: 個別ステップを実行します。ツールを取得し、引数を準備して実行、信頼度を計算してStepResultを返します。
+**概要**: 個別ステップを実行します。ツールを取得し、引数を準備して実行、中間結果をyieldで通知した後、信頼度を計算してStepResultを返します。`run_legacy_agent`アクションの場合は`_execute_legacy_agent_step`に委譲します。
 
 ```python
 def _execute_step(self, step: PlanStep, state: ExecutionState) -> Any
@@ -593,14 +595,38 @@ def _execute_step(self, step: PlanStep, state: ExecutionState) -> Any
 | 項目 | 内容 |
 |------|------|
 | **Input** | `step: PlanStep`, `state: ExecutionState` |
-| **Process** | 1. ツールをレジストリから取得<br>2. ツール引数を準備<br>3. ツールを実行<br>4. 信頼度を計算<br>5. ソースを抽出<br>6. StepResultを構築<br>7. 失敗時はフォールバック実行 |
+| **Process** | 1. ToolRegistryからツールを取得<br>2. `run_legacy_agent`の場合は`_execute_legacy_agent_step`に委譲<br>3. `_prepare_tool_kwargs`でツール引数を準備<br>4. ツールを実行<br>5. 成功時は中間結果をyieldで通知（IPO風ラベル付き）<br>6. `_llm_calculate_step_confidence`で信頼度を計算<br>7. ソースを抽出<br>8. StepResultを構築してreturn<br>9. 失敗時は`_execute_fallback`を実行 |
 | **Output** | `StepResult` または `Generator[Any, None, StepResult]` |
+
+---
+
+#### メソッド: `_execute_legacy_agent_step`
+
+**概要**: Legacy ReActAgentを使用したステップ実行（ジェネレータ版）。コレクション準備、Agent初期化、ストリーミング実行を行い、結果を構築します。
+
+```python
+def _execute_legacy_agent_step(
+    self, step: PlanStep, state: ExecutionState, start_time: float
+) -> Generator[Any, None, StepResult]
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `step` | PlanStep | - | 実行するステップ |
+| `state` | ExecutionState | - | 現在の実行状態 |
+| `start_time` | float | - | ステップ開始時刻 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `step: PlanStep`, `state: ExecutionState`, `start_time: float` |
+| **Process** | 1. Qdrantからコレクション一覧を取得（失敗時はconfig.qdrant.search_priority）<br>2. ReActAgentを初期化<br>3. `execute_turn`でストリーミング実行し、各イベントをyieldで上位に中継<br>4. イベントからソースを抽出（"Source:"パターン）<br>5. 簡易Confidence計算（回答あり=0.8、なし/謝罪=0.3）<br>6. ConfidenceScoreオブジェクトを作成・保存<br>7. StepResultを構築してreturn |
+| **Output** | `Generator[Any, None, StepResult]` |
 
 ---
 
 #### メソッド: `_check_dependencies`
 
-**概要**: ステップの依存関係を確認します。依存するステップが全て成功しているか確認します。
+**概要**: ステップの依存関係を確認します。依存するステップが全て完了し、失敗していないことを確認します。
 
 ```python
 def _check_dependencies(self, step: PlanStep, state: ExecutionState) -> bool
@@ -614,14 +640,83 @@ def _check_dependencies(self, step: PlanStep, state: ExecutionState) -> bool
 | 項目 | 内容 |
 |------|------|
 | **Input** | `step: PlanStep`, `state: ExecutionState` |
-| **Process** | depends_onの各ステップIDが結果に存在し、failedでないことを確認 |
+| **Process** | `depends_on`の各ステップIDが`step_results`に存在し、statusが"failed"でないことを確認 |
 | **Output** | `bool`: 依存関係が満たされていればTrue |
+
+---
+
+#### メソッド: `_prepare_tool_kwargs`
+
+**概要**: ツール実行引数を準備します。アクションタイプに応じて、RAG検索のcollection指定、reasoningのコンテキスト構築、ask_userの質問構成を行います。
+
+```python
+def _prepare_tool_kwargs(self, step: PlanStep, state: ExecutionState) -> Dict[str, Any]
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `step` | PlanStep | - | 実行するステップ |
+| `state` | ExecutionState | - | 現在の実行状態 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `step: PlanStep`, `state: ExecutionState` |
+| **Process** | 1. 基本引数（query）を設定<br>2. `rag_search`: collection引数を追加<br>3. `reasoning`: 依存ステップの結果をパースしcontext/sourcesとして追加<br>4. `ask_user`: question/reason/urgencyを追加 |
+| **Output** | `Dict[str, Any]`: ツール実行引数 |
+
+---
+
+#### メソッド: `_llm_calculate_step_confidence`
+
+**概要**: LLMを使用したステップ信頼度の計算。ConfidenceFactorsを構築し、ConfidenceCalculator.llm_calculateで評価します。LLM評価が低スコアの場合はHeuristic版と比較して高い方を採用します。
+
+```python
+def _llm_calculate_step_confidence(
+    self, tool_result: ToolResult, step: PlanStep, state: ExecutionState
+) -> float
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `tool_result` | ToolResult | - | ツール実行結果 |
+| `step` | PlanStep | - | 実行したステップ |
+| `state` | ExecutionState | - | 現在の実行状態 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `tool_result: ToolResult`, `step: PlanStep`, `state: ExecutionState` |
+| **Process** | 1. 失敗時は0.0を返却<br>2. ソース抽出とsource_count決定<br>3. source_agreementの計算（2ソース以上の場合）<br>4. 依存ステップからのスコア継承（非検索ステップの場合）<br>5. ConfidenceFactorsを構築<br>6. `confidence_calculator.llm_calculate`でLLM評価<br>7. 低スコア（< 0.6）かつ検索ステップの場合、Heuristicと比較して高い方を採用<br>8. ConfidenceScoreを保存<br>9. ActionDecisionを取得してコールバック通知 |
+| **Output** | `float`: 信頼度スコア (0.0-1.0) |
+
+---
+
+#### メソッド: `_calculate_step_confidence`
+
+**概要**: Heuristicベースのステップ信頼度計算。`_llm_calculate_step_confidence`のフォールバック版。ConfidenceFactorsを構築し、ConfidenceCalculator.calculateで評価します。
+
+```python
+def _calculate_step_confidence(
+    self, tool_result: ToolResult, step: PlanStep, state: ExecutionState
+) -> float
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `tool_result` | ToolResult | - | ツール実行結果 |
+| `step` | PlanStep | - | 実行したステップ |
+| `state` | ExecutionState | - | 現在の実行状態 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `tool_result: ToolResult`, `step: PlanStep`, `state: ExecutionState` |
+| **Process** | `_llm_calculate_step_confidence`と同一のConfidenceFactors構築ロジック後、`confidence_calculator.calculate`（Heuristic版）で計算 |
+| **Output** | `float`: 信頼度スコア (0.0-1.0) |
 
 ---
 
 #### メソッド: `_calculate_overall_confidence`
 
-**概要**: 全体の信頼度を計算します。各ステップのConfidenceScore、LLM自己評価、クエリ網羅度を統合します。
+**概要**: 全体の信頼度を計算します。各ステップのConfidenceScore、LLM自己評価（LLMSelfEvaluator）、クエリ網羅度（QueryCoverageCalculator）を統合します。
 
 ```python
 def _calculate_overall_confidence(self, state: ExecutionState) -> float
@@ -634,13 +729,94 @@ def _calculate_overall_confidence(self, state: ExecutionState) -> float
 | 項目 | 内容 |
 |------|------|
 | **Input** | `state: ExecutionState` |
-| **Process** | 1. 各ステップのConfidenceScoreを収集<br>2. LLMSelfEvaluatorで最終回答を評価<br>3. QueryCoverageCalculatorでクエリ網羅度を評価<br>4. ConfidenceAggregatorで統合 |
+| **Process** | 1. 各ステップのConfidenceScoreを収集<br>2. 最後のステップのbreakdownをベースとして取得<br>3. 最終回答を取得（最後のreasoning/run_legacy_agentステップ）<br>4. LLMSelfEvaluatorで最終回答を評価（breakdownに`llm_self_eval`として追加）<br>5. QueryCoverageCalculatorでクエリ網羅度を評価（breakdownに`query_coverage`として追加）<br>6. 網羅度評価完了時に`on_confidence_update`コールバックで通知<br>7. ConfidenceAggregatorで重み付き統合<br>8. フォールバック: 単純平均 |
 | **Output** | `float`: 全体信頼度スコア (0.0-1.0) |
 
 **戻り値例**:
 ```python
 0.85  # 85%の信頼度
 ```
+
+---
+
+#### メソッド: `_execute_fallback`
+
+**概要**: フォールバックアクションを実行します。元のステップの`fallback`フィールドで指定されたアクションで代替ステップを作成し実行します。
+
+```python
+def _execute_fallback(self, step: PlanStep, state: ExecutionState) -> StepResult
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `step` | PlanStep | - | 失敗した元のステップ |
+| `state` | ExecutionState | - | 現在の実行状態 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `step: PlanStep`, `state: ExecutionState` |
+| **Process** | 1. `step.fallback`をアクションとするPlanStepを作成（fallback=Noneで二重フォールバック防止）<br>2. `_execute_step`で実行（Generatorの場合は最後まで消費） |
+| **Output** | `StepResult`: フォールバック実行結果 |
+
+---
+
+#### メソッド: `_extract_sources`
+
+**概要**: ツール結果からソースを抽出します。
+
+```python
+def _extract_sources(self, tool_result: ToolResult) -> List[str]
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `tool_result` | ToolResult | - | ツール実行結果 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `tool_result: ToolResult` |
+| **Process** | outputがlistの場合、各itemのpayload.sourceを抽出（重複排除） |
+| **Output** | `List[str]`: ソース名のリスト |
+
+---
+
+#### メソッド: `_format_output`
+
+**概要**: 出力を文字列にフォーマットします。
+
+```python
+def _format_output(self, output: Any) -> Optional[str]
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `output` | Any | - | フォーマットする出力 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `output: Any` |
+| **Process** | None → None、str → そのまま、dict → str()、list → 要素をjoinまたはstr() |
+| **Output** | `Optional[str]`: フォーマットされた文字列 |
+
+---
+
+#### メソッド: `_create_execution_result`
+
+**概要**: 実行結果を生成します。全体ステータスの判定と最終回答の取得を行います。
+
+```python
+def _create_execution_result(self, state: ExecutionState) -> ExecutionResult
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `state` | ExecutionState | - | 実行状態 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `state: ExecutionState` |
+| **Process** | 1. 全体ステータスを判定（cancelled/success/partial/failed）<br>2. 最終回答を取得（最後のreasoning/run_legacy_agentステップの成功出力）<br>3. ExecutionResultを構築 |
+| **Output** | `ExecutionResult`: 実行結果 |
 
 ---
 
@@ -684,6 +860,90 @@ def resume(self, state: ExecutionState) -> None
 
 ---
 
+#### メソッド: `_handle_intervention_notify`
+
+**概要**: NOTIFYレベルの介入処理。ログ出力と、オプションでUI通知を行います。
+
+```python
+def _handle_intervention_notify(self, message: str) -> None
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `message` | str | - | 通知メッセージ |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `message: str` |
+| **Process** | 1. INFOログ出力<br>2. `on_intervention_required`コールバックで"notify"タイプの通知 |
+| **Output** | なし |
+
+---
+
+#### メソッド: `_handle_intervention_confirm`
+
+**概要**: CONFIRMレベルの介入処理。UIにユーザー確認を要求し、応答に基づいてInterventionResponseを返します。
+
+```python
+def _handle_intervention_confirm(self, request: InterventionRequest) -> InterventionResponse
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `request` | InterventionRequest | - | 介入リクエスト |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `request: InterventionRequest` |
+| **Process** | 1. `on_intervention_required`で"confirm"タイプの確認をUIに送信<br>2. ユーザー応答を解析（proceed/modify/cancel/input）<br>3. コールバックなしの場合はデフォルトでPROCEED |
+| **Output** | `InterventionResponse`: 介入応答 |
+
+---
+
+#### メソッド: `_handle_intervention_escalate`
+
+**概要**: ESCALATEレベルの介入処理。UIにユーザー入力を要求します。
+
+```python
+def _handle_intervention_escalate(self, request: InterventionRequest) -> InterventionResponse
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `request` | InterventionRequest | - | 介入リクエスト |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `request: InterventionRequest` |
+| **Process** | 1. `on_intervention_required`で"escalate"タイプのユーザー入力要求をUIに送信<br>2. 応答がある場合はINPUTアクションで返却<br>3. コールバックなしの場合はタイムアウト扱いでPROCEED |
+| **Output** | `InterventionResponse`: 介入応答 |
+
+---
+
+#### メソッド: `_handle_intervention_if_needed`
+
+**概要**: 必要に応じて介入を処理します。ActionDecisionのレベルに応じて適切な処理を実行します。
+
+```python
+def _handle_intervention_if_needed(
+    self, action_decision: ActionDecision, step: PlanStep, state: ExecutionState
+) -> Optional[InterventionResponse]
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `action_decision` | ActionDecision | - | 信頼度に基づくアクション決定 |
+| `step` | PlanStep | - | 現在のステップ |
+| `state` | ExecutionState | - | 実行状態 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `action_decision: ActionDecision`, `step: PlanStep`, `state: ExecutionState` |
+| **Process** | 1. SILENT/NOTIFYは自動続行（NOTIFYはInterventionHandler経由で通知）<br>2. CONFIRM/ESCALATEはInterventionHandler.handleで処理<br>3. キャンセル応答の場合は`state.is_cancelled = True` |
+| **Output** | `Optional[InterventionResponse]`: 介入レスポンス（SILENT/NOTIFYの場合はNone） |
+
+---
+
 ### 4.3 ファクトリ関数
 
 #### `create_executor`
@@ -702,7 +962,7 @@ def create_executor(
 |------------|------|-----------|------|
 | `config` | Optional[GraceConfig] | None | GRACE設定 |
 | `tool_registry` | Optional[ToolRegistry] | None | ツールレジストリ |
-| `**kwargs` | Any | - | 各種コールバック等 |
+| `**kwargs` | Any | - | 各種コールバック等（on_step_start, on_step_complete等） |
 
 | 項目 | 内容 |
 |------|------|
@@ -741,9 +1001,9 @@ LEGACY_AGENT_AVAILABLE: bool
 
 | 設定パス | 型 | デフォルト | 説明 |
 |---------|-----|----------|------|
-| `llm.model` | str | `gemini-2.5-flash` | LLMモデル名 |
+| `llm.model` | str | 設定ファイル依存 | LLMモデル名（Legacy Agent初期化時に使用） |
 | `qdrant.url` | str | `http://localhost:6333` | QdrantサーバーURL |
-| `qdrant.search_priority` | list | `["wikipedia_ja", ...]` | 検索優先順序 |
+| `qdrant.search_priority` | list | `["wikipedia_ja", ...]` | 検索優先順序（コレクション取得失敗時のフォールバック） |
 | `confidence.weights.*` | float | 各種 | 信頼度計算の重み |
 | `confidence.thresholds.*` | float | 各種 | 介入レベルの閾値 |
 | `replan.max_replans` | int | 3 | 最大リプラン回数 |
@@ -875,58 +1135,72 @@ __all__ = [
 |-----------|---------|
 | 0.1.0 | 初版作成 |
 | 1.0 | ドキュメント改修: a_md_doc_format.md v1.2に準拠、主な責務・主要機能一覧・IPO詳細に「**概要**:」ラベルを追加 |
+| 2.0 | フォーマット仕様v1.4準拠: ASCII図をMermaid v9フローチャートに全面変更、「各責務対応のモジュール」テーブル追加、`_execute_fallback`/`_prepare_tool_kwargs`/`_format_output`/`_create_execution_result`/各介入処理メソッドのIPO詳細を追加、execute_plan_generatorのProcess詳細化（yield from中継・介入時一時停止・リプラン再帰の記載）、llm.modelを「設定ファイル依存」に変更 |
 
 ---
 
 ## 付録: 依存関係図
 
-```
-executor.py
-    │
-    ├──► grace.schemas (内部)
-    │        └── ExecutionPlan
-    │        └── PlanStep
-    │        └── StepResult
-    │        └── ExecutionResult
-    │        └── StepStatus
-    │        └── create_plan_id()
-    │
-    ├──► grace.tools (内部)
-    │        └── ToolRegistry
-    │        └── ToolResult
-    │        └── create_tool_registry()
-    │
-    ├──► grace.config (内部)
-    │        └── get_config()
-    │        └── GraceConfig
-    │
-    ├──► grace.confidence (内部)
-    │        └── ConfidenceCalculator
-    │        └── ConfidenceFactors
-    │        └── ConfidenceScore
-    │        └── LLMSelfEvaluator
-    │        └── ConfidenceAggregator
-    │        └── ActionDecision
-    │        └── InterventionLevel
-    │        └── create_confidence_calculator()
-    │        └── create_llm_evaluator()
-    │        └── create_confidence_aggregator()
-    │        └── create_query_coverage_calculator()
-    │
-    ├──► grace.intervention (内部)
-    │        └── InterventionHandler
-    │        └── InterventionRequest
-    │        └── InterventionResponse
-    │        └── InterventionAction
-    │        └── create_intervention_handler()
-    │
-    ├──► grace.replan (内部)
-    │        └── ReplanOrchestrator
-    │        └── create_replan_orchestrator()
-    │
-    └──► services.agent_service (外部/オプション)
-             └── ReActAgent
-             └── get_available_collections_from_qdrant_helper()
+```mermaid
+flowchart LR
+    EXECUTOR[executor.py]
+
+    subgraph SCHEMAS["grace.schemas"]
+        S1[ExecutionPlan]
+        S2[PlanStep]
+        S3[StepResult]
+        S4[ExecutionResult]
+        S5[StepStatus]
+        S6[create_plan_id]
+    end
+
+    subgraph TOOLS["grace.tools"]
+        T1[ToolRegistry]
+        T2[ToolResult]
+        T3[create_tool_registry]
+    end
+
+    subgraph CONFIG["grace.config"]
+        C1[get_config]
+        C2[GraceConfig]
+    end
+
+    subgraph CONFIDENCE["grace.confidence"]
+        CF1[ConfidenceCalculator]
+        CF2[ConfidenceFactors]
+        CF3[ConfidenceScore]
+        CF4[LLMSelfEvaluator]
+        CF5[ConfidenceAggregator]
+        CF6[ActionDecision]
+        CF7[InterventionLevel]
+        CF8["create_confidence_calculator()\ncreate_llm_evaluator()\ncreate_confidence_aggregator()\ncreate_query_coverage_calculator()"]
+    end
+
+    subgraph INTERVENTION["grace.intervention"]
+        I1[InterventionHandler]
+        I2[InterventionRequest]
+        I3[InterventionResponse]
+        I4[InterventionAction]
+        I5[create_intervention_handler]
+    end
+
+    subgraph REPLAN["grace.replan"]
+        R1[ReplanOrchestrator]
+        R2[create_replan_orchestrator]
+    end
+
+    subgraph LEGACY["services.agent_service\nオプション"]
+        L1[ReActAgent]
+        L2[get_available_collections_from_qdrant_helper]
+    end
+
+    EXECUTOR --> SCHEMAS
+    EXECUTOR --> TOOLS
+    EXECUTOR --> CONFIG
+    EXECUTOR --> CONFIDENCE
+    EXECUTOR --> INTERVENTION
+    EXECUTOR --> REPLAN
+    EXECUTOR -.->|オプション| LEGACY
 ```
 
 ---
@@ -956,54 +1230,49 @@ executor.py
 | 回答 | "実行エラー: {error_message}" | - |
 | 信頼度 | 0.0 | - |
 
+### 信頼度計算失敗時
+
+| 状況 | 動作 | ログレベル |
+|-----|------|----------|
+| LLM信頼度計算失敗 | Heuristic版にフォールバック | ERROR |
+| ソース一致度計算失敗 | source_agreement=0.5を使用 | WARNING |
+| LLM自己評価失敗 | スキップ（step_scoresに追加しない） | WARNING |
+| クエリ網羅度評価失敗 | スキップ（step_scoresに追加しない） | WARNING |
+
 ### リプラン関連
 
 | 状況 | 動作 | ログレベル |
 |-----|------|----------|
-| リプラン成功 | 新しい計画で再実行 | INFO |
+| リプラン成功 | 新しい計画で再実行（ブロッキング版: 再帰、ジェネレータ版: yield from） | INFO |
 | リプラン上限到達 | 元の結果をそのまま返却 | INFO |
 | リプラン失敗 | 元の計画の結果をそのまま返却 | WARNING |
+
+### Legacy Agent関連
+
+| 状況 | 動作 | ログレベル |
+|-----|------|----------|
+| agent_serviceインポート失敗 | `LEGACY_AGENT_AVAILABLE=False`、実行時にImportError | WARNING |
+| コレクション取得失敗 | config.qdrant.search_priorityを使用 | - |
 
 ---
 
 ## 付録: ステータス遷移図
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        StepStatus State Machine                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│                        ┌───────────┐                                        │
-│           初期化 ────▶  │  PENDING  │                                        │
-│                        └─────┬─────┘                                        │
-│                              │                                              │
-│              ┌───────────────┼───────────────┐                              │
-│              │               │               │                              │
-│              ▼               ▼               ▼                              │
-│       ┌──────────┐    ┌──────────┐    ┌──────────┐                          │
-│       │ SKIPPED  │    │ RUNNING  │    │（待機）   │                          │
-│       └──────────┘    └─────┬────┘    └──────────┘                          │
-│       (依存関係NG)            │                                              │
-│                   ┌─────────┴─────────┐                                     │
-│                   │                   │                                     │
-│                   ▼                   ▼                                     │
-│            ┌──────────┐        ┌──────────┐                                 │
-│            │ SUCCESS  │        │  FAILED  │                                 │
-│            └──────────┘        └─────┬────┘                                 │
-│                                      │                                      │
-│                                      ▼                                      │
-│                               ┌──────────────┐                              │
-│                               │   Replan?    │                              │
-│                               └──────┬───────┘                              │
-│                                      │                                      │
-│                          ┌───────────┴───────────┐                          │
-│                          │ Yes                   │ No                       │
-│                          ▼                       ▼                          │
-│                   ┌──────────────┐        ┌──────────────┐                  │
-│                   │ 新しい計画で   │        │ 結果を返却     │                  │
-│                   │ 再実行        │        │              │                  │
-│                   └──────────────┘        └──────────────┘                  │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+```mermaid
+flowchart TB
+    INIT["初期化"] --> PENDING["PENDING"]
 
+    PENDING --> SKIPPED["SKIPPED\n依存関係NG"]
+    PENDING --> RUNNING["RUNNING"]
+
+    RUNNING --> SUCCESS["SUCCESS"]
+    RUNNING --> FAILED["FAILED"]
+
+    FAILED --> REPLAN_CHECK{"Replan可能？"}
+
+    REPLAN_CHECK -->|Yes| NEW_PLAN["新しい計画で再実行"]
+    REPLAN_CHECK -->|No| RETURN_RESULT["結果を返却"]
+
+    SUCCESS --> NEXT_STEP["次のステップへ"]
+    NEXT_STEP --> PENDING
+```

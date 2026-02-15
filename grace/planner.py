@@ -167,6 +167,8 @@ class Planner:
             logger.info(f"\n{'='*20} [GRACE PLANNER IPO: INPUT] {'='*20}\n{prompt}\n{'='*60}")
 
             # LLMで計画生成（JSON出力）
+            import time as _time
+            t0 = _time.time()
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
@@ -175,8 +177,13 @@ class Planner:
                     response_schema=ExecutionPlan,
                     temperature=self.config.llm.temperature,
                     max_output_tokens=8192,
+                    # AFC無効化: AFC永続化 + JSON mode で空レスポンスまたはJSON途切れが発生するバグを防止
+                    # See: https://github.com/googleapis/python-genai/issues/1818
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                 )
             )
+            elapsed = _time.time() - t0
+            logger.info(f"[API時間] create_plan LLM: {elapsed:.1f}秒")
 
             # --- [IPO LOG] PROCESS OUTPUT (GRACE PLANNER) ---
             logger.info(f"\n{'='*20} [GRACE PLANNER IPO: OUTPUT] {'='*20}\n{response.text}\n{'='*60}")
@@ -227,8 +234,10 @@ class Planner:
                     action="run_legacy_agent",
                     description="Legacy Agent (ReAct) を実行して回答を生成",
                     query=query,
+                    collection=None,
                     expected_output="ユーザーへの回答",
-                    fallback=None
+                    fallback=None,
+                    timeout_seconds=30
                 )
             ],
             success_criteria="ユーザーの質問に適切に回答できている",
@@ -270,14 +279,19 @@ class Planner:
                     query=query,
                     collection="wikipedia_ja",  # 明示的にwikipedia_jaを指定
                     expected_output="関連するドキュメントや情報",
-                    fallback="reasoning"
+                    fallback="reasoning",
+                    timeout_seconds=30
                 ),
                 PlanStep(
                     step_id=2,
                     action="reasoning",
                     description="取得した情報を元に回答を生成",
+                    query=None,
+                    collection=None,
                     depends_on=[1],
-                    expected_output="ユーザーへの回答"
+                    expected_output="ユーザーへの回答",
+                    fallback=None,
+                    timeout_seconds=30
                 )
             ],
             success_criteria="ユーザーの質問に適切に回答できている",
@@ -329,17 +343,28 @@ class Planner:
         Returns:
             float: 複雑度スコア
         """
+        import time as _time
         try:
             prompt = COMPLEXITY_ESTIMATION_PROMPT.format(query=query)
 
+            t0 = _time.time()
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.1,
                     max_output_tokens=10,
+                    # AFC無効化: 前のリクエストで有効化されたまま永続化し、空レスポンスを返すバグを防止
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                 )
             )
+            elapsed = _time.time() - t0
+            logger.info(f"[API時間] estimate_complexity_with_llm: {elapsed:.1f}秒")
+
+            # Noneガード: AFC永続化により response.text が None になることがある
+            if not response or not response.text:
+                logger.warning("estimate_complexity_with_llm: empty response")
+                return self.estimate_complexity(query)
 
             complexity = float(response.text.strip())
             return min(1.0, max(0.0, complexity))
@@ -378,6 +403,8 @@ class Planner:
 """
 
         try:
+            import time as _time
+            t0 = _time.time()
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=refine_prompt,
@@ -385,8 +412,12 @@ class Planner:
                     response_mime_type="application/json",
                     response_schema=ExecutionPlan,
                     temperature=self.config.llm.temperature,
+                    # AFC無効化
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                 )
             )
+            elapsed = _time.time() - t0
+            logger.info(f"[API時間] refine_plan LLM: {elapsed:.1f}秒")
 
             refined_plan = ExecutionPlan.model_validate_json(response.text)
             refined_plan.plan_id = create_plan_id()

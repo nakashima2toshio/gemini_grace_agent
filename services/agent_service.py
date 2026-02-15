@@ -356,15 +356,10 @@ class ReActAgent:
                                 response={'result': tool_result}
                             )
 
-                            function_response_content = types.Content(
-                                role='tool',
-                                parts=[function_response_part]
-                            )
-
-                            # 最新SDK: Contentオブジェクトを直接渡す
-                            # 型チェッカーの警告を抑制（実行時は正常に動作）
+                            # 最新SDK: Partオブジェクトを直接渡す
+                            # (Content型はsend_messageで受け付けないため、Partを使用)
                             current_response = self.chat.send_message(
-                                message=function_response_content  # type: ignore[arg-type]
+                                message=function_response_part
                             )
                             break
 

@@ -1,6 +1,6 @@
 # planner.py - GRACE計画生成エージェント ドキュメント
 
-**Version 1.3** | 最終更新: 2025-01-30
+**Version 2.0** | 最終更新: 2026-02-12
 
 ---
 
@@ -8,6 +8,7 @@
 
 1. [概要](#概要)
    - [主な責務](#主な責務)
+   - [各責務対応のモジュール](#各責務対応のモジュール)
    - [主要機能一覧](#主要機能一覧)
 2. [アーキテクチャ構成図](#1-アーキテクチャ構成図)
    - [システム全体構成](#11-システム全体構成)
@@ -44,25 +45,35 @@
 
 ### 主な責務
 
-- ユーザークエリの複雑度推定
-- LLMを用いた実行計画の自動生成
-- 利用可能なコレクション（Qdrant）の取得
+- ユーザークエリの複雑度推定（キーワードベース / LLMベース）
+- LLMを用いた実行計画の自動生成（Gemini API + 構造化出力）
+- 利用可能なコレクション（Qdrant）の動的取得
 - フィードバックに基づく計画の修正（リファインメント）
-- フォールバック計画の提供
+- フォールバック計画の提供（LLM失敗時の安全な代替）
+
+### 各責務対応のモジュール
+
+| # | 責務 | 対応モジュール | 説明 |
+|---|------|--------------|------|
+| 1 | ユーザークエリの複雑度推定 | `planner.py` | キーワード/LLMベースの複雑度分析 |
+| 2 | LLMを用いた実行計画の自動生成 | `planner.py` | Gemini APIで`ExecutionPlan`スキーマに基づく構造化出力で計画を生成 |
+| 3 | 利用可能なコレクションの動的取得 | `qdrant_service.py` | Qdrantから動的にコレクション一覧を取得 |
+| 4 | フィードバックに基づく計画の修正 | `planner.py` | ユーザーフィードバックに応じてLLMでリファインメント |
+| 5 | フォールバック計画の提供 | `planner.py` | LLMエラー時の安全な代替計画（wikipedia_ja検索→reasoning） |
 
 ### 主要機能一覧
 
 | 機能 | 説明 |
 |------|------|
 | `Planner` | 計画生成エージェントクラス |
-| `Planner.__init__()` | コンストラクタ（設定・モデル名指定） |
-| `Planner.create_plan()` | LLMを使用して実行計画を生成 |
-| `Planner._create_plan_legacy()` | Legacy Agent委譲用の単純計画生成 |
+| `Planner.__init__()` | コンストラクタ（設定・モデル名指定、KeywordExtractor初期化） |
+| `Planner.create_plan()` | LLMを使用して実行計画を生成（構造化出力、AFC無効化） |
+| `Planner._create_plan_legacy()` | Legacy Agent委譲用の単純計画生成（バックアップ） |
 | `Planner._get_available_collections()` | Qdrantからコレクション一覧を取得 |
 | `Planner._create_fallback_plan()` | フォールバック用の単純計画生成 |
 | `Planner.estimate_complexity()` | キーワードベースで複雑度を推定 |
-| `Planner.estimate_complexity_with_llm()` | LLMで複雑度を推定 |
-| `Planner.refine_plan()` | フィードバックに基づき計画を修正 |
+| `Planner.estimate_complexity_with_llm()` | LLMで複雑度を推定（AFC無効化、Noneガード付き） |
+| `Planner.refine_plan()` | フィードバックに基づき計画を修正（AFC無効化） |
 | `create_planner()` | Plannerインスタンスを作成するファクトリ関数 |
 
 ---
@@ -102,10 +113,10 @@ flowchart TB
 ### 1.2 データフロー
 
 1. クライアント層からユーザークエリを受信
-2. Qdrantから利用可能なコレクション一覧を取得
-3. LLMで質問の複雑度を推定
-4. プロンプトを構築しGemini APIで計画を生成
-5. ExecutionPlanオブジェクトをExecutorに返却
+2. Qdrantから利用可能なコレクション一覧を動的取得
+3. LLMで質問の複雑度を推定（失敗時はキーワードベースにフォールバック）
+4. プロンプトを構築しGemini APIで構造化出力（`response_schema=ExecutionPlan`）により計画を生成
+5. `ExecutionPlan`オブジェクトをExecutorに返却
 
 ---
 
@@ -118,17 +129,18 @@ flowchart TB
     subgraph CONST["定数・設定"]
         PROMPT[PLAN_GENERATION_PROMPT]
         COMPLEXITY[COMPLEXITY_ESTIMATION_PROMPT]
+        SEARCH_INST[SEARCH_QUERY_INSTRUCTION\n※services.promptsから参照]
     end
 
     subgraph PLANNER["Planner クラス"]
-        INIT["__init__()"]
-        CREATE["create_plan()"]
+        INIT["__init__()\n+ KeywordExtractor"]
+        CREATE["create_plan()\nAFC無効化・構造化出力"]
         LEGACY["_create_plan_legacy()"]
         GET_COLL["_get_available_collections()"]
         FALLBACK["_create_fallback_plan()"]
         EST["estimate_complexity()"]
-        EST_LLM["estimate_complexity_with_llm()"]
-        REFINE["refine_plan()"]
+        EST_LLM["estimate_complexity_with_llm()\nAFC無効化・Noneガード"]
+        REFINE["refine_plan()\nAFC無効化"]
     end
 
     subgraph FACTORY_GRP["ファクトリ関数"]
@@ -149,18 +161,18 @@ flowchart TB
 
 | ライブラリ | バージョン | 用途 |
 |-----------|-----------|------|
-| `google-genai` | 1.x | Gemini APIクライアント |
+| `google-genai` | 1.x | Gemini APIクライアント（構造化出力、AFC制御） |
 | `qdrant-client` | 1.x | Qdrant接続 |
-| `pydantic` | 2.x | データモデル検証（GraceConfig） |
+| `pydantic` | 2.x | データモデル検証（GraceConfig、ExecutionPlan） |
 
 ### 2.3 内部依存モジュール
 
 | モジュール | 用途 |
 |-----------|------|
-| `grace.schemas` | ExecutionPlan, PlanStep等のデータモデル |
+| `grace.schemas` | ExecutionPlan, PlanStep, create_plan_id, validate_plan_dependencies |
 | `grace.config` | GraceConfig設定管理、get_config() |
 | `services.qdrant_service` | get_all_collections()によるコレクション取得 |
-| `services.prompts` | SEARCH_QUERY_INSTRUCTION検索クエリ指示 |
+| `services.prompts` | SEARCH_QUERY_INSTRUCTION検索クエリ指示テンプレート |
 | `regex_mecab` | KeywordExtractorによるキーワード抽出 |
 
 ---
@@ -173,14 +185,14 @@ flowchart TB
 
 | メソッド | 概要 |
 |---------|------|
-| `__init__(config, model_name)` | コンストラクタ（設定・モデル名指定） |
-| `create_plan(query)` | LLMを使用して実行計画を生成 |
+| `__init__(config, model_name)` | コンストラクタ（設定・モデル名指定、KeywordExtractor初期化） |
+| `create_plan(query)` | LLMを使用して実行計画を生成（構造化出力、AFC無効化） |
 | `_create_plan_legacy(query)` | Legacy Agent委譲用の単純計画生成 |
 | `_get_available_collections()` | Qdrantからコレクション一覧を取得 |
 | `_create_fallback_plan(query)` | フォールバック用の単純計画生成 |
 | `estimate_complexity(query)` | キーワードベースで複雑度を推定 |
-| `estimate_complexity_with_llm(query)` | LLMで複雑度を推定 |
-| `refine_plan(plan, feedback)` | フィードバックに基づき計画を修正 |
+| `estimate_complexity_with_llm(query)` | LLMで複雑度を推定（AFC無効化、Noneガード） |
+| `refine_plan(plan, feedback)` | フィードバックに基づき計画を修正（AFC無効化） |
 
 ### 3.2 関数一覧（カテゴリ別）
 
@@ -200,7 +212,7 @@ flowchart TB
 
 #### コンストラクタ: `__init__`
 
-**概要**: Plannerインスタンスを初期化します。設定オブジェクトとモデル名を受け取り、Gemini APIクライアントとKeywordExtractorを初期化します。
+**概要**: Plannerインスタンスを初期化します。設定オブジェクトとモデル名を受け取り、Gemini APIクライアントとKeywordExtractor（MeCab優先）を初期化します。
 
 ```python
 Planner(
@@ -217,7 +229,7 @@ Planner(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig] = None`, `model_name: Optional[str] = None` |
-| **Process** | 1. 設定オブジェクトの取得（デフォルトまたは指定）<br>2. モデル名の決定（指定またはconfig.llm.model）<br>3. Gemini APIクライアント（genai.Client）の初期化<br>4. KeywordExtractorの初期化（MeCab優先） |
+| **Process** | 1. 設定オブジェクトの取得（デフォルトまたは指定）<br>2. モデル名の決定（指定またはconfig.llm.model）<br>3. Gemini APIクライアント（genai.Client）の初期化<br>4. KeywordExtractorの初期化（MeCab優先、失敗時はNoneを設定しWARNINGログ出力） |
 | **Output** | Plannerインスタンス |
 
 ```python
@@ -230,14 +242,14 @@ planner = Planner()
 
 # カスタム設定で初期化
 config = get_config("config/custom.yml")
-planner = Planner(config=config, model_name="gemini-2.0-flash")
+planner = Planner(config=config, model_name="gemini-3-flash-preview")
 ```
 
 ---
 
 #### メソッド: `create_plan`
 
-**概要**: 質問から実行計画を生成します（LLM使用版）。利用可能なコレクションを取得し、複雑度を推定した上で、Gemini APIを使用してJSON形式の計画を生成します。
+**概要**: 質問から実行計画を生成します（LLM使用版）。利用可能なコレクションを取得し、複雑度を推定した上で、Gemini APIの構造化出力（`response_schema=ExecutionPlan`）を使用してJSON形式の計画を生成します。AFC（Automatic Function Calling）は明示的に無効化されています。
 
 ```python
 def create_plan(self, query: str) -> ExecutionPlan
@@ -250,13 +262,15 @@ def create_plan(self, query: str) -> ExecutionPlan
 | 項目 | 内容 |
 |------|------|
 | **Input** | `query: str` |
-| **Process** | 1. 利用可能なコレクションをQdrantから取得<br>2. LLMで複雑度を推定<br>3. プロンプトを構築（コレクション情報＋クエリ）<br>4. Gemini APIでJSON形式の計画を生成<br>5. レスポンスをExecutionPlanにパース<br>6. 計画IDを設定<br>7. 依存関係を検証<br>8. 失敗時はフォールバック計画を返却 |
+| **Process** | 1. 利用可能なコレクションをQdrantから取得（`_get_available_collections`）<br>2. LLMで複雑度を推定（`estimate_complexity_with_llm`）<br>3. `PLAN_GENERATION_PROMPT`にコレクション情報＋クエリを埋め込みプロンプト構築<br>4. IPOログにINPUTを出力<br>5. Gemini APIで構造化出力（`response_schema=ExecutionPlan`, `max_output_tokens=8192`, AFC無効化）<br>6. API応答時間を計測・ログ出力<br>7. IPOログにOUTPUTを出力<br>8. `ExecutionPlan.model_validate_json(response.text)`でパース<br>9. 事前推定した複雑度を`plan.complexity`に上書き<br>10. `create_plan_id()`で計画IDを設定<br>11. `validate_plan_dependencies()`で依存関係を検証（エラーは警告のみ）<br>12. 失敗時は`_create_fallback_plan()`を返却 |
 | **Output** | `ExecutionPlan`: 実行計画オブジェクト |
+
+> 📝 **注意**: `automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)` を設定し、AFC永続化によるJSON mode空レスポンスバグを防止しています（See: [python-genai#1818](https://github.com/googleapis/python-genai/issues/1818)）。
 
 **戻り値例**:
 ```python
 ExecutionPlan(
-    plan_id="plan_20250128_123456_abc123",
+    plan_id="plan_20260212_123456_abc123",
     original_query="『金色夜叉』の作者は誰ですか？",
     complexity=0.3,
     estimated_steps=2,
@@ -291,7 +305,7 @@ plan = planner.create_plan("『金色夜叉』の作者は誰ですか？")
 print(f"計画ID: {plan.plan_id}")
 print(f"複雑度: {plan.complexity}")
 print(f"ステップ数: {len(plan.steps)}")
-# 計画ID: plan_20250128_123456_abc123
+# 計画ID: plan_20260212_123456_abc123
 # 複雑度: 0.3
 # ステップ数: 2
 ```
@@ -348,7 +362,7 @@ print(f"アクション: {plan.steps[0].action}")
 
 #### メソッド: `_get_available_collections`
 
-**概要**: 利用可能なQdrantコレクションを取得します。Qdrantサーバーに接続し、コレクション一覧を取得します。接続失敗時は設定ファイルのデフォルトリストを返します。
+**概要**: 利用可能なQdrantコレクションを取得します。Qdrantサーバーに接続し、コレクション一覧を取得します。接続失敗時は設定ファイルの`search_priority`リストを返します。
 
 ```python
 def _get_available_collections(self) -> list
@@ -357,7 +371,7 @@ def _get_available_collections(self) -> list
 | 項目 | 内容 |
 |------|------|
 | **Input** | なし（selfのみ） |
-| **Process** | 1. QdrantClientでサーバーに接続<br>2. get_all_collections()でコレクション一覧取得<br>3. 失敗時は設定のsearch_priorityを返却 |
+| **Process** | 1. QdrantClientでサーバーに接続（`config.qdrant.url`）<br>2. `get_all_collections()`でコレクション一覧取得<br>3. 失敗時は設定の`search_priority`を返却 |
 | **Output** | `list`: コレクション名のリスト |
 
 **戻り値例**:
@@ -474,7 +488,7 @@ print(f"複雑度: {complexity}")
 
 #### メソッド: `estimate_complexity_with_llm`
 
-**概要**: LLMを使用して質問の複雑度を推定します。COMPLEXITY_ESTIMATION_PROMPTを使用してGemini APIに複雑度を問い合わせます。失敗時はキーワードベースのestimate_complexity()にフォールバックします。
+**概要**: LLMを使用して質問の複雑度を推定します。`COMPLEXITY_ESTIMATION_PROMPT`を使用してGemini APIに複雑度を問い合わせます。AFC（Automatic Function Calling）は明示的に無効化されています。レスポンスのNoneガードを実装し、空レスポンス時はキーワードベースの`estimate_complexity()`にフォールバックします。
 
 ```python
 def estimate_complexity_with_llm(self, query: str) -> float
@@ -487,8 +501,10 @@ def estimate_complexity_with_llm(self, query: str) -> float
 | 項目 | 内容 |
 |------|------|
 | **Input** | `query: str` |
-| **Process** | 1. COMPLEXITY_ESTIMATION_PROMPTを使用<br>2. Gemini APIで複雑度を推定<br>3. 失敗時はestimate_complexity()にフォールバック |
+| **Process** | 1. `COMPLEXITY_ESTIMATION_PROMPT`にクエリを埋め込み<br>2. Gemini API呼び出し（`temperature=0.1`, `max_output_tokens=10`, AFC無効化）<br>3. API応答時間を計測・ログ出力<br>4. レスポンスのNoneガード（空レスポンス時は`estimate_complexity()`にフォールバック）<br>5. 数値をパースし0.0-1.0にクランプ<br>6. 例外発生時は`estimate_complexity()`にフォールバック |
 | **Output** | `float`: 複雑度スコア（0.0-1.0） |
+
+> 📝 **注意**: AFC永続化により`response.text`がNoneになるケースがあるため、Noneガードを実装しています。
 
 **複雑度の目安**:
 
@@ -516,7 +532,7 @@ print(f"複雑度（LLM推定）: {complexity}")
 
 #### メソッド: `refine_plan`
 
-**概要**: フィードバックに基づいて計画を修正します。元の計画情報とユーザーフィードバックからプロンプトを構築し、Gemini APIで修正計画を生成します。
+**概要**: フィードバックに基づいて計画を修正します。元の計画情報とユーザーフィードバックからプロンプトを構築し、Gemini APIの構造化出力（`response_schema=ExecutionPlan`）で修正計画を生成します。AFC（Automatic Function Calling）は明示的に無効化されています。
 
 ```python
 def refine_plan(
@@ -534,13 +550,13 @@ def refine_plan(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `plan: ExecutionPlan`, `feedback: str` |
-| **Process** | 1. 元の計画情報とフィードバックからプロンプト構築<br>2. Gemini APIで修正計画を生成<br>3. 新しい計画IDを設定<br>4. 失敗時は元の計画をそのまま返却 |
+| **Process** | 1. 元の計画情報（クエリ、ステップ数、ステップ説明一覧）とフィードバックからプロンプト構築<br>2. Gemini APIで構造化出力（`response_schema=ExecutionPlan`, AFC無効化）<br>3. API応答時間を計測・ログ出力<br>4. `ExecutionPlan.model_validate_json(response.text)`でパース<br>5. `create_plan_id()`で新しい計画IDを設定<br>6. 失敗時は元の計画をそのまま返却 |
 | **Output** | `ExecutionPlan`: 修正された計画 |
 
 **戻り値例**:
 ```python
 ExecutionPlan(
-    plan_id="plan_20250128_123457_def456",  # 新しいID
+    plan_id="plan_20260212_123457_def456",  # 新しいID
     original_query="『金色夜叉』の作者は誰ですか？",
     complexity=0.5,  # フィードバックに応じて調整
     estimated_steps=3,  # ステップ数が増加
@@ -589,7 +605,7 @@ def create_planner(
 
 **戻り値例**:
 ```python
-<Planner instance with model=gemini-2.5-flash>
+<Planner instance with model=gemini-3-flash-preview>
 ```
 
 ```python
@@ -602,7 +618,7 @@ planner = create_planner()
 # カスタム設定で作成
 from grace.config import get_config
 config = get_config("config/production.yml")
-planner = create_planner(config=config, model_name="gemini-2.0-pro")
+planner = create_planner(config=config, model_name="gemini-3-flash-preview")
 ```
 
 ---
@@ -611,10 +627,10 @@ planner = create_planner(config=config, model_name="gemini-2.0-pro")
 
 ### 5.1 PLAN_GENERATION_PROMPT
 
-計画生成用のプロンプトテンプレート。
+計画生成用のプロンプトテンプレート。`SEARCH_QUERY_INSTRUCTION`（`services.prompts`から参照）を埋め込み、コレクション選択ルール、検索クエリ作成ルール、複雑度目安、`requires_confirmation`条件を含む包括的な指示を定義します。
 
 ```python
-PLAN_GENERATION_PROMPT = """
+PLAN_GENERATION_PROMPT = f"""
 あなたは計画策定の専門家です。ユーザーの質問を分析し、回答を生成するための実行計画を作成してください。
 
 【利用可能なアクション】
@@ -623,23 +639,50 @@ PLAN_GENERATION_PROMPT = """
 - ask_user: ユーザーに追加情報や確認を求める
 
 【利用可能なコレクション (rag_search用)】
-{available_collections}
+{{available_collections}}
+
+【コレクション選択のルール (重要)】
+- `rag_search` の `collection` 引数は、原則として指定しないでください（`null` または省略）。
+   * 特定のコレクションに限定せず、利用可能なすべてのコレクションから網羅的に検索を行うためです。
+   * システム側で自動的に最適なコレクション順序で検索を実行します。
+- 例外: ユーザーが明示的に指定した場合のみ、そのコレクション名を指定してください。
+
+【検索クエリの作成ルール】
+- `rag_search` の `query` 引数は、ユーザーの質問文を極力そのまま使用してください。
+   * 単語の羅列に変換せず、自然言語の文脈を維持することで、ベクトル検索の精度が向上します。
 
 【計画作成のルール (厳守)】
-1. 検索アクション（rag_search）は、可能な限り「1つのステップ」にまとめてください
-2. `rag_search` の `query` は、ユーザーの元の質問文を「完全一致でコピー」してください
-3. 依存関係を正しく設定してください
-4. 失敗時の代替手段（fallback）を検討してください
+1. 検索アクション（rag_search）は、可能な限り「1つのステップ」にまとめてください。
+2. `rag_search` の `query` は、ユーザーの元の質問文を「完全一致でコピー」してください。
+3. 依存関係を正しく設定してください（depends_onは先行ステップのIDのみ）。
+4. 失敗時の代替手段（fallback）を検討してください。
 5. 最後のステップは必ず "reasoning" で回答を生成してください
 
-ユーザーの質問: {query}
+{SEARCH_QUERY_INSTRUCTION}
+
+【計画の複雑度(complexity)の目安】
+- 0.0-0.3: 単純な質問（1-2ステップ）
+- 0.4-0.6: 中程度の質問（2-3ステップ）
+- 0.7-1.0: 複雑な質問（4ステップ以上）
+
+【requires_confirmationをtrueにする条件】
+- 質問が曖昧で複数の解釈が可能な場合
+- 実行に時間がかかる可能性がある場合
+- 外部リソースへのアクセスが必要な場合
+
+ユーザーの質問: {{query}}
+
+JSON形式で実行計画を出力してください。
 """
 ```
 
 | プレースホルダー | 説明 |
 |----------------|------|
-| `{available_collections}` | 利用可能なQdrantコレクション名のリスト |
-| `{query}` | ユーザーの質問文 |
+| `{{available_collections}}` | 利用可能なQdrantコレクション名のリスト（実行時に`.format()`で埋め込み） |
+| `{{query}}` | ユーザーの質問文（実行時に`.format()`で埋め込み） |
+| `{SEARCH_QUERY_INSTRUCTION}` | `services.prompts`から参照される検索クエリ指示（f-stringで静的埋め込み） |
+
+> 📝 **注意**: `{{...}}`はf-string内でのエスケープ（実行時に`.format()`で解決）、`{...}`はf-stringで静的に解決されます。
 
 ### 5.2 COMPLEXITY_ESTIMATION_PROMPT
 
@@ -671,9 +714,9 @@ Plannerで使用されるGraceConfigの設定項目：
 | 設定パス | 型 | デフォルト | 説明 |
 |---------|-----|----------|------|
 | `llm.provider` | str | `"gemini"` | LLMプロバイダー |
-| `llm.model` | str | `"gemini-2.5-flash"` | 使用するLLMモデル |
-| `llm.temperature` | float | `0.7` | 生成時の温度パラメータ |
-| `llm.max_tokens` | int | `4096` | 最大出力トークン数 |
+| `llm.model` | str | 設定ファイル依存 | 使用するLLMモデル |
+| `llm.temperature` | float | `0.7` | 生成時の温度パラメータ（create_plan, refine_planで使用） |
+| `llm.max_tokens` | int | `4096` | 最大出力トークン数（参考値。create_planは8192を明示指定） |
 | `llm.timeout` | int | `30` | タイムアウト秒数 |
 
 #### QdrantConfig（config.qdrant）
@@ -684,7 +727,7 @@ Plannerで使用されるGraceConfigの設定項目：
 | `qdrant.collection_name` | str | `"customer_support_faq"` | デフォルトコレクション名 |
 | `qdrant.search_limit` | int | `5` | 検索結果の最大件数 |
 | `qdrant.score_threshold` | float | `0.35` | 検索スコア閾値 |
-| `qdrant.search_priority` | list | `["wikipedia_ja", "livedoor", "cc_news", "japanese_text"]` | コレクション検索優先順序 |
+| `qdrant.search_priority` | list | `["wikipedia_ja", "livedoor", "cc_news", "japanese_text"]` | コレクション検索優先順序（フォールバック用） |
 
 ---
 
@@ -711,7 +754,7 @@ for step in plan.steps:
     print(f"  Step {step.step_id}: {step.action} - {step.description}")
 
 # 出力例:
-# 計画ID: plan_20250128_123456_abc123
+# 計画ID: plan_20260212_123456_abc123
 # 複雑度: 0.3
 # ステップ数: 2
 #   Step 1: rag_search - 関連情報を検索
@@ -728,7 +771,7 @@ from grace.config import get_config
 config = get_config("config/production.yml")
 
 # 特定のモデルを指定してPlannerを作成
-planner = create_planner(config=config, model_name="gemini-2.0-pro")
+planner = create_planner(config=config, model_name="gemini-3-flash-preview")
 
 # 複雑な質問の計画を生成
 plan = planner.create_plan("量子コンピュータの原理と従来のコンピュータとの違いを説明してください")
@@ -804,6 +847,7 @@ __all__ = [
 | 1.1 | ドキュメント改修: 主な責務・主要機能一覧を追加、IPO詳細に「**概要**:」ラベルを追加 |
 | 1.2 | ドキュメント改修: 目次を追加 |
 | 1.3 | ドキュメント改修: ASCII図をMermaid v9フローチャートに変更、GraceConfig設定情報を詳細化 |
+| 2.0 | コード改修に伴う全面更新: PLAN_GENERATION_PROMPT拡張（コレクション選択ルール・検索クエリ作成ルール・複雑度目安・requires_confirmation条件・SEARCH_QUERY_INSTRUCTION埋め込み）、全LLM呼び出し箇所にAFC無効化追加、create_planにIPOログ出力・API時間計測・max_output_tokens=8192を追加、estimate_complexity_with_llmにNoneガード・API時間計測を追加、refine_planにAPI時間計測を追加、フォーマット仕様v1.4準拠（各責務対応のモジュール テーブル追加） |
 
 ---
 
@@ -815,7 +859,7 @@ flowchart LR
 
     subgraph GOOGLE["google-genai"]
         GENAI[genai.Client]
-        TYPES[genai.types.GenerateContentConfig]
+        TYPES[genai.types.GenerateContentConfig\ngenai.types.AutomaticFunctionCallingConfig]
     end
 
     subgraph QDRANT["qdrant-client"]
@@ -864,6 +908,7 @@ flowchart LR
 |-----|------|----------|
 | Gemini API呼び出し失敗 | `_create_fallback_plan()`を使用 | ERROR |
 | JSONパース失敗 | `_create_fallback_plan()`を使用 | ERROR |
+| AFC永続化による空レスポンス | AFC無効化設定により防止 | ― |
 
 ### コレクション取得失敗時
 
@@ -876,9 +921,16 @@ flowchart LR
 | 状況 | 動作 | ログレベル |
 |-----|------|----------|
 | LLM推定失敗 | `estimate_complexity()`にフォールバック | WARNING |
+| レスポンスがNone/空 | `estimate_complexity()`にフォールバック | WARNING |
 
 ### 計画検証エラー時
 
 | 状況 | 動作 | ログレベル |
 |-----|------|----------|
 | 依存関係エラー | 警告のみ出力し、計画はそのまま返却 | WARNING |
+
+### 計画修正失敗時
+
+| 状況 | 動作 | ログレベル |
+|-----|------|----------|
+| refine_plan LLM呼び出し失敗 | 元の計画をそのまま返却 | ERROR |

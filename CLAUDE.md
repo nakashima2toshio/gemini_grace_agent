@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚠️ ファイル書き込みポリシー
+
+**ユーザーのファイルシステムへの write は基本禁止。**
+- `Filesystem:write_file` / `Filesystem:edit_file` によるユーザー側ファイルへの書き込みは、ユーザーの明示的な許可がある場合のみ実行すること。
+- 読み取り（`read_text_file`, `read_file`, `list_directory` 等）は許可。
+- 新規ファイル作成・既存ファイル編集が必要な場合は、まずユーザーに確認を取ること。
+
 ## Project Overview
 
 This is a Japanese RAG (Retrieval-Augmented Generation) Question-Answering system that implements semantic coverage analysis for evaluating Q&A datasets against documents. The system uses OpenAI embeddings and Qdrant vector database for similarity search and coverage metrics calculation.
