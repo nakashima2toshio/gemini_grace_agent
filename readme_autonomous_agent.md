@@ -1,25 +1,5 @@
-# Agent RAG (Gemini) プロジェクト
-
-> **はじめにお読みください**
->
-> | # | ドキュメント | 説明 |
-> | - | ----------- | ---- |
-> | 1 | [環境構築手順書 (readme_make_env.md)](./readme_make_env.md) | Mac 向け環境構築（Python / Docker / Celery / API キー設定） |
-> | 2 | [RAG ツール使用ガイド (readme_usage_tools.md)](./readme_usage_tools.md) | チャンク作成 → Q/A 生成・Qdrant 登録 → Agent 検索の操作手順 |
-> | 3 | [RAG Q/A 生成・検索システム (readme_rag.md)](./readme_rag.md) | RAG パイプライン全体の設計・クラス・関数 IPO 詳細（セマンティックチャンキング / Q&A 生成 / Qdrant 検索） |
-> | 4 | [ReAct+Reflection エージェント (readme_react_reflection.md)](./readme_react_reflection.md) | ReAct（Reasoning+Acting）ループ + Reflection 自己評価による自律型 RAG エージェントの設計と実装 |
-> | 5 | [自律型 Agent — GRACE (readme_autonomous_agent.md)](./readme_autonomous_agent.md) | GRACE（Plan→Execute→Confidence→Intervention→Replan）アーキテクチャの設計・IPO 詳細 |
-
----
-
-## （自律型Agent）grace_chat_page.py
-
-画面： agent_rag.py
-
-![image.png](assets/image.png)
-
-個々のドキュメントは、機能ディレクトリー/doc/*.md を参照あれ。
-
+# 自律型Agent　（GRACE エージェント）ドキュメント
+# grace_chat_page.py
 **Version 3.0** | 最終更新: 2026-02-17
 
 ---
@@ -46,6 +26,10 @@
 `grace_chat_page.py`は、GRACE（Goal-Reasoning-Action-Critique-Execute）アーキテクチャを使用した自律型エージェントとの対話インターフェースを提供するStreamlit UIページです。
 Planner + Executor の2フェーズ分離型アーキテクチャにより、計画策定（Plan）→ 実行（Execute）→ 信頼度評価（Confidence）→ 介入判定（Intervention）→ リプラン（Replan）の一連のプロセスをリアルタイムに可視化します。
 
+![image_grace.png](assets/image_grace.png?t=1771259085063)
+
+📝 **注意**: `grace/__init__.py` では「Guided Reasoning with Adaptive Confidence Execution」と定義されていますが、UIキャプションでは「Goal-Reasoning-Action-Critique-Execute Architecture」と表示されます。
+
 ### 主な責務
 
 - ユーザーからの質問入力の受付
@@ -56,6 +40,20 @@ Planner + Executor の2フェーズ分離型アーキテクチャにより、計
 - 検索対象コレクションの参考表示（GRACEは全コレクションを自動検索）
 - Qdrantコレクションデータのプレビュー表示
 - キャッシュ管理と統計表示
+
+### 各責務対応のモジュール
+
+
+| # | 責務             | 対応モジュール          | 説明                                                                    |
+| - | ---------------- | ----------------------- | ----------------------------------------------------------------------- |
+| 1 | 実行計画の策定   | `grace/planner.py`      | LLM（Gemini JSON Schema）による計画生成、複雑度推定、フォールバック計画 |
+| 2 | 計画の逐次実行   | `grace/executor.py`     | Generator ベースのステップ実行、状態管理（ExecutionState）              |
+| 3 | 信頼度評価       | `grace/confidence.py`   | LLM自己評価 + Heuristicフォールバック、クエリ網羅度計算                 |
+| 4 | 介入判定（HITL） | `grace/intervention.py` | 信頼度に基づく SILENT/NOTIFY/CONFIRM/ESCALATE の4段階判定               |
+| 5 | リプラン         | `grace/replan.py`       | ステップ失敗時の PARTIAL/FULL 戦略による計画修正                        |
+| 6 | ツール実行       | `grace/tools.py`        | ToolRegistry（RAGSearchTool, ReasoningTool, AskUserTool）               |
+| 7 | データモデル     | `grace/schemas.py`      | ExecutionPlan, PlanStep, StepResult, ExecutionResult 等                 |
+| 8 | 設定管理         | `grace/config.py`       | GraceConfig（YAML + 環境変数）、LLM/Confidence/Intervention/Replan設定  |
 
 ### 主要機能一覧
 
@@ -532,7 +530,7 @@ flowchart TB
 
 Planner と Executor の初期化は以下の条件のいずれかを満たす場合に実行されます。
 
-```
+```python
 should_reinitialize = (
     "grace_current_model" not in st.session_state
     or st.session_state.grace_current_model != selected_model
@@ -798,7 +796,7 @@ if prompt := st.chat_input("質問を入力してください..."):
 
 ### 6.2 `Planner.create_plan`
 
-**概要**: ユーザーの質問を分析し、LLM（Gemini）を使って ExecutionPlan を生成する。
+**概要**: ユーザーの質問を分析し、LLM（Gemini）を使って ExecutionPlan を生成する。AFC（Automatic Function Calling）無効化によりJSON途切れバグを回避。
 
 **参照**: `grace/planner.py`
 
@@ -807,13 +805,13 @@ def create_plan(self, query: str) -> ExecutionPlan
 ```
 
 
-| 項目        | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Input**   | `query: str` — ユーザーの質問文                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| **Process** | 1.`_get_available_collections()` — Qdrantから利用可能コレクション一覧を取得<br>2. `estimate_complexity_with_llm(query)` — LLMで複雑度を推定（0.0-1.0）<br>3. `PLAN_GENERATION_PROMPT` にコレクション一覧・クエリを埋め込み<br>4. Gemini API で JSON Schema 出力（`response_schema=ExecutionPlan`）<br>5. `ExecutionPlan.model_validate_json()` でパース<br>6. `validate_plan_dependencies()` で依存関係を検証<br>7. 計画IDを付与（`create_plan_id()`） |
-| **Output**  | `ExecutionPlan` — 実行計画（失敗時はフォールバック計画を返却）                                                                                                                                                                                                                                                                                                                                                                                          |
+| 項目        | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Input**   | `query: str` — ユーザーの質問文                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Process** | 1.`_get_available_collections()` — Qdrantから利用可能コレクション一覧を取得<br>2. `estimate_complexity_with_llm(query)` — LLMで複雑度を推定（0.0-1.0）<br>3. `PLAN_GENERATION_PROMPT` にコレクション一覧・クエリを埋め込み<br>4. Gemini API で JSON Schema 出力（`response_schema=ExecutionPlan`, `max_output_tokens=8192`, AFC無効化）<br>5. `ExecutionPlan.model_validate_json()` でパース<br>6. LLMが推定した複雑度で `plan.complexity` を上書き<br>7. `validate_plan_dependencies()` で依存関係を検証（警告のみ）<br>8. 計画IDを付与（`create_plan_id()`） |
+| **Output**  | `ExecutionPlan` — 実行計画（失敗時はフォールバック計画を返却）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
-**フォールバック動作**: LLM呼び出しが失敗した場合、`_create_fallback_plan()` が2ステップの単純計画（rag_search → reasoning）を返します。
+**フォールバック動作**: LLM呼び出しが失敗した場合、`_create_fallback_plan()` が2ステップの単純計画（rag_search → reasoning）を返します。フォールバック計画では `collection="wikipedia_ja"` が明示指定されます。
 
 ### 6.3 `Planner.estimate_complexity_with_llm`
 
@@ -824,13 +822,43 @@ def estimate_complexity_with_llm(self, query: str) -> float
 ```
 
 
-| 項目        | 内容                                                                                                    |
-| ----------- | ------------------------------------------------------------------------------------------------------- |
-| **Input**   | `query: str` — ユーザーの質問文                                                                        |
-| **Process** | `COMPLEXITY_ESTIMATION_PROMPT` を使い、Gemini API で数値のみを取得（temperature=0.1）                   |
-| **Output**  | `float` — 複雑度スコア（0.0-1.0）。失敗時はキーワードベースの `estimate_complexity()` にフォールバック |
+| 項目        | 内容                                                                                                                                                                                                      |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Input**   | `query: str` — ユーザーの質問文                                                                                                                                                                          |
+| **Process** | `COMPLEXITY_ESTIMATION_PROMPT` を使い、Gemini API で数値のみを取得（`temperature=0.1`, `max_output_tokens=10`, AFC無効化）。レスポンスが None の場合（AFC永続化バグ）はキーワードベース版にフォールバック |
+| **Output**  | `float` — 複雑度スコア（0.0-1.0）。失敗時はキーワードベースの `estimate_complexity()` にフォールバック                                                                                                   |
 
-### 6.4 `Executor.execute_plan_generator`
+### 6.4 `Planner.estimate_complexity`
+
+**概要**: キーワードベースの簡易的な複雑度推定。LLM版のフォールバック。
+
+```python
+def estimate_complexity(self, query: str) -> float
+```
+
+
+| 項目        | 内容                                                                                                                                                                                          |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Input**   | `query: str` — ユーザーの質問文                                                                                                                                                              |
+| **Process** | 1. ベーススコア 0.5 から開始<br>2. キーワード（「比較」「違い」「複数」「最新」等 11個）の出現で加算<br>3. 質問文の長さ（100文字以上で+0.1、200文字以上で+0.1）を加算<br>4. 最大1.0でクランプ |
+| **Output**  | `float` — 複雑度スコア（0.0-1.0）                                                                                                                                                            |
+
+### 6.5 `Planner.refine_plan`
+
+**概要**: フィードバックに基づいて計画を修正する。
+
+```python
+def refine_plan(self, plan: ExecutionPlan, feedback: str) -> ExecutionPlan
+```
+
+
+| 項目        | 内容                                                                                                             |
+| ----------- | ---------------------------------------------------------------------------------------------------------------- |
+| **Input**   | `plan: ExecutionPlan` — 元の計画<br>`feedback: str` — ユーザーからのフィードバック                             |
+| **Process** | 元の計画情報とフィードバックをプロンプトに含め、Gemini API で JSON Schema 出力（AFC無効化）。新しいplan_idを付与 |
+| **Output**  | `ExecutionPlan` — 修正された計画（失敗時は元の計画をそのまま返却）                                              |
+
+### 6.6 `Executor.execute_plan_generator`
 
 **概要**: 計画をステップごとに実行し、進捗を Generator で逐次返す。UI でのリアルタイム表示に使用。
 
@@ -843,12 +871,12 @@ def execute_plan_generator(
 ```
 
 
-| 項目        | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Input**   | `plan: ExecutionPlan` — 実行する計画<br>`state: Optional[ExecutionState]` — 既存状態（再開時、省略時は新規作成）                                                                                                                                                                                                                                                                                                                                            |
-| **Process** | 1.`ExecutionState` を初期化（全ステップを PENDING に設定）<br>2. 各ステップをループ: 依存チェック → ステップ実行 → 信頼度計算 → 介入判定<br>3. ステップ実行は `_execute_step()` を呼び出し、ToolRegistry 経由でツールを実行<br>4. `_execute_step()` が Generator を返す場合（Legacy Agent）は `yield from` で中継<br>5. ステップ失敗時に ReplanOrchestrator がリプランを試行<br>6. 全ステップ完了後に `_calculate_overall_confidence()` で全体信頼度を算出 |
-| **Yield**   | `ExecutionState` — ステップ完了/一時停止の通知（status, confidence, intervention_request）<br>`dict` — ツール実行イベント（type: log / tool_call / tool_result / final_answer）                                                                                                                                                                                                                                                                             |
-| **Return**  | `ExecutionResult` — 最終実行結果（`StopIteration.value` で取得）                                                                                                                                                                                                                                                                                                                                                                                             |
+| 項目        | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Input**   | `plan: ExecutionPlan` — 実行する計画<br>`state: Optional[ExecutionState]` — 既存状態（再開時、省略時は新規作成）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Process** | 1.`ExecutionState` を初期化（全ステップを PENDING に設定）<br>2. 未完了ステップをフィルタ（既にSUCCESSのステップはスキップ）<br>3. 各ステップをループ: キャンセルチェック → 依存チェック → ステップ実行 → 信頼度計算 → 介入判定<br>4. ステップ実行は `_execute_step()` を呼び出し、ToolRegistry 経由でツールを実行<br>5. `_execute_step()` が Generator を返す場合（Legacy Agent）は `yield from` で中継<br>6. 信頼度に基づく介入チェック: CONFIRM/ESCALATE で一時停止、InterventionRequestを設定してyield後return<br>7. ステップ失敗時に ReplanOrchestrator がリプランを試行（`yield from` で再帰呼び出し）<br>8. 全ステップ完了後に `_calculate_overall_confidence()` で全体信頼度を算出 |
+| **Yield**   | `ExecutionState` — ステップ完了/一時停止の通知（status, confidence, intervention_request）<br>`dict` — ツール実行イベント（type: log / tool_call / tool_result / final_answer）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Return**  | `ExecutionResult` — 最終実行結果（`StopIteration.value` で取得）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 **Generator のライフサイクル**:
 
@@ -857,12 +885,14 @@ def execute_plan_generator(
 │                                                          │
 │  [ステップ開始]                                           │
 │    └─ _execute_step(step, state)                        │
-│        ├─ ToolRegistry.execute(action, kwargs)          │
+│        ├─ ToolRegistry.get(action).execute(**kwargs)     │
 │        │   └─ yield dict(type="log", content=...)       │
 │        └─ return StepResult                             │
 │                                                          │
 │  [信頼度計算]                                             │
 │    └─ _llm_calculate_step_confidence(tool_result, ...)  │
+│        ├─ ConfidenceCalculator.llm_calculate()          │
+│        └─ Heuristicフォールバック（LLMスコア < 0.6時）     │
 │                                                          │
 │  [介入判定]                                               │
 │    ├─ SILENT/NOTIFY → 自動続行                           │
@@ -877,11 +907,15 @@ def execute_plan_generator(
 ├─ ... (次ステップへ) ...                                   │
 │                                                          │
 │  [全ステップ完了]                                         │
+│    ├─ _calculate_overall_confidence(state)               │
+│    │   ├─ LLMSelfEvaluator.evaluate()                   │
+│    │   ├─ QueryCoverageCalculator.calculate()            │
+│    │   └─ ConfidenceAggregator.aggregate()               │
 │    └─ return ExecutionResult ← StopIteration.value       │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### 6.5 `get_available_collections_from_qdrant_helper`
+### 6.7 `get_available_collections_from_qdrant_helper`
 
 **概要**: Qdrantから利用可能なコレクション一覧を取得する。
 
@@ -894,21 +928,21 @@ def execute_plan_generator(
 | **Process** | QdrantClient でコレクション一覧を取得                     |
 | **Output**  | `List[str]`: コレクション名のリスト（エラー時は空リスト） |
 
-### 6.6 主要データモデル
+### 6.8 主要データモデル
 
 #### ExecutionPlan（`grace/schemas.py`）
 
 
-| フィールド              | 型                   | 説明                                    |
-| ----------------------- | -------------------- | --------------------------------------- |
-| `original_query`        | `str`                | ユーザーの元の質問                      |
-| `complexity`            | `float` (0.0-1.0)    | 推定複雑度                              |
-| `estimated_steps`       | `int` (1-20)         | 推定ステップ数                          |
-| `requires_confirmation` | `bool`               | 実行前に確認が必要か                    |
-| `steps`                 | `List[PlanStep]`     | 実行ステップのリスト                    |
-| `success_criteria`      | `str`                | 計画成功の判定基準                      |
-| `created_at`            | `Optional[datetime]` | 計画作成日時                            |
-| `plan_id`               | `Optional[str]`      | 計画ID（自動生成、12文字のMD5ハッシュ） |
+| フィールド              | 型                   | 説明                                |
+| ----------------------- | -------------------- | ----------------------------------- |
+| `original_query`        | `str`                | ユーザーの元の質問                  |
+| `complexity`            | `float` (0.0-1.0)    | 推定複雑度                          |
+| `estimated_steps`       | `int` (1-20)         | 推定ステップ数                      |
+| `requires_confirmation` | `bool`               | 実行前に確認が必要か                |
+| `steps`                 | `List[PlanStep]`     | 実行ステップのリスト（1個以上必須） |
+| `success_criteria`      | `str`                | 計画成功の判定基準                  |
+| `created_at`            | `Optional[datetime]` | 計画作成日時（自動設定）            |
+| `plan_id`               | `Optional[str]`      | 計画ID（MD5ハッシュ先頭12文字）     |
 
 #### PlanStep（`grace/schemas.py`）
 
@@ -917,7 +951,7 @@ def execute_plan_generator(
 | ----------------- | ----------------------- | --------------------------------------------------------------------------------------------- |
 | `step_id`         | `int` (≥1)             | ステップ番号                                                                                  |
 | `action`          | `Literal[...]`          | アクション種別（rag_search, web_search, reasoning, ask_user, code_execute, run_legacy_agent） |
-| `description`     | `str`                   | ステップの説明                                                                                |
+| `description`     | `str`                   | ステップの説明（1文字以上必須）                                                               |
 | `query`           | `Optional[str]`         | 検索クエリ（検索系アクション用）                                                              |
 | `collection`      | `Optional[str]`         | 検索対象コレクション（原則 null — 全コレクション自動検索）                                   |
 | `depends_on`      | `List[int]`             | 依存する先行ステップID                                                                        |
@@ -928,31 +962,37 @@ def execute_plan_generator(
 #### ExecutionResult（`grace/schemas.py`）
 
 
-| フィールド                | 型                 | 説明                                                  |
-| ------------------------- | ------------------ | ----------------------------------------------------- |
-| `plan_id`                 | `str`              | 計画ID                                                |
-| `original_query`          | `str`              | 元のクエリ                                            |
-| `final_answer`            | `Optional[str]`    | 最終回答                                              |
-| `step_results`            | `List[StepResult]` | 各ステップの結果                                      |
-| `overall_confidence`      | `float` (0.0-1.0)  | 全体の信頼度                                          |
-| `overall_status`          | `Literal[...]`     | 全体ステータス（success, partial, failed, cancelled） |
-| `replan_count`            | `int`              | リプラン回数                                          |
-| `total_execution_time_ms` | `Optional[int]`    | 総実行時間（ミリ秒）                                  |
+| フィールド                | 型                   | 説明                                                  |
+| ------------------------- | -------------------- | ----------------------------------------------------- |
+| `plan_id`                 | `str`                | 計画ID                                                |
+| `original_query`          | `str`                | 元のクエリ                                            |
+| `final_answer`            | `Optional[str]`      | 最終回答                                              |
+| `step_results`            | `List[StepResult]`   | 各ステップの結果                                      |
+| `overall_confidence`      | `float` (0.0-1.0)    | 全体の信頼度                                          |
+| `overall_status`          | `Literal[...]`       | 全体ステータス（success, partial, failed, cancelled） |
+| `replan_count`            | `int`                | リプラン回数                                          |
+| `total_execution_time_ms` | `Optional[int]`      | 総実行時間（ミリ秒）                                  |
+| `total_token_usage`       | `Optional[dict]`     | 総トークン使用量                                      |
+| `total_cost_usd`          | `Optional[float]`    | 総コスト（USD）                                       |
+| `created_at`              | `Optional[datetime]` | 結果作成日時                                          |
 
 #### ExecutionState（`grace/executor.py`）
 
 
-| フィールド             | 型                              | 説明                         |
-| ---------------------- | ------------------------------- | ---------------------------- |
-| `plan`                 | `ExecutionPlan`                 | 実行中の計画                 |
-| `current_step_id`      | `int`                           | 現在のステップID             |
-| `step_results`         | `Dict[int, StepResult]`         | ステップID → 結果のマップ   |
-| `step_statuses`        | `Dict[int, StepStatus]`         | ステップID → 状態のマップ   |
-| `overall_confidence`   | `float`                         | 全体信頼度（実行中は暫定値） |
-| `is_cancelled`         | `bool`                          | キャンセル済みフラグ         |
-| `is_paused`            | `bool`                          | 一時停止フラグ（介入待ち）   |
-| `intervention_request` | `Optional[InterventionRequest]` | 介入リクエスト               |
-| `replan_count`         | `int`                           | リプラン回数                 |
+| フィールド             | 型                              | 説明                            |
+| ---------------------- | ------------------------------- | ------------------------------- |
+| `plan`                 | `ExecutionPlan`                 | 実行中の計画                    |
+| `current_step_id`      | `int`                           | 現在のステップID                |
+| `step_results`         | `Dict[int, StepResult]`         | ステップID → 結果のマップ      |
+| `step_statuses`        | `Dict[int, StepStatus]`         | ステップID → 状態のマップ      |
+| `overall_confidence`   | `float`                         | 全体信頼度（実行中は暫定値）    |
+| `is_cancelled`         | `bool`                          | キャンセル済みフラグ            |
+| `is_paused`            | `bool`                          | 一時停止フラグ（介入待ち）      |
+| `intervention_request` | `Optional[InterventionRequest]` | 介入リクエスト                  |
+| `replan_count`         | `int`                           | リプラン回数                    |
+| `max_replans`          | `int`                           | 最大リプラン回数（デフォルト3） |
+| `start_time`           | `Optional[float]`               | 実行開始時刻                    |
+| `end_time`             | `Optional[float]`               | 実行終了時刻                    |
 
 #### StepResult（`grace/schemas.py`）
 
@@ -966,6 +1006,8 @@ def execute_plan_generator(
 | `sources`           | `List[str]`                               | 引用ソース                 |
 | `error`             | `Optional[str]`                           | エラーメッセージ（失敗時） |
 | `execution_time_ms` | `Optional[int]`                           | 実行時間（ミリ秒）         |
+| `token_usage`       | `Optional[dict]`                          | トークン使用量             |
+| `created_at`        | `Optional[datetime]`                      | 結果作成日時               |
 
 ---
 
@@ -1023,7 +1065,7 @@ flowchart TB
         Page["show_grace_chat_page()"]
     end
 
-    subgraph GracePackage["grace/ パッケージ"]
+    subgraph GracePackage["grace/ パッケージ (v0.1.0)"]
         subgraph Core["コア"]
             Init["__init__.py<br/>v0.1.0"]
             Schemas["schemas.py<br/>ExecutionPlan, PlanStep,<br/>StepResult, ExecutionResult,<br/>ActionType, StepStatus"]
@@ -1037,11 +1079,11 @@ flowchart TB
         subgraph Phase2["Phase 2: 実行 + 信頼度"]
             ExecutorMod["executor.py<br/>Executor, ExecutionState,<br/>create_executor()"]
             ToolsMod["tools.py<br/>ToolRegistry,<br/>RAGSearchTool,<br/>ReasoningTool,<br/>AskUserTool"]
-            ConfMod["confidence.py<br/>ConfidenceCalculator,<br/>LLMSelfEvaluator,<br/>QueryCoverageCalculator"]
+            ConfMod["confidence.py<br/>ConfidenceCalculator,<br/>LLMSelfEvaluator,<br/>SourceAgreementCalculator,<br/>QueryCoverageCalculator,<br/>ConfidenceAggregator"]
         end
 
         subgraph Phase3["Phase 3: 介入"]
-            IntervMod["intervention.py<br/>InterventionHandler,<br/>InterventionRequest/Response,<br/>DynamicThresholdAdjuster"]
+            IntervMod["intervention.py<br/>InterventionHandler,<br/>InterventionRequest/Response,<br/>DynamicThresholdAdjuster,<br/>ConfirmationFlow"]
         end
 
         subgraph Phase4["Phase 4: リプラン"]
@@ -1108,6 +1150,7 @@ Executor が使用するツール群を管理するレジストリです。
 | クラス          | ActionType   | 説明                                                               |
 | --------------- | ------------ | ------------------------------------------------------------------ |
 | `ToolRegistry`  | -            | ツール管理・ルーティング                                           |
+| `BaseTool`      | -            | ツール基底クラス（ABC）                                            |
 | `RAGSearchTool` | `rag_search` | Qdrant全コレクション自動検索（auto-collection fallback、動的閾値） |
 | `ReasoningTool` | `reasoning`  | LLM推論（検索結果を基にGeminiで回答生成）                          |
 | `AskUserTool`   | `ask_user`   | HITL（ユーザーへの確認要求）                                       |
@@ -1131,17 +1174,25 @@ flowchart TB
 
 #### 7.5.3 grace/confidence.py — 信頼度計算
 
-ステップ実行結果の信頼度を多角的に評価します。
+ステップ実行結果の信頼度を多角的に評価します。LLM方式とHeuristic方式のハイブリッド計算を実装。
 
 **主要コンポーネント**:
 
 
-| コンポーネント            | 説明                                              |
-| ------------------------- | ------------------------------------------------- |
-| `ConfidenceCalculator`    | 統合信頼度計算（evaluate → decide_action）       |
-| `LLMSelfEvaluator`        | Gemini による自己評価（query と answer の整合性） |
-| `QueryCoverageCalculator` | クエリキーワードの網羅度計算                      |
-| `ConfidenceAggregator`    | 複数信頼度指標の重み付け統合                      |
+| コンポーネント              | 説明                                                                                              |
+| --------------------------- | ------------------------------------------------------------------------------------------------- |
+| `ConfidenceCalculator`      | 統合信頼度計算（calculate → Heuristic / llm_calculate → LLM / decide_action → 介入レベル判定） |
+| `LLMSelfEvaluator`          | Gemini による自己評価（query と answer の整合性）                                                 |
+| `SourceAgreementCalculator` | 複数ソース間のテキスト一致度計算                                                                  |
+| `QueryCoverageCalculator`   | クエリキーワードの網羅度計算                                                                      |
+| `ConfidenceAggregator`      | 複数信頼度指標の重み付け統合                                                                      |
+| `EvaluationResult`          | LLM信頼度評価の応答スキーマ（Pydantic BaseModel: score, reason）                                  |
+
+**信頼度計算フロー（`_llm_calculate_step_confidence`）**:
+
+1. LLM方式で信頼度を計算（`ConfidenceCalculator.llm_calculate()`）
+2. LLMスコアが0.6未満かつ検索ステップの場合、Heuristic方式で再計算して比較
+3. 高い方のスコアを採用（LLM方式失敗時はHeuristicにフォールバック）
 
 **介入レベル判定**:
 
@@ -1160,12 +1211,15 @@ flowchart TB
 **主要クラス**:
 
 
-| クラス                     | 説明                                                        |
-| -------------------------- | ----------------------------------------------------------- |
-| `InterventionHandler`      | 介入要否判定・リクエスト生成                                |
-| `InterventionRequest`      | 介入リクエスト（level, step_id, message, confidence_score） |
-| `InterventionResponse`     | ユーザー応答（action: PROCEED / MODIFY / CANCEL / INPUT）   |
-| `DynamicThresholdAdjuster` | フィードバックに基づく閾値自動調整                          |
+| クラス                     | 説明                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------- |
+| `InterventionHandler`      | 介入要否判定・リクエスト生成                                                           |
+| `InterventionRequest`      | 介入リクエスト（level, step_id, message, confidence_score, plan, timeout_seconds=300） |
+| `InterventionResponse`     | ユーザー応答（action: PROCEED / MODIFY / CANCEL / INPUT / RETRY / SKIP）               |
+| `InterventionAction`       | 介入アクションEnum（6種類）                                                            |
+| `DynamicThresholdAdjuster` | フィードバックに基づく閾値自動調整                                                     |
+| `ConfirmationFlow`         | 確認フロー管理                                                                         |
+| `FeedbackRecord`           | フィードバック記録                                                                     |
 
 #### 7.5.5 grace/replan.py — リプラン戦略
 
@@ -1174,12 +1228,14 @@ flowchart TB
 **主要クラス**:
 
 
-| クラス               | 説明                                                     |
-| -------------------- | -------------------------------------------------------- |
-| `ReplanOrchestrator` | リプラン全体制御（失敗検知 → 戦略選択 → 新計画生成）   |
-| `ReplanManager`      | リプラン戦略の管理・実行                                 |
-| `ReplanStrategy`     | リプラン戦略Enum（PARTIAL: 部分修正 / FULL: 全体再計画） |
-| `ReplanResult`       | リプラン結果（success, new_plan, reason）                |
+| クラス               | 説明                                                                                     |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| `ReplanOrchestrator` | リプラン全体制御（失敗検知 → 戦略選択 → 新計画生成）                                   |
+| `ReplanManager`      | リプラン戦略の管理・実行                                                                 |
+| `ReplanStrategy`     | リプラン戦略Enum（PARTIAL / FULL / FALLBACK / SKIP / ABORT）                             |
+| `ReplanTrigger`      | トリガーEnum（STEP_FAILED / LOW_CONFIDENCE / USER_FEEDBACK / NEW_INFORMATION / TIMEOUT） |
+| `ReplanContext`      | リプラン時のコンテキスト                                                                 |
+| `ReplanResult`       | リプラン結果（success, new_plan, reason）                                                |
 
 **リプランフロー**:
 
@@ -1193,7 +1249,7 @@ flowchart TB
     E -->|FULL| G["Planner.create_plan() で全体再計画"]
     F --> H["新計画で Generator 再帰呼び出し"]
     G --> H
-    H --> I["yield from execute_plan_generator(new_plan)"]
+    H --> I["yield from execute_plan_generator(new_plan, state)"]
 ```
 
 #### 7.5.6 agent_cache.py — コレクションキャッシュ
@@ -1342,7 +1398,7 @@ flowchart TB
 ### 8.5 旧版イベント処理との対比
 
 
-| 観点            | 旧版（v1.0）                                                | 新版（v2.0）                                                       |
+| 観点            | 旧版（v1.0）                                                | 新版（v2.0+）                                                      |
 | --------------- | ----------------------------------------------------------- | ------------------------------------------------------------------ |
 | イベントソース  | `ReActAgent.execute_turn()` Generator                       | `Executor.execute_plan_generator()` Generator                      |
 | yield 型        | `dict` のみ（type: log/tool_call/tool_result/final_answer） | `ExecutionState` + `dict`（2種類の yield）                         |
@@ -1359,15 +1415,15 @@ flowchart TB
 ### 9.1 エラー種別
 
 
-| エラー種別                    | 発生箇所             | 発生条件                                | 対処                                                   |
-| ----------------------------- | -------------------- | --------------------------------------- | ------------------------------------------------------ |
-| Qdrant接続エラー              | サイドバー初期化     | サーバー未起動、ネットワーク障害        | `st.warning` で警告表示、`["(None)"]` で続行           |
-| Planner/Executor 初期化エラー | セッション初期化     | API認証失敗、GraceConfig 読み込みエラー | `st.error` でエラー表示、`return` で処理中断           |
-| 計画策定エラー                | Phase 1（Plan）      | LLM呼び出し失敗、JSON パースエラー      | Planner 内部でフォールバック計画を自動生成             |
-| ステップ実行エラー            | Phase 2-4（Execute） | ツール実行失敗、タイムアウト            | Executor 内部でフォールバック → リプラン試行          |
-| Generator 例外                | Phase 2-4（Execute） | 予期しないランタイムエラー              | `ExecutionResult(status="failed")` を返却              |
-| チャット処理エラー            | 全体 try/except      | 上記以外の未捕捉エラー                  | `st.error` でエラー表示、`logger.error(exc_info=True)` |
-| コレクションデータ取得エラー  | データプレビュー     | コレクション不在、スキーマ不一致        | `st.error` でエラー表示                                |
+| エラー種別                    | 発生箇所             | 発生条件                                          | 対処                                                      |
+| ----------------------------- | -------------------- | ------------------------------------------------- | --------------------------------------------------------- |
+| Qdrant接続エラー              | サイドバー初期化     | サーバー未起動、ネットワーク障害                  | `st.warning` で警告表示、`["(None)"]` で続行              |
+| Planner/Executor 初期化エラー | セッション初期化     | API認証失敗、GraceConfig 読み込みエラー           | `st.error` でエラー表示、`return` で処理中断              |
+| 計画策定エラー                | Phase 1（Plan）      | LLM呼び出し失敗、JSON パースエラー、AFC永続化バグ | Planner 内部でフォールバック計画を自動生成                |
+| ステップ実行エラー            | Phase 2-4（Execute） | ツール実行失敗、タイムアウト                      | Executor 内部でフォールバック → リプラン試行             |
+| Generator 例外                | Phase 2-4（Execute） | 予期しないランタイムエラー                        | `ExecutionResult(status="failed", confidence=0.0)` を返却 |
+| チャット処理エラー            | 全体 try/except      | 上記以外の未捕捉エラー                            | `st.error` でエラー表示、`logger.error(exc_info=True)`    |
+| コレクションデータ取得エラー  | データプレビュー     | コレクション不在、スキーマ不一致                  | `st.error` でエラー表示                                   |
 
 ### 9.2 エラー処理の多層構造
 
@@ -1535,12 +1591,12 @@ Step 3: ✅ success (信頼度: 0.85)
 ## 11. 変更履歴
 
 
-| バージョン | 日付           | 変更内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ---------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.0        | 2025-01-29     | 初版作成                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 1.1        | 2025-01-29     | 依存モジュール詳細（agent_cache, agent_parallel_search, agent_tools, regex_mecab）を追加                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| **2.0**    | **2025-06-14** | **ReActAgent → Planner + Executor アーキテクチャに全面移行**。主な変更: (1) アーキテクチャ概要を2フェーズ分離型に更新、(2) 画面レイアウトを3 Expander 構成に変更、(3) セッション状態から `grace_agent` / `grace_current_hybrid_search` / `grace_current_collections` を削除し `grace_planner` / `grace_executor` を追加、(4) イベント処理を Generator ベース（ExecutionState + dict yield）に刷新、(5) 依存関係に grace/ パッケージ構成図を追加、(6) エラーハンドリングを3層構造（grace内部自動回復 / UI判定 / 全体try-except）に整理、(7) 使用例を計画策定・実行プロセス・結果サマリの表示例に更新、(8) 付録Bに GraceConfig 設定リファレンスを追加 |
-| **3.0**    | **2026-02-17** | **ドキュメント体系の整備**。主な変更: (1) 冒頭ドキュメント一覧表を5件に拡張（readme_rag.md / readme_react_reflection.md / readme_autonomous_agent.md を追加）、(2) 番号付きリンク表で参照順を明示 |
+| バージョン | 日付           | 変更内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0        | 2025-01-29     | 初版作成                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 1.1        | 2025-01-29     | 依存モジュール詳細（agent_cache, agent_parallel_search, agent_tools, regex_mecab）を追加                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **2.0**    | **2025-06-14** | **ReActAgent → Planner + Executor アーキテクチャに全面移行**。主な変更: (1) アーキテクチャ概要を2フェーズ分離型に更新、(2) 画面レイアウトを3 Expander 構成に変更、(3) セッション状態から `grace_agent` / `grace_current_hybrid_search` / `grace_current_collections` を削除し `grace_planner` / `grace_executor` を追加、(4) イベント処理を Generator ベース（ExecutionState + dict yield）に刷新、(5) 依存関係に grace/ パッケージ構成図を追加、(6) エラーハンドリングを3層構造（grace内部自動回復 / UI判定 / 全体try-except）に整理、(7) 使用例を計画策定・実行プロセス・結果サマリの表示例に更新、(8) 付録Bに GraceConfig 設定リファレンスを追加                                                                                                                                                                                                                                                                                               |
+| **3.0**    | **2026-02-17** | **ソースコード全量解析に基づく全面改訂**。主な変更: (1) H1見出しをフォーマット仕様v1.4に準拠（`##` → `#`）、(2) 概要セクションに「各責務対応のモジュール」テーブルを追加、(3) `__init__.py` (v0.1.0) の "Guided Reasoning with Adaptive Confidence Execution" 定義を注記、(4) Planner IPO詳細にAFC無効化・`max_output_tokens=8192`・複雑度上書きロジックを追記、(5) Executor IPO詳細に未完了ステップフィルタ・LLM/Heuristicハイブリッド信頼度計算・依存スコア継承ロジックを追記、(6) confidence.py に SourceAgreementCalculator・EvaluationResult を追加、(7) intervention.py に ConfirmationFlow・InterventionAction(6種類)を追加、(8) replan.py に ReplanTrigger(5種類)・ReplanStrategy(5種類)・ReplanContext を追加、(9) schemas.py に token_usage・total_token_usage・total_cost_usd・created_at フィールドを追加、(10) Planner.estimate_complexity / Planner.refine_plan の IPO を追加、(11) grace/ パッケージ構成図を全モジュール反映に更新 |
 
 ---
 
@@ -1711,16 +1767,17 @@ GraceConfig は `config/grace_config.yml` から読み込まれ、環境変数�
 ### C.1 よくある問題と解決策
 
 
-| 問題                                     | 原因                            | 解決策                                                               |
-| ---------------------------------------- | ------------------------------- | -------------------------------------------------------------------- |
-| 「コレクションがありません」と表示される | Qdrantサーバー未起動            | `docker-compose up -d qdrant` でQdrantを起動                         |
-| Planner/Executor 初期化エラー            | APIキー未設定                   | `GEMINI_API_KEY` または `GOOGLE_API_KEY` を設定                      |
-| GraceConfig 読み込みエラー               | YAML ファイル不在 or 構文エラー | `config/grace_config.yml` を確認。不在時はデフォルト値で動作         |
-| 計画策定が常にフォールバック             | LLM呼び出し失敗                 | API認証・ネットワーク・モデル名を確認。ログ`logs/grace_run.log` 参照 |
-| 信頼度が常に0.0                          | Confidence計算の依存エラー      | `grace_config.yml` の `confidence.weights` 設定を確認                |
-| 検索結果が見つからない                   | コレクションにデータがない      | CSVデータ登録ページでデータを登録                                    |
-| MeCabエラー                              | MeCab未インストール             | `pip install mecab-python3` でインストール（Optional）               |
-| キャッシュが効かない                     | TTL切れ                         | 5分以内に同一セッションで検索を実行                                  |
+| 問題                                     | 原因                               | 解決策                                                                                                                |
+| ---------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| 「コレクションがありません」と表示される | Qdrantサーバー未起動               | `docker-compose up -d qdrant` でQdrantを起動                                                                          |
+| Planner/Executor 初期化エラー            | APIキー未設定                      | `GEMINI_API_KEY` または `GOOGLE_API_KEY` を設定                                                                       |
+| GraceConfig 読み込みエラー               | YAML ファイル不在 or 構文エラー    | `config/grace_config.yml` を確認。不在時はデフォルト値で動作                                                          |
+| 計画策定が常にフォールバック             | LLM呼び出し失敗またはAFC永続化バグ | API認証・ネットワーク・モデル名を確認。AFC無効化は実装済み（google-genai issue #1818）。ログ`logs/grace_run.log` 参照 |
+| 信頼度が常に0.0                          | Confidence計算の依存エラー         | `grace_config.yml` の `confidence.weights` 合計が1.0か確認                                                            |
+| 検索結果が見つからない                   | コレクションにデータがない         | CSVデータ登録ページでデータを登録                                                                                     |
+| MeCabエラー                              | MeCab未インストール                | `pip install mecab-python3` でインストール（Optional）                                                                |
+| キャッシュが効かない                     | TTL切れ                            | 5分以内に同一セッションで検索を実行                                                                                   |
+| LLM応答がNone                            | AFC永続化バグ（google-genai）      | `automatic_function_calling=AutomaticFunctionCallingConfig(disable=True)` が設定されていることを確認                  |
 
 ### C.2 ログの確認方法
 
@@ -1733,4 +1790,45 @@ tail -f logs/grace_run.log
 
 # 旧エージェントログ
 tail -f logs/agent_chat.log
+```
+
+---
+
+## 付録D: grace/ パッケージ エクスポート一覧
+
+`grace/__init__.py` (v0.1.0) で公開されている全要素:
+
+```python
+__all__ = [
+    # Version
+    "__version__",
+    # Schemas
+    "ExecutionPlan", "PlanStep", "StepResult", "ExecutionResult",
+    "ActionType", "StepStatus", "create_plan_id", "validate_plan_dependencies",
+    # Config
+    "GraceConfig", "get_config", "reload_config",
+    # Planner
+    "Planner", "create_planner",
+    # Tools
+    "ToolResult", "BaseTool", "RAGSearchTool", "ReasoningTool",
+    "AskUserTool", "ToolRegistry", "create_tool_registry",
+    # Executor
+    "ExecutionState", "Executor", "create_executor",
+    # Confidence (Phase 2)
+    "ConfidenceFactors", "ConfidenceScore", "ActionDecision", "InterventionLevel",
+    "ConfidenceCalculator", "LLMSelfEvaluator", "SourceAgreementCalculator",
+    "QueryCoverageCalculator", "ConfidenceAggregator",
+    "create_confidence_calculator", "create_llm_evaluator",
+    "create_source_agreement_calculator", "create_query_coverage_calculator",
+    "create_confidence_aggregator",
+    # Intervention (Phase 3)
+    "InterventionRequest", "InterventionResponse", "InterventionAction",
+    "FeedbackRecord", "InterventionHandler", "DynamicThresholdAdjuster",
+    "ConfirmationFlow", "create_intervention_handler",
+    "create_threshold_adjuster", "create_confirmation_flow",
+    # Replan (Phase 4)
+    "ReplanTrigger", "ReplanStrategy", "ReplanContext", "ReplanResult",
+    "ReplanManager", "ReplanOrchestrator",
+    "create_replan_manager", "create_replan_orchestrator",
+]
 ```

@@ -1,13 +1,74 @@
-Agent
+自律型Agent：
+・[実践・自律型 Agent・全コード公開]（1/10）全体像
+https://zenn.dev/toshio/articles/54b0c51742b05b
+
+・[実践・自律型Agent] （2/10）計画（Planner詳細）
+https://zenn.dev/toshio/articles/e2569807fbd105
+
+・[実践・自律型Agent] （3/10）実行（Executor詳細）
+https://zenn.dev/toshio/articles/923a4093ef46d3
+
+・[実践・自律型Agent] （4/10）信頼度計算システム（confidence詳細）
+https://zenn.dev/toshio/articles/e67abbef158f24
+
+・[実践・自律型Agent] （5/10）介入判定システム（intervention詳細）
+https://zenn.dev/toshio/articles/1da596a099ee21
+
+・[実践・自律型Agent] （6/10）再計画（RePlan詳細）
+https://zenn.dev/toshio/articles/6e96b49e2ed60f
+
+・[実践・自律型Agent] （7/10）再計画(RePlan)の「改善」（tool: Web_Search追加）
+https://zenn.dev/toshio/articles/c4e64cd40e713c
+
+・[実践・自律型Agent] （8-a/10）自律型Agent のテスト作成
+https://zenn.dev/toshio/articles/b40f4180818904
+
+・[実践・自律型Agent] （8-b/10）自律型Agent のテスト作成
+https://zenn.dev/toshio/articles/34958b36a20668
+
+・[実践・自律型Agent] （8-c/10）自律型Agent のテスト作成 Up許可待ち：
 
 
+------------------------------------------------------------------
+# ------------
+Rag: Chunk チャンク
+# ------------
+・[実践・RAG・チャンク作成・全コード公開]（1/5）チャンク分割( 本番用)
+https://zenn.dev/toshio/articles/af802b3eb682bf
 
-Chunk
+・[実践・RAG・チャンク作成]（2/5）チャンク分割(Step1: 階層構造化)
+https://zenn.dev/toshio/articles/b1fa4fcfc98d0a
 
+・[実践・RAG・チャンク作成]（3/5）チャンク分割(Step2: 意味的分割)
+https://zenn.dev/toshio/articles/e10f8c7ae06e43
 
+・[実践・RAG・チャンク作成]（4/5）チャンク分割(Step3: 文脈連続性チェック)
+https://zenn.dev/toshio/articles/2a9278ff1ee1f7
 
-Qa_Pair
+・[実践・RAG・チャンク作成]（5/5）チャンク分割( 非同期・並列処理)
+https://zenn.dev/toshio/articles/af68a9c2940d0c
 
+------------------------------------------------------------------
+# ------------
+Rag: Qa_Pair　Q/Aペア作成・Qdrant登録&CRUD
+# ------------
+・[実践・RAG・Q/A作成・全コード公開]（1/6）Q/Aペア作成・Qdrant登録・全体の流れ
+https://zenn.dev/toshio/articles/c75f191007f2f7
+
+・[実践・RAG・Q/A作成]（2/6）Q/Aペア作成
+https://zenn.dev/toshio/articles/c57ee7f7a21aa8
+
+・[実践・RAG・Q/A作成]（3/6）Q/Aペア作成・QAパイプライン
+https://zenn.dev/toshio/articles/5863d2592d29e9
+
+・[実践・RAG・Q/A作成]（4/6）Q/Aペア作成・QAジェネレータ
+https://zenn.dev/toshio/articles/b23ed1c48d2ea0
+
+・[実践・RAG・Q/A作成]（5/6）Q/Aペア作成・分析・カバレージ
+https://zenn.dev/toshio/articles/90410077757129
+
+・[実践・RAG・Q/A登録]（6/6）ベクターDB/Qdrant・CRUD
+https://zenn.dev/toshio/articles/c90b628b2e7678
 
 
 Test:

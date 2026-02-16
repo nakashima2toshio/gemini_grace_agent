@@ -1,10 +1,34 @@
 # Agent RAG (Gemini) 環境構築手順書
 
-**対象マシン:** MacBook Air M2 / 24GB メモリ / macOS
+**開発マシン:** MacBook Air M2 / 24GB メモリ / macOS
 
 ---
 
 ## 1. 前提ソフトウェアのインストール
+
+システム構成図
+
+```mermaid
+graph TD
+    User((ユーザー<br>ブラウザ)) -->|http://localhost:8500| Streamlit[Streamlit アプリケーション<br>agent_rag.py<br>Port: 8500]
+
+    Streamlit -->|Q&A生成/Embedding| Gemini(Gemini API<br>クラウド)
+    Streamlit -->|ベクトル検索| Qdrant[(Qdrant<br>Port: 6333<br>Docker)]
+    Streamlit -.->|タスク登録| Redis[(Redis<br>Port: 6379<br>Docker)]
+
+    subgraph Background Jobs
+        Celery[[Celery Workers<br>並列処理]]
+        Celery -->|タスク取得/結果保存| Redis
+        Celery -->|Q&A生成| Gemini
+    end
+
+    style User fill:#000,stroke:#fff,stroke-width:2px,color:#fff
+    style Streamlit fill:#000,stroke:#fff,stroke-width:2px,color:#fff
+    style Gemini fill:#000,stroke:#fff,stroke-width:2px,color:#fff
+    style Qdrant fill:#000,stroke:#fff,stroke-width:2px,color:#fff
+    style Redis fill:#000,stroke:#fff,stroke-width:2px,color:#fff
+    style Celery fill:#000,stroke:#fff,stroke-width:2px,color:#fff
+```
 
 ### 1.1 Homebrew（未インストールの場合）
 
@@ -33,11 +57,12 @@ Apple Silicon (M2) 版を選択すること。
 
 インストール後、Docker Desktop を起動し、Settings → Resources で以下を推奨:
 
+
 | リソース | 推奨値 |
-|---------|--------|
-| CPUs    | 4      |
-| Memory  | 8 GB   |
-| Swap    | 1 GB   |
+| -------- | ------ |
+| CPUs     | 4      |
+| Memory   | 8 GB   |
+| Swap     | 1 GB   |
 
 ### 1.4 Redis（Celery ブローカー用）
 
@@ -238,8 +263,9 @@ http://localhost:5555
 
 ### 5.3 M2 MacBook Air 推奨設定
 
-| パラメータ    | 推奨値 | 説明                        |
-|-------------|--------|----------------------------|
+
+| パラメータ  | 推奨値 | 説明                                |
+| ----------- | ------ | ----------------------------------- |
 | concurrency | 8      | 8 vCPU に対応、API レート制限も考慮 |
 | Flower      | 有効   | タスク状況のリアルタイム監視        |
 
@@ -270,10 +296,11 @@ CELERY_RESULT_BACKEND=redis://localhost:6379/0
 
 ### 6.2 API キーの取得先
 
-| API             | 取得先                                                   |
-|-----------------|--------------------------------------------------------|
-| Gemini API Key  | https://aistudio.google.com/apikey                     |
-| Cohere API Key  | https://dashboard.cohere.com/api-keys （オプション）       |
+
+| API            | 取得先                                               |
+| -------------- | ---------------------------------------------------- |
+| Gemini API Key | https://aistudio.google.com/apikey                   |
+| Cohere API Key | https://dashboard.cohere.com/api-keys （オプション） |
 
 ---
 
@@ -367,9 +394,10 @@ pip install torch torchvision torchaudio
 
 ## 10. ポート一覧
 
-| サービス     | ポート | 用途                    |
-|------------|-------|------------------------|
-| Streamlit  | 8501  | Web UI                 |
-| Qdrant     | 6333  | ベクトルDB REST API      |
-| Redis      | 6379  | Celery ブローカー / 結果保存 |
-| Flower     | 5555  | Celery タスクモニタリング   |
+
+| サービス  | ポート | 用途                         |
+| --------- | ------ | ---------------------------- |
+| Streamlit | 8501   | Web UI                       |
+| Qdrant    | 6333   | ベクトルDB REST API          |
+| Redis     | 6379   | Celery ブローカー / 結果保存 |
+| Flower    | 5555   | Celery タスクモニタリング    |

@@ -1,10 +1,10 @@
-# a01_load_non_qa_rag_data.py
+# down_load_non_qa_rag_data_from_huggingface.py
 # !/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-a01_load_non_qa_rag_data.py - 非Q&A型RAGデータ処理ツール
+down_load_non_qa_rag_data_from_huggingface.py - 非Q&A型RAGデータ処理ツール
 ===============================================
-起動: streamlit run a01_load_non_qa_rag_data.py --server.port=8502
+起動: streamlit run down_load_non_qa_rag_data_from_huggingface.py --server.port=8502
 
 【主要機能】
 ✅ 日本語・英語データセットの処理
@@ -36,19 +36,111 @@ import logging
 from typing import Dict, List, Any
 
 # ローカルモジュール
-from helper_rag import (
-    select_model,
-    show_model_info,
+from helper.helper_rag import (
     validate_data,
-    estimate_token_usage,
     save_files_to_output,
     clean_text,
     safe_execute
 )
+from config import GeminiConfig
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# ===================================================================
+# ローカルユーティリティ関数（本スクリプト固有）
+# ===================================================================
+
+def select_model() -> str:
+    """サイドバーにモデル選択ウィジェットを表示し、選択されたモデル名を返す"""
+    selected = st.selectbox(
+        "🤖 使用モデル",
+        options=GeminiConfig.AVAILABLE_MODELS,
+        index=0,
+        help="処理に使用するGeminiモデルを選択してください"
+    )
+    return selected
+
+
+def show_model_info(model: str) -> None:
+    """選択されたモデルの料金・制限情報を表示する"""
+    pricing = GeminiConfig.get_model_pricing(model)
+    limits = GeminiConfig.get_model_limits(model)
+    st.caption(
+        f"💡 {model}　|　"
+        f"入力: ${pricing['input']}/1K tokens　"
+        f"出力: ${pricing['output']}/1K tokens　|　"
+        f"最大出力: {limits.get('max_output_tokens', limits.get('max_output', 'N/A')):,} tokens"
+    )
+
+
+def estimate_token_usage(df: pd.DataFrame, model: str) -> None:
+    """DataFrameのCombined_Textからトークン使用量と概算コストを表示する"""
+    if 'Combined_Text' not in df.columns:
+        st.warning("Combined_Text カラムが見つかりません")
+        return
+
+    total_chars = df['Combined_Text'].str.len().sum()
+    # 日本語: 約1.5文字/token、英語: 約4文字/token（概算）
+    estimated_tokens = int(total_chars / 2.0)
+
+    pricing = GeminiConfig.get_model_pricing(model)
+    estimated_cost = (estimated_tokens / 1000) * pricing['input']
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("推定トークン数", f"{estimated_tokens:,}")
+    with col2:
+        st.metric("総文字数", f"{total_chars:,}")
+    with col3:
+        st.metric("推定コスト（入力）", f"${estimated_cost:.4f}")
+
+
+def _import_hf_load_dataset():
+    """HuggingFace datasetsをインポート（ローカルdatasetsディレクトリとの衝突回避）
+
+    プロジェクトルートに datasets/ ディレクトリ（__init__.py なし）が存在すると、
+    Python 3 が暗黙の名前空間パッケージとして認識し、
+    HuggingFace datasets パッケージの load_dataset が見つからなくなる。
+
+    対策: sys.path から「datasets/ ディレクトリはあるが __init__.py がない」
+    パスを一時的に除外し、正規のHuggingFaceパッケージのみを読み込む。
+    """
+    import sys
+    import importlib
+
+    # ローカル datasets がキャッシュされている場合はクリア
+    for key in list(sys.modules.keys()):
+        if key == 'datasets' or key.startswith('datasets.'):
+            del sys.modules[key]
+
+    original_path = sys.path[:]
+    filtered_path = []
+    for p in original_path:
+        # sys.path の '' や '.' はカレントディレクトリを意味する
+        resolved = Path(p).resolve() if p else Path.cwd()
+        ds_dir = resolved / 'datasets'
+        # datasets/ ディレクトリが存在し、かつ __init__.py がない場合は
+        # ローカルデータ保存用ディレクトリと判断してスキップ
+        if ds_dir.is_dir() and not (ds_dir / '__init__.py').exists():
+            continue
+        filtered_path.append(p)
+    sys.path = filtered_path
+
+    try:
+        importlib.invalidate_caches()
+        from datasets import load_dataset
+        return load_dataset
+    except ImportError:
+        raise ImportError(
+            "HuggingFace datasets パッケージが見つかりません。\n"
+            "  pip install datasets\n"
+            "でインストールしてください。"
+        )
+    finally:
+        sys.path = original_path
 
 
 # ===================================================================
@@ -682,21 +774,19 @@ def main():
 
             if st.button("📥 HuggingFaceからロード", type="primary"):
                 try:
-                    from datasets import load_dataset as hf_load_dataset
-
-                    # 入力値の検証
-                    if not dataset_name:
+                    # 入力値の検証（Livedoor以外はデータセット名が必須）
+                    if selected_dataset != "livedoor" and not dataset_name:
                         st.error("データセット名を入力してください")
                         st.stop()
 
                     if not split_name:
                         split_name = "train"
 
-                    with st.spinner(f"HuggingFaceから{dataset_name}をダウンロード中..."):
+                    with st.spinner(f"データをダウンロード中..."):
                         # ストリーミングモードで確実にロード
                         samples = []
 
-                        # Livedoorコーパスの特別処理
+                        # Livedoorコーパスの特別処理（HuggingFace不使用）
                         if selected_dataset == "livedoor":
                             st.info("📥 Livedoorニュースコーパスをダウンロード中...")
 
@@ -713,70 +803,40 @@ def main():
                                 df = df.sample(n=sample_size, random_state=42)
                                 st.info(f"📊 {len(df)}件にサンプリングしました")
 
-                        # 動作確認済みのデータセットのみ処理
-                        elif dataset_name == "wikimedia/wikipedia" or dataset_name == "wikipedia":
-                            # Wikipedia日本語版
-                            actual_dataset = "wikimedia/wikipedia"
-                            actual_config = config_name if config_name else "20231101.ja"
-
-                            st.info(f"📥 {actual_dataset}をロード中 (config: {actual_config})...")
-                            dataset = hf_load_dataset(actual_dataset, actual_config, split=split_name, streaming=True)
-
-                            # サンプリング
-                            progress_bar = st.progress(0)
-                            for i, item in enumerate(dataset):
-                                if i >= sample_size:
-                                    break
-                                samples.append(item)
-                                progress_bar.progress((i + 1) / sample_size)
-
-                            df = pd.DataFrame(samples)
-                            progress_bar.empty()
-
-                        elif dataset_name == "range3/cc100-ja":
-                            # CC100日本語
-                            st.info(f"📥 {dataset_name}をロード中...")
-                            dataset = hf_load_dataset(dataset_name, split=split_name, streaming=True)
-
-                            # サンプリング
-                            progress_bar = st.progress(0)
-                            for i, item in enumerate(dataset):
-                                if i >= sample_size:
-                                    break
-                                samples.append(item)
-                                progress_bar.progress((i + 1) / sample_size)
-
-                            df = pd.DataFrame(samples)
-                            progress_bar.empty()
-
-                        elif dataset_name == "cc_news":
-                            # CC-News（動作確認済み）
-                            st.info(f"📥 {dataset_name}をロード中...")
-                            if config_name:
-                                dataset = hf_load_dataset(dataset_name, config_name, split=split_name, streaming=True)
-                            else:
-                                dataset = hf_load_dataset(dataset_name, split=split_name, streaming=True)
-
-                            # サンプリング
-                            progress_bar = st.progress(0)
-                            for i, item in enumerate(dataset):
-                                if i >= sample_size:
-                                    break
-                                samples.append(item)
-                                progress_bar.progress((i + 1) / sample_size)
-
-                            df = pd.DataFrame(samples)
-                            progress_bar.empty()
-
+                        # HuggingFace経由でロードするデータセット
                         else:
-                            # その他のデータセット（非推奨）
-                            st.warning("⚠️ このデータセットは動作保証外です")
-                            if config_name:
-                                dataset = hf_load_dataset(dataset_name, config_name, split=split_name, streaming=True)
-                            else:
+                            hf_load_dataset = _import_hf_load_dataset()
+
+                            if dataset_name == "wikimedia/wikipedia" or dataset_name == "wikipedia":
+                                # Wikipedia日本語版
+                                actual_dataset = "wikimedia/wikipedia"
+                                actual_config = config_name if config_name else "20231101.ja"
+
+                                st.info(f"📥 {actual_dataset}をロード中 (config: {actual_config})...")
+                                dataset = hf_load_dataset(actual_dataset, actual_config, split=split_name, streaming=True)
+
+                            elif dataset_name == "range3/cc100-ja":
+                                # CC100日本語
+                                st.info(f"📥 {dataset_name}をロード中...")
                                 dataset = hf_load_dataset(dataset_name, split=split_name, streaming=True)
 
-                            # サンプリング
+                            elif dataset_name == "cc_news":
+                                # CC-News（動作確認済み）
+                                st.info(f"📥 {dataset_name}をロード中...")
+                                if config_name:
+                                    dataset = hf_load_dataset(dataset_name, config_name, split=split_name, streaming=True)
+                                else:
+                                    dataset = hf_load_dataset(dataset_name, split=split_name, streaming=True)
+
+                            else:
+                                # その他のデータセット（非推奨）
+                                st.warning("⚠️ このデータセットは動作保証外です")
+                                if config_name:
+                                    dataset = hf_load_dataset(dataset_name, config_name, split=split_name, streaming=True)
+                                else:
+                                    dataset = hf_load_dataset(dataset_name, split=split_name, streaming=True)
+
+                            # サンプリング（共通処理）
                             progress_bar = st.progress(0)
                             for i, item in enumerate(dataset):
                                 if i >= sample_size:
