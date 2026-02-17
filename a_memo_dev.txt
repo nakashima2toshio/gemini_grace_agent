@@ -1,4 +1,6 @@
-自律型Agent：
+自律型Agent：（全11記事）
+・Github：https://github.com/nakashima2toshio/gemini_grace_agent
+
 ・[実践・自律型 Agent・全コード公開]（1/10）全体像
 https://zenn.dev/toshio/articles/54b0c51742b05b
 
@@ -27,12 +29,17 @@ https://zenn.dev/toshio/articles/b40f4180818904
 https://zenn.dev/toshio/articles/34958b36a20668
 
 ・[実践・自律型Agent] （8-c/10）自律型Agent のテスト作成 Up許可待ち：
+https://zenn.dev/toshio/articles/4e22f5337bea3e
 
+・[自律型Agent用：テストデータのダウンロード] From HuggingFace
+https://zenn.dev/toshio/articles/0ff187f4d15f5e
 
 ------------------------------------------------------------------
 # ------------
-Rag: Chunk チャンク
+Rag: Chunk チャンク分割
 # ------------
+・Github：https://github.com/nakashima2toshio/gemini_grace_agent
+
 ・[実践・RAG・チャンク作成・全コード公開]（1/5）チャンク分割( 本番用)
 https://zenn.dev/toshio/articles/af802b3eb682bf
 
@@ -52,6 +59,8 @@ https://zenn.dev/toshio/articles/af68a9c2940d0c
 # ------------
 Rag: Qa_Pair　Q/Aペア作成・Qdrant登録&CRUD
 # ------------
+・Github：https://github.com/nakashima2toshio/gemini_grace_agent
+
 ・[実践・RAG・Q/A作成・全コード公開]（1/6）Q/Aペア作成・Qdrant登録・全体の流れ
 https://zenn.dev/toshio/articles/c75f191007f2f7
 
@@ -72,10 +81,6 @@ https://zenn.dev/toshio/articles/c90b628b2e7678
 
 
 Test:
-
-
-
-
 
 実行コマンド：
 ./start_celery.sh stop
