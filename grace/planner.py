@@ -23,7 +23,6 @@ from regex_mecab import KeywordExtractor
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # プロンプト定義
 # =============================================================================
@@ -32,7 +31,8 @@ PLAN_GENERATION_PROMPT = f"""
 あなたは計画策定の専門家です。ユーザーの質問を分析し、回答を生成するための実行計画を作成してください。
 
 【利用可能なアクション】
-- rag_search: ベクトルDB（Qdrant）から関連情報を検索
+- rag_search: ベクトルDB（Qdrant）から関連情報を検索（社内ドキュメント・FAQ向け）
+- web_search: Web検索で最新情報や一般的な情報を取得（最新ニュース・外部情報向け）
 - reasoning: 収集した情報を分析・統合して回答を生成
 - ask_user: ユーザーに追加情報や確認を求める
 
@@ -60,6 +60,11 @@ PLAN_GENERATION_PROMPT = f"""
 3. 依存関係を正しく設定してください（depends_onは先行ステップのIDのみ）。
 4. 失敗時の代替手段（fallback）を検討してください。
 5. 最後のステップは必ず "reasoning" で回答を生成してください
+6. rag_search と web_search の使い分け:
+    * 社内ドキュメント・FAQ・ナレッジベースの情報 → rag_search
+    * 最新ニュース・外部Web情報・一般知識 → web_search
+    * RAGに情報がない可能性がある場合 → rag_search（fallbackに"web_search"を指定）
+    * 両方必要な場合 → rag_search → web_search → reasoning の3ステップ
 
 {SEARCH_QUERY_INSTRUCTION}
 
@@ -102,9 +107,9 @@ class Planner:
     """計画生成エージェント"""
 
     def __init__(
-        self,
-        config: Optional[GraceConfig] = None,
-        model_name: Optional[str] = None
+            self,
+            config: Optional[GraceConfig] = None,
+            model_name: Optional[str] = None
     ):
         """
         Args:
@@ -114,7 +119,7 @@ class Planner:
         self.config = config or get_config()
         self.model_name = model_name or self.config.llm.model
         self.client = genai.Client()
-        
+
         # KeywordExtractorの初期化（Legacy Agentと同一）
         try:
             self.keyword_extractor = KeywordExtractor(prefer_mecab=True)
@@ -164,32 +169,61 @@ class Planner:
             ) + "\n\nIMPORTANT: Ensure the output is a valid, complete JSON object. Do not truncate the response."
 
             # --- [IPO LOG] PROCESS INPUT (GRACE PLANNER) ---
-            logger.info(f"\n{'='*20} [GRACE PLANNER IPO: INPUT] {'='*20}\n{prompt}\n{'='*60}")
+            logger.info(f"\n{'=' * 20} [GRACE PLANNER IPO: INPUT] {'=' * 20}\n{prompt}\n{'=' * 60}")
 
-            # LLMで計画生成（JSON出力）
+            # --- TODO #2: リトライ付きでLLM呼び出し（最大2回） ---
             import time as _time
-            t0 = _time.time()
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=ExecutionPlan,
-                    temperature=self.config.llm.temperature,
-                    max_output_tokens=8192,
-                    # AFC無効化: AFC永続化 + JSON mode で空レスポンスまたはJSON途切れが発生するバグを防止
-                    # See: https://github.com/googleapis/python-genai/issues/1818
-                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
-                )
-            )
-            elapsed = _time.time() - t0
-            logger.info(f"[API時間] create_plan LLM: {elapsed:.1f}秒")
+            import json as _json
 
-            # --- [IPO LOG] PROCESS OUTPUT (GRACE PLANNER) ---
-            logger.info(f"\n{'='*20} [GRACE PLANNER IPO: OUTPUT] {'='*20}\n{response.text}\n{'='*60}")
+            plan = None
+            last_error = None
+            max_attempts = 2
 
-            # JSONをパースしてExecutionPlanに変換
-            plan = ExecutionPlan.model_validate_json(response.text)
+            for attempt in range(max_attempts):
+                try:
+                    t0 = _time.time()
+                    response = self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=ExecutionPlan,
+                            temperature=self.config.llm.temperature,
+                            max_output_tokens=8192,
+                            # AFC無効化: AFC永続化 + JSON mode で空レスポンスまたはJSON途切れが発生するバグを防止
+                            # See: https://github.com/googleapis/python-genai/issues/1818
+                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
+                        )
+                    )
+                    elapsed = _time.time() - t0
+                    logger.info(f"[API時間] create_plan LLM (attempt {attempt + 1}/{max_attempts}): {elapsed:.1f}秒")
+
+                    # --- [IPO LOG] PROCESS OUTPUT (GRACE PLANNER) ---
+                    logger.info(f"\n{'=' * 20} [GRACE PLANNER IPO: OUTPUT] {'=' * 20}\n{response.text}\n{'=' * 60}")
+
+                    # TODO #2: 空レスポンスガード
+                    if not response or not response.text:
+                        logger.warning(f"create_plan: empty response (attempt {attempt + 1}/{max_attempts})")
+                        continue
+
+                    # TODO #2: JSON完全性チェック（EOF検知）
+                    try:
+                        _json.loads(response.text)
+                    except _json.JSONDecodeError as je:
+                        logger.warning(f"Incomplete/invalid JSON (attempt {attempt + 1}/{max_attempts}): {je}")
+                        continue  # リトライ
+
+                    # JSONをパースしてExecutionPlanに変換
+                    plan = ExecutionPlan.model_validate_json(response.text)
+                    break  # 成功したらループ終了
+
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Plan creation attempt {attempt + 1}/{max_attempts} failed: {e}")
+                    continue
+
+            if plan is None:
+                raise last_error or ValueError("Plan creation failed after all retries")
 
             # 事前に計算した正確な複雑度を適用
             plan.complexity = estimated_complexity
@@ -266,6 +300,15 @@ class Planner:
         """
         logger.info("Creating fallback plan")
 
+        # --- TODO #4: 動的にコレクションを取得（失敗時はNone＝自動選択） ---
+        try:
+            available = self._get_available_collections()
+            fallback_collection = next(
+                (c for c in available if "wikipedia" in c), None
+            )
+        except Exception:
+            fallback_collection = None
+
         return ExecutionPlan(
             original_query=query,
             complexity=0.5,
@@ -275,11 +318,11 @@ class Planner:
                 PlanStep(
                     step_id=1,
                     action="rag_search",
-                    description="wikipedia_jaから関連情報を検索",
+                    description="全コレクションから関連情報を検索",  # TODO #4: 汎用的な表記に
                     query=query,
-                    collection="wikipedia_ja",  # 明示的にwikipedia_jaを指定
+                    collection=fallback_collection,  # TODO #4: 動的取得 or None
                     expected_output="関連するドキュメントや情報",
-                    fallback="reasoning",
+                    fallback="web_search",  # TODO #1: reasoning → web_search
                     timeout_seconds=30
                 ),
                 PlanStep(
@@ -374,9 +417,9 @@ class Planner:
             return self.estimate_complexity(query)
 
     def refine_plan(
-        self,
-        plan: ExecutionPlan,
-        feedback: str
+            self,
+            plan: ExecutionPlan,
+            feedback: str
     ) -> ExecutionPlan:
         """
         フィードバックに基づいて計画を修正
@@ -435,8 +478,8 @@ class Planner:
 # =============================================================================
 
 def create_planner(
-    config: Optional[GraceConfig] = None,
-    model_name: Optional[str] = None
+        config: Optional[GraceConfig] = None,
+        model_name: Optional[str] = None
 ) -> Planner:
     """
     Plannerインスタンスを作成

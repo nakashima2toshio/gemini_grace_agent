@@ -23,20 +23,20 @@ logger = logging.getLogger(__name__)
 
 class ReplanTrigger(str, Enum):
     """リプランのトリガー条件"""
-    STEP_FAILED = "step_failed"           # ステップ実行失敗
-    LOW_CONFIDENCE = "low_confidence"     # 信頼度が閾値未満
-    USER_FEEDBACK = "user_feedback"       # ユーザーからの修正要求
-    NEW_INFORMATION = "new_information"   # 新しい情報の発見
-    TIMEOUT = "timeout"                   # タイムアウト
+    STEP_FAILED = "step_failed"  # ステップ実行失敗
+    LOW_CONFIDENCE = "low_confidence"  # 信頼度が閾値未満
+    USER_FEEDBACK = "user_feedback"  # ユーザーからの修正要求
+    NEW_INFORMATION = "new_information"  # 新しい情報の発見
+    TIMEOUT = "timeout"  # タイムアウト
 
 
 class ReplanStrategy(str, Enum):
     """リプラン戦略"""
-    PARTIAL = "partial"       # 失敗ステップ以降のみ再計画
-    FULL = "full"             # 全体を再計画
-    FALLBACK = "fallback"     # 代替アクションへ切り替え
-    SKIP = "skip"             # 失敗ステップをスキップ
-    ABORT = "abort"           # 実行中断
+    PARTIAL = "partial"  # 失敗ステップ以降のみ再計画
+    FULL = "full"  # 全体を再計画
+    FALLBACK = "fallback"  # 代替アクションへ切り替え
+    SKIP = "skip"  # 失敗ステップをスキップ
+    ABORT = "abort"  # 実行中断
 
 
 # =============================================================================
@@ -100,9 +100,9 @@ class ReplanManager:
     """
 
     def __init__(
-        self,
-        config: Optional[GraceConfig] = None,
-        planner: Optional[Planner] = None,
+            self,
+            config: Optional[GraceConfig] = None,
+            planner: Optional[Planner] = None,
     ):
         """
         Args:
@@ -132,9 +132,9 @@ class ReplanManager:
         return self.planner
 
     def should_replan(
-        self,
-        step_result: StepResult,
-        replan_count: int
+            self,
+            step_result: StepResult,
+            replan_count: int
     ) -> tuple[bool, Optional[ReplanTrigger]]:
         """
         リプランが必要か判定
@@ -168,9 +168,9 @@ class ReplanManager:
         return False, None
 
     def should_replan_from_feedback(
-        self,
-        feedback: str,
-        replan_count: int
+            self,
+            feedback: str,
+            replan_count: int
     ) -> tuple[bool, Optional[ReplanTrigger]]:
         """
         ユーザーフィードバックに基づいてリプラン要否を判定
@@ -193,9 +193,9 @@ class ReplanManager:
         return False, None
 
     def determine_strategy(
-        self,
-        context: ReplanContext,
-        current_plan: ExecutionPlan
+            self,
+            context: ReplanContext,
+            current_plan: ExecutionPlan
     ) -> ReplanStrategy:
         """
         リプラン戦略を決定
@@ -241,10 +241,10 @@ class ReplanManager:
         return ReplanStrategy.PARTIAL
 
     def create_new_plan(
-        self,
-        context: ReplanContext,
-        strategy: ReplanStrategy,
-        current_plan: ExecutionPlan
+            self,
+            context: ReplanContext,
+            strategy: ReplanStrategy,
+            current_plan: ExecutionPlan
     ) -> ReplanResult:
         """
         新しい計画を生成
@@ -350,9 +350,9 @@ class ReplanManager:
         return new_plan
 
     def _create_partial_replan(
-        self,
-        context: ReplanContext,
-        current_plan: ExecutionPlan
+            self,
+            context: ReplanContext,
+            current_plan: ExecutionPlan
     ) -> ExecutionPlan:
         """部分再計画: 失敗ステップ以降を再生成"""
         if not context.failed_step_id:
@@ -388,25 +388,40 @@ class ReplanManager:
             success_criteria=current_plan.success_criteria
         )
 
+    # --- TODO #3: 検索系アクションのフォールバック優先順位 ---
+    _SEARCH_FALLBACK_CHAIN = {
+        "rag_search": "web_search",  # RAG失敗 → Web検索
+        "web_search": "rag_search",  # Web失敗 → RAG検索
+    }
+
     def _apply_fallback(
-        self,
-        context: ReplanContext,
-        current_plan: ExecutionPlan
+            self,
+            context: ReplanContext,
+            current_plan: ExecutionPlan
     ) -> ExecutionPlan:
-        """代替アクションを適用"""
+        """代替アクションを適用（フォールバックチェーン付き）"""
         if not context.failed_step_id:
             return current_plan
 
         new_steps = []
         for step in current_plan.steps:
             if step.step_id == context.failed_step_id and step.fallback:
+                # --- TODO #3: fallback先が reasoning で、元が検索系の場合は web_search に昇格 ---
+                fallback_action = step.fallback
+                if fallback_action == "reasoning" and step.action in self._SEARCH_FALLBACK_CHAIN:
+                    fallback_action = self._SEARCH_FALLBACK_CHAIN[step.action]
+                    logger.info(
+                        f"Fallback escalation: {step.action} → {step.fallback} "
+                        f"overridden to → {fallback_action}"
+                    )
+
                 # 代替アクションに置き換え
                 new_step = PlanStep(
                     step_id=step.step_id,
-                    action=step.fallback,
+                    action=fallback_action,
                     description=f"[代替] {step.description}",
                     query=step.query,
-                    collection=step.collection,
+                    collection=step.collection if fallback_action != "web_search" else None,
                     depends_on=step.depends_on,
                     expected_output=step.expected_output,
                     fallback=None  # 代替の代替はなし
@@ -425,9 +440,9 @@ class ReplanManager:
         )
 
     def _skip_failed_step(
-        self,
-        context: ReplanContext,
-        current_plan: ExecutionPlan
+            self,
+            context: ReplanContext,
+            current_plan: ExecutionPlan
     ) -> ExecutionPlan:
         """失敗ステップをスキップ"""
         if not context.failed_step_id:
@@ -456,9 +471,9 @@ class ReplanManager:
         )
 
     def _enhance_query_with_context(
-        self,
-        original_query: str,
-        context: ReplanContext
+            self,
+            original_query: str,
+            context: ReplanContext
     ) -> str:
         """エラーコンテキストを含めたクエリ生成"""
         hints = []
@@ -485,9 +500,9 @@ class ReplanManager:
         return original_query
 
     def _create_remaining_query(
-        self,
-        context: ReplanContext,
-        completed_steps: List[PlanStep]
+            self,
+            context: ReplanContext,
+            completed_steps: List[PlanStep]
     ) -> str:
         """残りステップの再計画クエリを生成"""
         return f"""以下の計画の続きを作成してください。
@@ -509,10 +524,10 @@ JSON形式以外のテキスト（解説など）を含めないでください�
 """
 
     def _adjust_step_ids(
-        self,
-        steps: List[PlanStep],
-        start_id: int,
-        completed_count: int
+            self,
+            steps: List[PlanStep],
+            start_id: int,
+            completed_count: int
     ) -> List[PlanStep]:
         """ステップIDを調整し、依存関係を直前の完了ステップに修正"""
         adjusted_steps = []
@@ -523,9 +538,9 @@ JSON形式以外のテキスト（解説など）を含めないでください�
             # 依存関係の再構築
             # リプランで生成されたステップの依存関係は、原則として
             # 「直前のステップ（完了済み、またはこのループで追加された前ステップ）」とする
-            
+
             new_depends_on = []
-            
+
             # 最初のステップなら、直近の完了済みステップに依存
             if i == 0:
                 if last_completed_id > 0:
@@ -550,9 +565,9 @@ JSON形式以外のテキスト（解説など）を含めないでください�
         return adjusted_steps
 
     def _find_step(
-        self,
-        plan: ExecutionPlan,
-        step_id: int
+            self,
+            plan: ExecutionPlan,
+            step_id: int
     ) -> Optional[PlanStep]:
         """計画からステップを検索"""
         for step in plan.steps:
@@ -586,9 +601,9 @@ class ReplanOrchestrator:
     """
 
     def __init__(
-        self,
-        config: Optional[GraceConfig] = None,
-        replan_manager: Optional[ReplanManager] = None,
+            self,
+            config: Optional[GraceConfig] = None,
+            replan_manager: Optional[ReplanManager] = None,
     ):
         """
         Args:
@@ -599,11 +614,11 @@ class ReplanOrchestrator:
         self.replan_manager = replan_manager or ReplanManager(config=self.config)
 
     def handle_step_failure(
-        self,
-        step_result: StepResult,
-        current_plan: ExecutionPlan,
-        completed_results: Dict[int, StepResult],
-        replan_count: int
+            self,
+            step_result: StepResult,
+            current_plan: ExecutionPlan,
+            completed_results: Dict[int, StepResult],
+            replan_count: int
     ) -> Optional[ReplanResult]:
         """
         ステップ失敗時のリプラン処理
@@ -642,11 +657,11 @@ class ReplanOrchestrator:
         return self.replan_manager.create_new_plan(context, strategy, current_plan)
 
     def handle_user_feedback(
-        self,
-        feedback: str,
-        current_plan: ExecutionPlan,
-        completed_results: Dict[int, StepResult],
-        replan_count: int
+            self,
+            feedback: str,
+            current_plan: ExecutionPlan,
+            completed_results: Dict[int, StepResult],
+            replan_count: int
     ) -> Optional[ReplanResult]:
         """
         ユーザーフィードバックによるリプラン処理
@@ -689,16 +704,16 @@ class ReplanOrchestrator:
 # =============================================================================
 
 def create_replan_manager(
-    config: Optional[GraceConfig] = None,
-    planner: Optional[Planner] = None,
+        config: Optional[GraceConfig] = None,
+        planner: Optional[Planner] = None,
 ) -> ReplanManager:
     """ReplanManagerインスタンスを作成"""
     return ReplanManager(config=config, planner=planner)
 
 
 def create_replan_orchestrator(
-    config: Optional[GraceConfig] = None,
-    replan_manager: Optional[ReplanManager] = None,
+        config: Optional[GraceConfig] = None,
+        replan_manager: Optional[ReplanManager] = None,
 ) -> ReplanOrchestrator:
     """ReplanOrchestratorインスタンスを作成"""
     return ReplanOrchestrator(config=config, replan_manager=replan_manager)

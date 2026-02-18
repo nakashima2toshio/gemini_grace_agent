@@ -32,6 +32,7 @@ from .confidence import (
     create_llm_evaluator,
     create_confidence_aggregator,
     create_query_coverage_calculator,
+    create_source_agreement_calculator,  # TODO #5: 追加
 )
 from .intervention import (
     InterventionHandler,
@@ -44,9 +45,10 @@ from .intervention import (
 # === Legacy Agent Integration ===
 try:
     from services.agent_service import ReActAgent, get_available_collections_from_qdrant_helper
+
     LEGACY_AGENT_AVAILABLE = True
 except ImportError:
-    logger = logging.getLogger(__name__) # Ensure logger exists before warning
+    logger = logging.getLogger(__name__)  # Ensure logger exists before warning
     logger.warning("Failed to import services.agent_service. Legacy agent execution will fail.")
     LEGACY_AGENT_AVAILABLE = False
 # ================================
@@ -115,20 +117,21 @@ class ExecutionState:
 
 from .replan import ReplanOrchestrator, create_replan_orchestrator
 
+
 class Executor:
     """計画実行エージェント（GRACEネイティブ実装）"""
 
     def __init__(
-        self,
-        config: Optional[GraceConfig] = None,
-        tool_registry: Optional[ToolRegistry] = None,
-        on_step_start: Optional[Callable[[PlanStep], None]] = None,
-        on_step_complete: Optional[Callable[[StepResult], None]] = None,
-        on_intervention_required: Optional[Callable[[str, Dict], Any]] = None,
-        on_confidence_update: Optional[Callable[[ConfidenceScore, ActionDecision], None]] = None,
-        on_replan: Optional[Callable[[str, int], None]] = None,
-        replan_orchestrator: Optional[ReplanOrchestrator] = None,
-        enable_replan: bool = True,
+            self,
+            config: Optional[GraceConfig] = None,
+            tool_registry: Optional[ToolRegistry] = None,
+            on_step_start: Optional[Callable[[PlanStep], None]] = None,
+            on_step_complete: Optional[Callable[[StepResult], None]] = None,
+            on_intervention_required: Optional[Callable[[str, Dict], Any]] = None,
+            on_confidence_update: Optional[Callable[[ConfidenceScore, ActionDecision], None]] = None,
+            on_replan: Optional[Callable[[str, int], None]] = None,
+            replan_orchestrator: Optional[ReplanOrchestrator] = None,
+            enable_replan: bool = True,
     ):
         self.config = config or get_config()
 
@@ -174,9 +177,9 @@ class Executor:
         )
 
     def execute_plan_generator(
-        self,
-        plan: ExecutionPlan,
-        state: Optional[ExecutionState] = None
+            self,
+            plan: ExecutionPlan,
+            state: Optional[ExecutionState] = None
     ) -> Generator[ExecutionState, None, ExecutionResult]:
         """
         計画をステップごとに実行（ジェネレータ版）
@@ -198,23 +201,23 @@ class Executor:
         if state is None:
             state = ExecutionState(plan=plan)
             state.start_time = time.time()
-            
+
         try:
             # 各ステップを順次実行
             # 注: リプランなどでステップ数が増減する可能性があるため、インデックス管理が必要
             # ここでは簡易的に、現在のステップID以降を実行するロジック
-            
+
             # 実行すべきステップのリストを取得（現在の計画に基づく）
             # 既に完了しているステップはスキップ
             steps_to_execute = [
-                s for s in plan.steps 
+                s for s in plan.steps
                 if state.step_statuses.get(s.step_id) != StepStatus.SUCCESS
             ]
-            
+
             for step in steps_to_execute:
                 # 状態更新: 現在のステップID
                 state.current_step_id = step.step_id
-                
+
                 # キャンセルチェック
                 if state.is_cancelled:
                     logger.info("Execution cancelled")
@@ -231,11 +234,11 @@ class Executor:
                 state.step_statuses[step.step_id] = StepStatus.RUNNING
                 if self.on_step_start:
                     self.on_step_start(step)
-                
+
                 # ステップ実行
                 # _execute_step は StepResult または Generator[Any, None, StepResult] を返す可能性がある
                 step_execution = self._execute_step(step, state)
-                
+
                 result = None
                 if isinstance(step_execution, Generator):
                     # ジェネレータの場合はイベントを中継し、最終結果(return value)を取得
@@ -259,13 +262,13 @@ class Executor:
                 if step.step_id in self.step_confidence_scores:
                     confidence_score = self.step_confidence_scores[step.step_id]
                     action_decision = self.confidence_calculator.decide_action(confidence_score)
-                    
+
                     # CONFIRM または ESCALATE の場合は一時停止
                     if action_decision.level in [InterventionLevel.CONFIRM, InterventionLevel.ESCALATE]:
                         logger.info(f"Pausing for intervention: {action_decision.level} (Step {step.step_id})")
-                        
+
                         state.is_paused = True
-                        
+
                         # 介入リクエストを作成
                         req_type = "confirm" if action_decision.level == InterventionLevel.CONFIRM else "escalate"
                         message = f"信頼度が低いため確認が必要です ({confidence_score.score:.2f})"
@@ -281,10 +284,10 @@ class Executor:
                             confidence_score=confidence_score.score,
                             plan=plan
                         )
-                        
+
                         # Yield: 一時停止状態を通知
                         yield state
-                        
+
                         # ジェネレータを終了（再開時は新しいジェネレータを作成）
                         return self._create_execution_result(state)
 
@@ -296,8 +299,8 @@ class Executor:
 
                 # ask_user の場合の処理（既存ロジック）
                 if step.action == "ask_user" and result.status == "success":
-                     # ...既存のask_user処理...
-                     pass
+                    # ...既存のask_user処理...
+                    pass
 
                 # 失敗時のリプラン
                 if result.status == "failed" and self.replan_orchestrator:
@@ -310,7 +313,7 @@ class Executor:
                     if replan_result and replan_result.success and replan_result.new_plan:
                         logger.info(f"Replanning: {replan_result.reason}")
                         state.replan_count += 1
-                        
+
                         # 新しい計画に差し替え
                         # Generatorを再帰呼び出しするか、ループを再構成する必要がある
                         # ここでは、新しい計画で再帰的にGeneratorを作成し、その値をYieldする
@@ -380,7 +383,7 @@ class Executor:
 
                 # ステップ実行
                 step_execution = self._execute_step(step, state)
-                
+
                 result = None
                 if isinstance(step_execution, Generator):
                     # ジェネレータの場合は最後まで回して最終結果を取得
@@ -409,7 +412,8 @@ class Executor:
                 if step.action == "ask_user" and result.status == "success":
                     if self.on_intervention_required and isinstance(result.output, str):
                         try:
-                            output_data = eval(result.output) if result.output.startswith("{}") else {"question": result.output}
+                            output_data = eval(result.output) if result.output.startswith("{}") else {
+                                "question": result.output}
                         except Exception:
                             output_data = {"question": result.output}
 
@@ -480,12 +484,12 @@ class Executor:
         try:
             # ツールを取得
             tool = self.tool_registry.get(step.action)
-            
+
             # --- 互換性維持のための特別なハンドリング ---
             if tool is None and step.action == "run_legacy_agent":
                 # ツールとして登録されていないが、以前のLegacyプランが残っている場合
                 return self._execute_legacy_agent_step(step, state, start_time)
-            
+
             if tool is None:
                 raise ValueError(f"Unknown action: {step.action}")
 
@@ -500,13 +504,14 @@ class Executor:
                 import json
                 try:
                     # RAG検索結果などはリスト/辞書なので整形する
-                    out_display = json.dumps(tool_result.output, indent=2, ensure_ascii=False) if isinstance(tool_result.output, (list, dict)) else str(tool_result.output)
+                    out_display = json.dumps(tool_result.output, indent=2, ensure_ascii=False) if isinstance(
+                        tool_result.output, (list, dict)) else str(tool_result.output)
                 except Exception:
                     out_display = str(tool_result.output)
-                
+
                 # IPO風のラベルをつけて通知
                 yield {
-                    "type": "log",
+                    "type"   : "log",
                     "content": f"📝 【ツール実行結果: {step.action}】\n{out_display}"
                 }
 
@@ -552,7 +557,8 @@ class Executor:
                 execution_time_ms=execution_time
             )
 
-    def _execute_legacy_agent_step(self, step: PlanStep, state: ExecutionState, start_time: float) -> Generator[Any, None, StepResult]:
+    def _execute_legacy_agent_step(self, step: PlanStep, state: ExecutionState, start_time: float) -> Generator[
+        Any, None, StepResult]:
         """Legacy ReActAgent を使用したステップ実行（ジェネレータ版）"""
         if not LEGACY_AGENT_AVAILABLE:
             raise ImportError("agent_service module not found")
@@ -560,7 +566,7 @@ class Executor:
         # 1. コレクション準備
         available_collections = get_available_collections_from_qdrant_helper()
         if not available_collections:
-             available_collections = self.config.qdrant.search_priority
+            available_collections = self.config.qdrant.search_priority
 
         # 2. Agent初期化
         agent = ReActAgent(
@@ -573,7 +579,7 @@ class Executor:
 
         final_answer = ""
         sources = []
-        
+
         # 3. エージェント実行（ジェネレータ）
         # ストリーミングイベントを拾いながら、ツール結果からソースを収集
         for event in agent.execute_turn(query):
@@ -589,38 +595,38 @@ class Executor:
                 logger.info(f"[LegacyAgent] Tool Result (len={len(event['content'])})")
                 # ソース抽出 (簡易的な文字列解析)
                 if "Source:" in event["content"]:
-                     import re
-                     # Source: filename.csv のパターンを抽出
-                     found_sources = re.findall(r"Source:\s*([a-zA-Z0-9_.\-]+)", event["content"])
-                     if found_sources:
-                         sources.extend(found_sources)
+                    import re
+                    # Source: filename.csv のパターンを抽出
+                    found_sources = re.findall(r"Source:\s*([a-zA-Z0-9_.\-]+)", event["content"])
+                    if found_sources:
+                        sources.extend(found_sources)
             elif event["type"] == "final_answer":
                 final_answer = event["content"]
-        
+
         # 4. 結果構築
         execution_time = int((time.time() - start_time) * 1000)
-        
+
         # ソースの重複排除
         sources = list(set(sources))
-        
+
         # Confidence計算 (簡易版)
         confidence = 0.8 if final_answer and "申し訳ありません" not in final_answer else 0.3
-        
+
         # ConfidenceScoreオブジェクトを作成して保存
         conf_score_obj = ConfidenceScore(
-             score=confidence,
-             factors=ConfidenceFactors(
-                 source_count=len(sources),
-                 search_result_count=len(sources), 
-                 llm_self_confidence=confidence
-             )
+            score=confidence,
+            factors=ConfidenceFactors(
+                source_count=len(sources),
+                search_result_count=len(sources),
+                llm_self_confidence=confidence
+            )
         )
         self.step_confidence_scores[step.step_id] = conf_score_obj
-        
+
         # アクション判定
         if self.on_confidence_update:
-             action = self.confidence_calculator.decide_action(conf_score_obj)
-             self.on_confidence_update(conf_score_obj, action)
+            action = self.confidence_calculator.decide_action(conf_score_obj)
+            self.on_confidence_update(conf_score_obj, action)
 
         return StepResult(
             step_id=step.step_id,
@@ -633,9 +639,9 @@ class Executor:
         )
 
     def _prepare_tool_kwargs(
-        self,
-        step: PlanStep,
-        state: ExecutionState
+            self,
+            step: PlanStep,
+            state: ExecutionState
     ) -> Dict[str, Any]:
         """ツール実行引数を準備"""
         kwargs = {
@@ -644,6 +650,10 @@ class Executor:
 
         if step.action == "rag_search":
             kwargs["collection"] = step.collection
+
+        elif step.action == "web_search":
+            kwargs["num_results"] = self.config.web_search.num_results
+            kwargs["language"] = self.config.web_search.language
 
         elif step.action == "reasoning":
             # 依存ステップの結果をコンテキストとして追加
@@ -684,16 +694,16 @@ class Executor:
         elif step.action == "ask_user":
             kwargs.update({
                 "question": step.query or step.description,
-                "reason": f"ステップ {step.step_id}: {step.description}",
-                "urgency": "blocking"
+                "reason"  : f"ステップ {step.step_id}: {step.description}",
+                "urgency" : "blocking"
             })
 
         return kwargs
 
     def _execute_fallback(
-        self,
-        step: PlanStep,
-        state: ExecutionState
+            self,
+            step: PlanStep,
+            state: ExecutionState
     ) -> StepResult:
         """フォールバックアクションを実行"""
         fallback_step = PlanStep(
@@ -715,11 +725,11 @@ class Executor:
         return step_execution
 
     def _llm_calculate_step_confidence(
-        self,
-        tool_result: ToolResult,
-        step: PlanStep,
-        state: ExecutionState
-        ) ->float:
+            self,
+            tool_result: ToolResult,
+            step: PlanStep,
+            state: ExecutionState
+    ) -> float:
         """
         LLMを使用したステップ信頼度の計算
         """
@@ -747,7 +757,7 @@ class Executor:
                         content = payload.get("content") or payload.get("text") or payload.get("answer")
                         if content:
                             texts.append(str(content))
-            
+
             if len(texts) > 1:
                 try:
                     sa_calc = create_source_agreement_calculator(config=self.config)
@@ -805,7 +815,7 @@ class Executor:
                 step_description=step.description,
                 tool_output=str(tool_result.output)
             )
-            
+
             # LLM評価が低すぎる場合、Heuristicで再計算して比較
             if confidence_score.score < 0.6 and confidence_factors.is_search_step:
                 heuristic_score = self.confidence_calculator.calculate(confidence_factors)
@@ -815,7 +825,7 @@ class Executor:
                         f"instead of LLM score {confidence_score.score:.2f}"
                     )
                     confidence_score = heuristic_score
-                    
+
         except Exception as e:
             logger.error(f"LLM confidence calculation failed: {e}, falling back to heuristic")
             confidence_score = self.confidence_calculator.calculate(confidence_factors)
@@ -841,10 +851,10 @@ class Executor:
     # Step 3の評価を担当する関数
     # -------------------
     def _calculate_step_confidence(
-        self,
-        tool_result: ToolResult,
-        step: PlanStep,
-        state: ExecutionState
+            self,
+            tool_result: ToolResult,
+            step: PlanStep,
+            state: ExecutionState
     ) -> float:
         """
         ステップの信頼度を計算（ConfidenceCalculator使用 - Heuristic版）
@@ -878,7 +888,7 @@ class Executor:
                         content = payload.get("content") or payload.get("text") or payload.get("answer")
                         if content:
                             texts.append(str(content))
-            
+
             if len(texts) > 1:
                 try:
                     sa_calc = create_source_agreement_calculator(config=self.config)
@@ -904,7 +914,7 @@ class Executor:
                     if dep_res.confidence > inherited_max:
                         inherited_max = dep_res.confidence
                         inherited_found = True
-            
+
             if inherited_found:
                 logger.info(f"[_calculate_step_confidence] Inherited scores from dependency: max={inherited_max}")
                 current_max_score = inherited_max
@@ -993,7 +1003,7 @@ class Executor:
 
         # 各ステップのConfidenceScoreを収集
         step_scores = list(self.step_confidence_scores.values())
-        
+
         # 最新のbreakdownを取得（ベースとして使用）
         current_breakdown = {}
         if step_scores:
@@ -1013,21 +1023,21 @@ class Executor:
                     answer=final_answer,
                     sources=state.get_completed_sources()
                 )
-                
+
                 score_val = 0.0
                 if hasattr(eval_result, 'score'):
                     score_val = eval_result.score
                 elif isinstance(eval_result, (int, float)):
                     score_val = float(eval_result)
-                
+
                 # breakdownを更新
                 current_breakdown["llm_self_eval"] = score_val
-                
+
                 # 更新されたbreakdownを持つConfidenceScoreを作成
                 llm_score = ConfidenceScore(
                     score=score_val,
                     factors=ConfidenceFactors(llm_self_confidence=score_val),
-                    breakdown=current_breakdown.copy() # 全要素を含むbreakdown
+                    breakdown=current_breakdown.copy()  # 全要素を含むbreakdown
                 )
                 step_scores.append(llm_score)
                 logger.info(f"LLM self-evaluation: {score_val:.2f}")
@@ -1041,18 +1051,18 @@ class Executor:
                     query=state.plan.original_query,
                     answer=final_answer
                 )
-                
+
                 # breakdownを更新
                 current_breakdown["query_coverage"] = coverage_score
-                
+
                 coverage_obj = ConfidenceScore(
                     score=coverage_score,
                     factors=ConfidenceFactors(query_coverage=coverage_score),
-                    breakdown=current_breakdown.copy() # 全要素を含むbreakdown
+                    breakdown=current_breakdown.copy()  # 全要素を含むbreakdown
                 )
                 step_scores.append(coverage_obj)
                 logger.info(f"Query coverage evaluation: {coverage_score:.2f}")
-                
+
                 # UIへの反映のために、最後の信頼度更新として通知する
                 if self.on_confidence_update:
                     decision = ActionDecision(
@@ -1061,7 +1071,7 @@ class Executor:
                         reason="Final coverage evaluation completed"
                     )
                     self.on_confidence_update(coverage_obj, decision)
-                    
+
             except Exception as e:
                 logger.warning(f"Query coverage evaluation failed: {e}")
 
@@ -1134,8 +1144,8 @@ class Executor:
             self.on_intervention_required("notify", {"message": message})
 
     def _handle_intervention_confirm(
-        self,
-        request: InterventionRequest
+            self,
+            request: InterventionRequest
     ) -> InterventionResponse:
         """確認レベルの介入処理"""
         logger.info(f"[CONFIRM] {request.message}")
@@ -1143,9 +1153,9 @@ class Executor:
         # on_intervention_requiredコールバックでUIに確認を要求
         if self.on_intervention_required:
             user_response = self.on_intervention_required("confirm", {
-                "message": request.message,
-                "reason": request.reason,
-                "options": request.options,
+                "message"   : request.message,
+                "reason"    : request.reason,
+                "options"   : request.options,
                 "confidence": request.confidence_score,
             })
 
@@ -1168,8 +1178,8 @@ class Executor:
         return InterventionResponse(action=InterventionAction.PROCEED)
 
     def _handle_intervention_escalate(
-        self,
-        request: InterventionRequest
+            self,
+            request: InterventionRequest
     ) -> InterventionResponse:
         """エスカレーションレベルの介入処理"""
         logger.info(f"[ESCALATE] {request.message}")
@@ -1177,9 +1187,9 @@ class Executor:
         # on_intervention_requiredコールバックでUIにユーザー入力を要求
         if self.on_intervention_required:
             user_response = self.on_intervention_required("escalate", {
-                "message": request.message,
-                "question": request.question,
-                "reason": request.reason,
+                "message"   : request.message,
+                "question"  : request.question,
+                "reason"    : request.reason,
                 "confidence": request.confidence_score,
             })
 
@@ -1196,10 +1206,10 @@ class Executor:
         )
 
     def _handle_intervention_if_needed(
-        self,
-        action_decision: ActionDecision,
-        step: PlanStep,
-        state: ExecutionState
+            self,
+            action_decision: ActionDecision,
+            step: PlanStep,
+            state: ExecutionState
     ) -> Optional[InterventionResponse]:
         """
         必要に応じて介入を処理
@@ -1233,9 +1243,9 @@ class Executor:
 # =============================================================================
 
 def create_executor(
-    config: Optional[GraceConfig] = None,
-    tool_registry: Optional[ToolRegistry] = None,
-    **kwargs
+        config: Optional[GraceConfig] = None,
+        tool_registry: Optional[ToolRegistry] = None,
+        **kwargs
 ) -> Executor:
     """Executorインスタンスを作成"""
     return Executor(

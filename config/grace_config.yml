@@ -101,6 +101,20 @@ logging:
   backup_count: 5
 
 # -----------------------------------------------------------------------------
+# Web検索設定
+# -----------------------------------------------------------------------------
+web_search:
+  backend: "serpapi"               # "serpapi" or "duckduckgo" or "google_cse"(deprecated)
+  num_results: 5
+  language: "ja"
+  timeout: 30
+  # SerpAPI用（backendが"serpapi"の場合に使用）
+  # serpapi_api_key: ""            # 環境変数 SERPAPI_KEY 推奨
+  # Google CSE用（※新規受付停止のため非推奨）
+  # google_cse_api_key: ""        # 環境変数 GOOGLE_CSE_API_KEY
+  # google_cse_engine_id: ""      # 環境変数 GOOGLE_CSE_ENGINE_ID
+
+# -----------------------------------------------------------------------------
 # Qdrant設定
 # -----------------------------------------------------------------------------
 qdrant:

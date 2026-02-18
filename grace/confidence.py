@@ -23,49 +23,50 @@ logger = logging.getLogger(__name__)
 # 信頼度要素
 # =============================================================================
 # Gemini Structured Output用スキーマ
-class EvaluationResult(BaseModel):      # ← 追加
-    """LLM信頼度評価の応答スキーマ"""     # ← 追加
-    score: float                         # ← 追加
+class EvaluationResult(BaseModel):  # ← 追加
+    """LLM信頼度評価の応答スキーマ"""  # ← 追加
+    score: float  # ← 追加
     reason: str
+
 
 @dataclass
 class ConfidenceFactors:
     """信頼度を構成する各要素"""
 
     # RAG検索関連
-    search_result_count: int = 0        # 検索結果数
-    search_avg_score: float = 0.0       # 平均類似度スコア
-    search_max_score: float = 0.0       # 最高類似度スコア
+    search_result_count: int = 0  # 検索結果数
+    search_avg_score: float = 0.0  # 平均類似度スコア
+    search_max_score: float = 0.0  # 最高類似度スコア
     search_score_variance: float = 1.0  # スコアの分散（低いほど一貫性あり）
 
     # 複数ソース関連
-    source_agreement: float = 0.0       # 情報源間の一致度 (0-1)
-    source_count: int = 0               # 引用ソース数
+    source_agreement: float = 0.0  # 情報源間の一致度 (0-1)
+    source_count: int = 0  # 引用ソース数
 
     # LLM自己評価
-    llm_self_confidence: float = 0.5    # LLMの自己評価 (0-1)
+    llm_self_confidence: float = 0.5  # LLMの自己評価 (0-1)
 
     # ツール実行関連
-    tool_success_rate: float = 1.0      # ツール成功率
-    tool_execution_count: int = 0       # 実行ツール数
-    tool_success_count: int = 0         # 成功ツール数
+    tool_success_rate: float = 1.0  # ツール成功率
+    tool_execution_count: int = 0  # 実行ツール数
+    tool_success_count: int = 0  # 成功ツール数
 
     # クエリ関連
-    query_coverage: float = 0.0         # クエリへの回答網羅度
-    
+    query_coverage: float = 0.0  # クエリへの回答網羅度
+
     # ステップタイプ
-    is_search_step: bool = False        # 検索ステップかどうか
+    is_search_step: bool = False  # 検索ステップかどうか
 
 
 @dataclass
 class ConfidenceScore:
     """信頼度スコアと内訳"""
 
-    score: float                         # 最終スコア (0.0-1.0)
-    factors: ConfidenceFactors           # 計算に使用した要素
+    score: float  # 最終スコア (0.0-1.0)
+    factors: ConfidenceFactors  # 計算に使用した要素
     breakdown: Dict[str, float] = field(default_factory=dict)  # 各要素のスコア内訳
     penalties_applied: List[str] = field(default_factory=list)  # 適用されたペナルティ
-    reason: str = ""                     # 信頼度スコアの理由（LLM評価などで使用）
+    reason: str = ""  # 信頼度スコアの理由（LLM評価などで使用）
 
     @property
     def level(self) -> str:
@@ -86,10 +87,10 @@ class ConfidenceScore:
 
 class InterventionLevel(str, Enum):
     """介入レベル"""
-    SILENT = "silent"       # バックグラウンドで進行
-    NOTIFY = "notify"       # ステータス表示
-    CONFIRM = "confirm"     # 確認を求める
-    ESCALATE = "escalate"   # ユーザー入力を要求
+    SILENT = "silent"  # バックグラウンドで進行
+    NOTIFY = "notify"  # ステータス表示
+    CONFIRM = "confirm"  # 確認を求める
+    ESCALATE = "escalate"  # ユーザー入力を要求
 
 
 @dataclass
@@ -138,11 +139,11 @@ class ConfidenceCalculator:
     def _validate_weights(self):
         """重みの合計が1.0であることを確認"""
         total = (
-            self.weights.search_quality +
-            self.weights.source_agreement +
-            self.weights.llm_self_eval +
-            self.weights.tool_success +
-            self.weights.query_coverage
+                self.weights.search_quality +
+                self.weights.source_agreement +
+                self.weights.llm_self_eval +
+                self.weights.tool_success +
+                self.weights.query_coverage
         )
         if abs(total - 1.0) > 0.01:
             raise ValueError(f"Weights must sum to 1.0, got {total}")
@@ -188,10 +189,10 @@ class ConfidenceCalculator:
             base_score = search_quality
             if tool_success < 1.0:
                 base_score *= tool_success
-            
+
             # 内訳も調整（表示用）
             breakdown["llm_self_eval"] = 0.0  # N/A
-            breakdown["query_coverage"] = 0.0 # N/A
+            breakdown["query_coverage"] = 0.0  # N/A
         else:
             # 検索ステップ以外（Reasoningなど）の場合
             # 「有効な（信頼できる）要素」だけで加重平均を計算し、正規化する
@@ -247,52 +248,53 @@ class ConfidenceCalculator:
         )
 
     def llm_calculate(
-        self,
-        factors: ConfidenceFactors,
-        step_description: str = "",
-        tool_output: str = ""
+            self,
+            factors: ConfidenceFactors,
+            step_description: str = "",
+            tool_output: str = ""
     ) -> ConfidenceScore:
         """
         LLMを使用した信頼度計算（次世代版）
-        
+
         Args:
             factors: 統計的要因（参考情報として使用）
             step_description: ステップの目的
             tool_output: ツールの出力
-            
+
         Returns:
             ConfidenceScore: 計算された信頼度
         """
         # LLM Evaluatorの準備
         evaluator = create_llm_evaluator(config=self.config)
-        
+
         # LLMによる評価実行
         eval_result = evaluator.evaluate_with_factors(
             description=step_description,
             output=tool_output,
             factors=factors
         )
-        
+
         final_score = eval_result["score"]
         reason = eval_result["reason"]
-        
+
         # --- ガードレール: 検索スコアの優先 ---
         # 検索ステップで、かつ検索システムのスコアが高い場合は、機械的なスコアを尊重する
         # (LLMがハルシネーションや過度な慎重さでスコアを下げすぎるのを防ぐ)
         if factors.is_search_step and factors.search_max_score > 0.7:
             if factors.search_max_score > final_score:
-                logger.info(f"Override LLM score ({final_score:.4f}) with Search Score ({factors.search_max_score:.4f})")
+                logger.info(
+                    f"Override LLM score ({final_score:.4f}) with Search Score ({factors.search_max_score:.4f})")
                 final_score = factors.search_max_score
                 reason += f" (検索スコア {factors.search_max_score:.4f} を優先)"
 
         # 内訳の作成（デバッグ用）
         breakdown = {
             "llm_score": final_score,
-            "reason": 1.0 if reason else 0.0 # ダミー値だが存在確認用
+            "reason"   : 1.0 if reason else 0.0  # ダミー値だが存在確認用
         }
-        
+
         logger.info(f"LLM Confidence Calculation: score={final_score}, reason={reason}")
-        
+
         return ConfidenceScore(
             score=final_score,
             factors=factors,
@@ -314,7 +316,7 @@ class ConfidenceCalculator:
 
         # それ以外（不確かな場合）は、平均スコアも考慮する (70% Max + 30% Avg)
         combined_score = (factors.search_max_score * 0.7) + (factors.search_avg_score * 0.3)
-        
+
         # 分散によるペナルティ（スコアがバラバラすぎる場合）
         variance_penalty = min(0.15, factors.search_score_variance * 0.3)
 
@@ -328,9 +330,9 @@ class ConfidenceCalculator:
         return factors.tool_success_count / factors.tool_execution_count
 
     def _apply_penalties(
-        self,
-        base_score: float,
-        factors: ConfidenceFactors
+            self,
+            base_score: float,
+            factors: ConfidenceFactors
     ) -> tuple[float, List[str]]:
         """特定条件でのペナルティ適用"""
         score = base_score
@@ -438,9 +440,9 @@ class LLMSelfEvaluator:
 確信度（0.0-1.0の数値のみ回答）:"""
 
     def __init__(
-        self,
-        config: Optional[GraceConfig] = None,
-        model_name: Optional[str] = None
+            self,
+            config: Optional[GraceConfig] = None,
+            model_name: Optional[str] = None
     ):
         """
         Args:
@@ -456,10 +458,10 @@ class LLMSelfEvaluator:
         logger.info(f"LLMSelfEvaluator initialized with model: {self.model_name}")
 
     def evaluate(
-        self,
-        query: str,
-        answer: str,
-        sources: Optional[List[str]] = None
+            self,
+            query: str,
+            answer: str,
+            sources: Optional[List[str]] = None
     ) -> float:
         """
         LLMに自己評価させる
@@ -480,7 +482,7 @@ class LLMSelfEvaluator:
 
         try:
             # --- [IPO LOG] PROCESS INPUT (GRACE SELF-EVAL) ---
-            logger.info(f"\n{'='*20} [GRACE SELF-EVAL IPO: INPUT] {'='*20}\n{prompt}\n{'='*60}")
+            logger.info(f"\n{'=' * 20} [GRACE SELF-EVAL IPO: INPUT] {'=' * 20}\n{prompt}\n{'=' * 60}")
 
             import time as _time
             t0 = _time.time()
@@ -504,9 +506,9 @@ class LLMSelfEvaluator:
 
             # 数値を抽出
             text = response.text.strip()
-            
+
             # --- [IPO LOG] PROCESS OUTPUT (GRACE SELF-EVAL) ---
-            logger.info(f"\n{'='*20} [GRACE SELF-EVAL IPO: OUTPUT] {'='*20}\n{text}\n{'='*60}")
+            logger.info(f"\n{'=' * 20} [GRACE SELF-EVAL IPO: OUTPUT] {'=' * 20}\n{text}\n{'=' * 60}")
 
             confidence = float(text)
             result = min(1.0, max(0.0, confidence))
@@ -522,10 +524,10 @@ class LLMSelfEvaluator:
             return 0.5
 
     def evaluate_with_factors(
-        self,
-        description: str,
-        output: str,
-        factors: ConfidenceFactors
+            self,
+            description: str,
+            output: str,
+            factors: ConfidenceFactors
     ) -> Dict[str, Any]:
         """
         Factorsとコンテキストを考慮した総合評価
@@ -537,7 +539,7 @@ class LLMSelfEvaluator:
             Dict: {"score": float, "reason": str}
         """
         import json
-        
+
         prompt = f"""
 あなたはAIエージェントの実行監視役です。
 現在のステップが「成功」し、十分な信頼度があるかを評価してください。
@@ -582,7 +584,7 @@ class LLMSelfEvaluator:
 """
         try:
             logger.info(f"LLM evaluate_with_factors prompt len: {len(prompt)}")
-            
+
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
@@ -591,6 +593,8 @@ class LLMSelfEvaluator:
                     max_output_tokens=200,
                     response_mime_type="application/json",
                     response_schema=EvaluationResult,
+                    # AFC無効化: AFC永続化によりresponse.parsedがNone/テキスト混入するバグを防止
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                 )
             )
 
@@ -601,18 +605,38 @@ class LLMSelfEvaluator:
                     return {"score": factors.search_max_score, "reason": "LLM empty response, using search score"}
                 return {"score": 0.5, "reason": "No response from LLM"}
 
+            # --- TODO #5: response.parsed の Noneガード + テキストフォールバック ---
             result = response.parsed  # EvaluationResult オブジェクト
-            score = float(result.score)
-            reason = result.reason or "No reason provided"
+            if result is not None and hasattr(result, 'score') and result.score is not None:
+                score = float(result.score)
+                reason = result.reason or "No reason provided"
+            else:
+                # parsed が失敗した場合、response.text から手動パース
+                logger.warning(f"response.parsed is None, attempting manual parse from text: {response.text[:200]}")
+                import json as _json
+                try:
+                    text = response.text.strip()
+                    # Markdownコードブロックの除去
+                    if text.startswith("```"):
+                        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+                    data = _json.loads(text)
+                    score = float(data.get("score", 0.5))
+                    reason = data.get("reason", "Parsed from raw text")
+                except (_json.JSONDecodeError, ValueError, KeyError) as parse_err:
+                    logger.warning(f"Manual parse also failed: {parse_err}")
+                    if factors.search_max_score > 0:
+                        logger.info(f"Fallback to search_max_score: {factors.search_max_score:.4f}")
+                        return {"score": factors.search_max_score, "reason": "LLM parse failed, using search score"}
+                    return {"score": 0.5, "reason": f"Parse error: {str(parse_err)}"}
 
             return {"score": score, "reason": reason}
 
         except Exception as e:
-                    logger.error(f"evaluate_with_factors failed: {e}")
-                    if factors.search_max_score > 0:
-                        logger.info(f"Fallback to search_max_score: {factors.search_max_score:.4f}")
-                        return {"score": factors.search_max_score, "reason": f"LLM evaluation failed, using search score"}
-                    return {"score": 0.5, "reason": f"Evaluation error: {str(e)}"}
+            logger.error(f"evaluate_with_factors failed: {e}")
+            if factors.search_max_score > 0:
+                logger.info(f"Fallback to search_max_score: {factors.search_max_score:.4f}")
+                return {"score": factors.search_max_score, "reason": f"LLM evaluation failed, using search score"}
+            return {"score": 0.5, "reason": f"Evaluation error: {str(e)}"}
 
 
 # =============================================================================
@@ -708,9 +732,9 @@ class QueryCoverageCalculator:
 数値のみ回答:"""
 
     def __init__(
-        self,
-        config: Optional[GraceConfig] = None,
-        model_name: Optional[str] = None
+            self,
+            config: Optional[GraceConfig] = None,
+            model_name: Optional[str] = None
     ):
         """
         Args:
@@ -792,9 +816,9 @@ class ConfidenceAggregator:
         logger.info("ConfidenceAggregator initialized")
 
     def aggregate(
-        self,
-        scores: List[ConfidenceScore],
-        method: Literal["mean", "min", "weighted"] = "mean"
+            self,
+            scores: List[ConfidenceScore],
+            method: Literal["mean", "min", "weighted"] = "mean"
     ) -> float:
         """
         複数の信頼度スコアを集計
@@ -829,9 +853,9 @@ class ConfidenceAggregator:
             raise ValueError(f"Unknown aggregation method: {method}")
 
     def aggregate_with_critical_check(
-        self,
-        scores: List[ConfidenceScore],
-        critical_threshold: float = 0.3
+            self,
+            scores: List[ConfidenceScore],
+            critical_threshold: float = 0.3
     ) -> tuple[float, bool]:
         """
         重要度チェック付きの集計
@@ -863,37 +887,37 @@ class ConfidenceAggregator:
 # =============================================================================
 
 def create_confidence_calculator(
-    config: Optional[GraceConfig] = None
+        config: Optional[GraceConfig] = None
 ) -> ConfidenceCalculator:
     """ConfidenceCalculatorインスタンスを作成"""
     return ConfidenceCalculator(config=config)
 
 
 def create_llm_evaluator(
-    config: Optional[GraceConfig] = None,
-    model_name: Optional[str] = None
+        config: Optional[GraceConfig] = None,
+        model_name: Optional[str] = None
 ) -> LLMSelfEvaluator:
     """LLMSelfEvaluatorインスタンスを作成"""
     return LLMSelfEvaluator(config=config, model_name=model_name)
 
 
 def create_source_agreement_calculator(
-    config: Optional[GraceConfig] = None
+        config: Optional[GraceConfig] = None
 ) -> SourceAgreementCalculator:
     """SourceAgreementCalculatorインスタンスを作成"""
     return SourceAgreementCalculator(config=config)
 
 
 def create_query_coverage_calculator(
-    config: Optional[GraceConfig] = None,
-    model_name: Optional[str] = None
+        config: Optional[GraceConfig] = None,
+        model_name: Optional[str] = None
 ) -> QueryCoverageCalculator:
     """QueryCoverageCalculatorインスタンスを作成"""
     return QueryCoverageCalculator(config=config, model_name=model_name)
 
 
 def create_confidence_aggregator(
-    config: Optional[GraceConfig] = None
+        config: Optional[GraceConfig] = None
 ) -> ConfidenceAggregator:
     """ConfidenceAggregatorインスタンスを作成"""
     return ConfidenceAggregator(config=config)

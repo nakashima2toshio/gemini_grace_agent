@@ -139,9 +139,22 @@ class QdrantConfig(BaseModel):
     search_priority: list = Field(default_factory=lambda: ["wikipedia_ja", "livedoor", "cc_news", "japanese_text"])
 
 
+class WebSearchConfig(BaseModel):
+    """Web検索設定"""
+    backend: str = "serpapi"                  # "duckduckgo" or "google_cse" or "serpapi"
+    num_results: int = 5
+    language: str = "ja"
+    timeout: int = 30
+    # Google CSE用（backendが"google_cse"の場合のみ使用）※新規受付停止
+    google_cse_api_key: str = ""
+    google_cse_engine_id: str = ""
+    # SerpAPI用（backendが"serpapi"の場合に使用）
+    serpapi_api_key: str = ""
+
+
 class ToolsConfig(BaseModel):
     """ツール設定"""
-    enabled: list = Field(default_factory=lambda: ["rag_search", "reasoning", "ask_user"])
+    enabled: list = Field(default_factory=lambda: ["rag_search", "web_search", "reasoning", "ask_user"])
 
 
 class GraceConfig(BaseModel):
@@ -156,6 +169,7 @@ class GraceConfig(BaseModel):
     error: ErrorConfig = Field(default_factory=ErrorConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
+    web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
 
 
@@ -305,6 +319,7 @@ __all__ = [
     "ErrorConfig",
     "LoggingConfig",
     "QdrantConfig",
+    "WebSearchConfig",
     "ToolsConfig",
     "GraceConfig",
 

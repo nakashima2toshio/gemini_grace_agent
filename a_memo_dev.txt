@@ -35,9 +35,30 @@ https://zenn.dev/toshio/articles/4e22f5337bea3e
 https://zenn.dev/toshio/articles/0ff187f4d15f5e
 
 ------------------------------------------------------------------
-# ------------
+#ai #agent #rag
+
+RAGのキモ技術=チャンク分割を最新化、全面改訂しました。
+
+「チャンク分割・方式のまとめ」
+[Step 1] 階層構造化（段落分割）
+       - テキストをブロック分割し、LLMで章・節・
+         トピック転換を判定して段落単位に分割
+       - chunks ▲ 増加
+
+[Step 2] 意味的チャンキング
+       - 各段落をLLMで意味の単位に再分割
+         （問題提起+解決策など）
+       - Q/A生成に最適サイズのチャンクを生成
+       - chunks ▲▲ さらに増加
+
+[Step 3] 文脈連続性チェック
+       - 隣接チャンク間の連続性をLLMで判定
+       - 指示語・前方依存がある → 結合
+       - 話題転換・独立して理解可能 → 分離
+       - chunks ▼ 減少（過分割を修正）
+
 Rag: Chunk チャンク分割
-# ------------
+
 ・Github：https://github.com/nakashima2toshio/gemini_grace_agent
 
 ・[実践・RAG・チャンク作成・全コード公開]（1/5）チャンク分割( 本番用)
@@ -57,8 +78,49 @@ https://zenn.dev/toshio/articles/af68a9c2940d0c
 
 ------------------------------------------------------------------
 # ------------
+#ai #agent #rag
+
+RAGのキモ技術=・チャンク分割、Q/Aペア作成、ベクターDB（Qdrant）登録の流れの
+「Q/Aペア作成、ベクターDB（Qdrant）登録」を全面更新、最新化しました。
+
 Rag: Qa_Pair　Q/Aペア作成・Qdrant登録&CRUD
-# ------------
+
+---
+■ Q/A GENERATION (Phase 1)
+
+  [Step 1] 入力CSV自動判定
+           - CSVカラム構成を解析し処理を自動切替
+           - question+answer あり → Q/A生成スキップ、直接登録
+           - text あり → Q/A生成パイプラインへ
+           - いずれもなし → エラー終了
+
+  [Step 2a] スマートQ/A生成（デフォルト）
+           - LLMがチャンクごとに最適なQ/A数を動的決定（0〜5個）
+           - 情報量が少ないチャンクは0個（スキップ）
+           - Celery並列処理で高速化
+
+  [Step 2b] 従来方式Q/A生成（--no-smart-generation）
+           - トークン数ベースで固定Q/A数を算出（2〜8個）
+           - batch-chunks単位でまとめてLLMに送信
+
+---
+■ QDRANT REGISTRATION (Phase 2)
+  [Step 3] Embedding生成
+           - gemini-embedding-001 使用（3072次元）
+           - バッチ処理（デフォルト: 100件ずつ）
+
+  [Step 4] コレクション作成 & バッチアップサート
+           - --recreate で既存コレクション削除→再作成
+           - Hybrid Search対応（Dense + Sparse ベクトル）
+           - コサイン類似度による検索
+
+---
+■ QDRANT CRUD OPERATIONS
+  ● Create  - コレクション作成、ポイント追加
+  ● Read    - コレクション一覧、ポイント検索・取得
+  ● Update  - ポイントのペイロード更新
+  ● Delete  - ポイント削除、コレクション削除
+
 ・Github：https://github.com/nakashima2toshio/gemini_grace_agent
 
 ・[実践・RAG・Q/A作成・全コード公開]（1/6）Q/Aペア作成・Qdrant登録・全体の流れ

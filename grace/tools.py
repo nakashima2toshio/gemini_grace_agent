@@ -538,6 +538,262 @@ class AskUserTool(BaseTool):
 
 
 # =============================================================================
+# Web検索ツール
+# =============================================================================
+
+class WebSearchTool(BaseTool):
+    """Web検索ツール（SerpAPI / DuckDuckGo / Google CSE 切り替え対応）"""
+
+    name = "web_search"
+    description = "Web検索で最新情報を取得"
+
+    def __init__(self, config: Optional[GraceConfig] = None):
+        self.config = config or get_config()
+        self.backend = self.config.web_search.backend
+        self.num_results = self.config.web_search.num_results
+        self.language = self.config.web_search.language
+        self.timeout = self.config.web_search.timeout
+        logger.info(f"WebSearchTool initialized: backend={self.backend}")
+
+    def execute(
+        self,
+        query: str,
+        num_results: Optional[int] = None,
+        language: Optional[str] = None,
+        **kwargs
+    ) -> ToolResult:
+        """
+        Web検索を実行
+
+        Args:
+            query: 検索クエリ
+            num_results: 取得件数（デフォルト: configの値）
+            language: 検索言語（デフォルト: configの値）
+
+        Returns:
+            ToolResult: rag_search互換形式の検索結果
+        """
+        import time
+        start_time = time.time()
+
+        num = num_results or self.num_results
+        lang = language or self.language
+
+        logger.info(f"WebSearch: query='{query[:50]}...', backend={self.backend}, num={num}")
+
+        try:
+            if self.backend == "duckduckgo":
+                raw_results = self._search_ddg(query, num, lang)
+            elif self.backend == "google_cse":
+                raw_results = self._search_google(query, num, lang)
+            elif self.backend == "serpapi":
+                raw_results = self._search_serpapi(query, num, lang)
+            else:
+                raise ValueError(f"Unknown web search backend: {self.backend}")
+
+            # rag_search互換フォーマットに変換
+            formatted = self._parse_to_rag_format(raw_results, num)
+            execution_time = int((time.time() - start_time) * 1000)
+
+            if not formatted:
+                msg = f"Web検索結果が見つかりませんでした: '{query}'"
+                logger.warning(msg)
+                return ToolResult(
+                    success=False,
+                    output=[],
+                    error=msg,
+                    confidence_factors={"result_count": 0, "search_engine": self.backend},
+                    execution_time_ms=execution_time
+                )
+
+            scores = [r["score"] for r in formatted]
+            confidence_factors = self._calculate_confidence_factors(scores)
+
+            # --- [IPO LOG] PROCESS OUTPUT (WEB SEARCH) ---
+            import json
+            results_display = json.dumps(formatted, indent=2, ensure_ascii=False)
+            log_output = (
+                f"\n{'='*20} [WEB SEARCH IPO: OUTPUT] {'='*20}"
+                f"\nBackend: {self.backend}"
+                f"\nQuery: {query}"
+                f"\n{results_display}"
+                f"\n{'='*60}"
+            )
+            logger.info(log_output)
+            print(log_output)
+
+            return ToolResult(
+                success=True,
+                output=formatted,
+                confidence_factors=confidence_factors,
+                execution_time_ms=execution_time
+            )
+
+        except Exception as e:
+            execution_time = int((time.time() - start_time) * 1000)
+            error_msg = f"Web検索エラー ({self.backend}): {e}"
+            logger.error(error_msg, exc_info=True)
+            return ToolResult(
+                success=False,
+                output=None,
+                error=error_msg,
+                execution_time_ms=execution_time
+            )
+
+    def _search_ddg(self, query: str, num_results: int, language: str) -> list:
+        """DuckDuckGo検索バックエンド"""
+        from duckduckgo_search import DDGS
+
+        region = "jp-jp" if language == "ja" else "wt-wt"
+        logger.info(f"DDG search: query='{query}', region={region}, max_results={num_results}")
+
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, region=region, max_results=num_results))
+
+        logger.info(f"DDG search returned {len(results)} results")
+        return results
+
+    def _search_google(self, query: str, num_results: int, language: str) -> list:
+        """Google CSE検索バックエンド"""
+        import os
+        import requests
+
+        api_key = (
+            os.environ.get("GOOGLE_CSE_API_KEY", "")
+            or self.config.web_search.google_cse_api_key
+        )
+        engine_id = (
+            os.environ.get("GOOGLE_CSE_ENGINE_ID", "")
+            or self.config.web_search.google_cse_engine_id
+        )
+
+        if not api_key or not engine_id:
+            raise ValueError(
+                "Google CSEの設定が不足しています。"
+                "GOOGLE_CSE_API_KEY と GOOGLE_CSE_ENGINE_ID を設定してください"
+            )
+
+        resp = requests.get(
+            "https://www.googleapis.com/customsearch/v1",
+            params={
+                "key": api_key,
+                "cx": engine_id,
+                "q": query,
+                "lr": f"lang_{language}",
+                "num": num_results,
+            },
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        return resp.json().get("items", [])
+
+    def _search_serpapi(self, query: str, num_results: int, language: str) -> list:
+        """SerpAPI検索バックエンド（リトライ1回付き）"""
+        import os
+        import time as _time
+        import requests
+
+        api_key = (
+            os.environ.get("SERPAPI_KEY", "")
+            or self.config.web_search.serpapi_api_key
+        )
+
+        if not api_key:
+            raise ValueError(
+                "SerpAPIの設定が不足しています。"
+                "SERPAPI_KEY 環境変数を設定してください"
+            )
+
+        logger.info(f"SerpAPI search: query='{query}', num={num_results}, lang={language}")
+
+        params = {
+            "api_key": api_key,
+            "q": query,
+            "hl": language,
+            "gl": "jp" if language == "ja" else "us",
+            "num": num_results,
+        }
+
+        # リトライ1回付き（タイムアウト対策）
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                resp = requests.get(
+                    "https://serpapi.com/search.json",
+                    params=params,
+                    timeout=self.timeout,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                results = data.get("organic_results", [])
+                logger.info(f"SerpAPI search returned {len(results)} results")
+                return results
+
+            except requests.exceptions.ReadTimeout:
+                if attempt < max_retries - 1:
+                    wait = 2 * (attempt + 1)
+                    logger.warning(f"SerpAPI timeout (attempt {attempt + 1}/{max_retries}), retrying in {wait}s...")
+                    _time.sleep(wait)
+                else:
+                    raise
+
+    def _parse_to_rag_format(self, raw_results: list, num_results: int) -> list:
+        """検索結果を rag_search 互換フォーマットに変換"""
+        formatted = []
+        for i, item in enumerate(raw_results):
+            # 検索順位ベースの正規化スコア: 1位=1.0, 最下位=0.5
+            score = round(1.0 - (i / max(num_results, 1)) * 0.5, 2)
+
+            if self.backend == "duckduckgo":
+                entry = {
+                    "score": score,
+                    "payload": {
+                        "question": "",
+                        "answer": item.get("body", ""),
+                        "content": "",
+                        "source": item.get("href", ""),
+                        "title": item.get("title", ""),
+                    },
+                    "collection": "web_search",
+                }
+            else:  # serpapi / google_cse (both use title/link/snippet)
+                entry = {
+                    "score": score,
+                    "payload": {
+                        "question": "",
+                        "answer": item.get("snippet", ""),
+                        "content": "",
+                        "source": item.get("link", ""),
+                        "title": item.get("title", ""),
+                    },
+                    "collection": "web_search",
+                }
+
+            formatted.append(entry)
+        return formatted
+
+    def _calculate_confidence_factors(self, scores: list) -> dict:
+        """検索結果の Confidence 統計情報を算出"""
+        if not scores:
+            return {
+                "result_count": 0,
+                "avg_score": 0.0,
+                "top_score": 0.0,
+                "score_spread": 0.0,
+                "search_engine": self.backend,
+            }
+
+        return {
+            "result_count": len(scores),
+            "avg_score": round(sum(scores) / len(scores), 2),
+            "top_score": max(scores),
+            "score_spread": round(max(scores) - min(scores), 2),
+            "search_engine": self.backend,
+        }
+
+
+# =============================================================================
 # ツールレジストリ
 # =============================================================================
 
@@ -555,6 +811,9 @@ class ToolRegistry:
 
         if "rag_search" in enabled_tools:
             self.register(RAGSearchTool(config=self.config))
+
+        if "web_search" in enabled_tools:
+            self.register(WebSearchTool(config=self.config))
 
         if "reasoning" in enabled_tools:
             self.register(ReasoningTool(config=self.config))
@@ -611,6 +870,7 @@ __all__ = [
 
     # Tools
     "RAGSearchTool",
+    "WebSearchTool",
     "ReasoningTool",
     "AskUserTool",
 
