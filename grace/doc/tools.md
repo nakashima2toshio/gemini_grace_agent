@@ -1,6 +1,6 @@
 # tools.py - ツール定義モジュール ドキュメント
 
-**Version 1.1** | 最終更新: 2025-01-29
+**Version 2.0** | 最終更新: 2026-02-19
 
 ---
 
@@ -14,6 +14,7 @@
    - [内部モジュール構成](#21-内部モジュール構成)
    - [外部依存関係](#22-外部依存関係)
    - [内部依存モジュール](#23-内部依存モジュール)
+   - [外部カスタムモジュール依存](#24-外部カスタムモジュール依存)
 4. [クラス・関数一覧表](#3-クラス関数一覧表)
    - [データクラス一覧](#31-データクラス一覧)
    - [クラス一覧](#32-クラス一覧)
@@ -24,9 +25,10 @@
    - [RAGSearchTool クラス](#43-ragsearchtool-クラス)
    - [ReasoningTool クラス](#44-reasoningtool-クラス)
    - [AskUserTool クラス](#45-askusertool-クラス)
-   - [ToolRegistry クラス](#46-toolregistry-クラス)
-   - [ファクトリ関数](#47-ファクトリ関数)
-6. [外部カスタムモジュール IPO詳細](#5-外部カスタムモジュール-ipo詳細) ⭐ NEW
+   - [WebSearchTool クラス](#46-websearchtool-クラス)
+   - [ToolRegistry クラス](#47-toolregistry-クラス)
+   - [ファクトリ関数](#48-ファクトリ関数)
+6. [外部カスタムモジュール IPO詳細](#5-外部カスタムモジュール-ipo詳細)
    - [qdrant_client_wrapper](#51-qdrant_client_wrapper)
    - [services.qdrant_service](#52-servicesqdrant_service)
    - [agent_tools](#53-agent_tools)
@@ -35,8 +37,10 @@
 8. [使用例](#7-使用例)
    - [ToolRegistryを使用した基本ワークフロー](#71-toolregistryを使用した基本ワークフロー)
    - [RAG検索の直接実行](#72-rag検索の直接実行)
-   - [推論ツールの使用](#73-推論ツールの使用)
-   - [AskUserToolの使用](#74-askusertoolの使用)
+   - [Web検索の直接実行](#73-web検索の直接実行)
+   - [推論ツールの使用](#74-推論ツールの使用)
+   - [AskUserToolの使用](#75-askusertoolの使用)
+   - [RAG検索 → Web検索フォールバックワークフロー](#76-rag検索--web検索フォールバックワークフロー)
 9. [エクスポート](#8-エクスポート)
 10. [変更履歴](#9-変更履歴)
 11. [付録: 依存関係図](#付録-依存関係図)
@@ -46,15 +50,27 @@
 
 ## 概要
 
-`tools.py`は、GRACEエージェントが使用するツール（RAG検索、推論、ask_user等）を定義するモジュールです。各ツールは統一されたインターフェース（`BaseTool`）を実装し、`ToolRegistry`を通じて管理・実行されます。
+`tools.py`は、GRACEエージェントが使用するツール（RAG検索、Web検索、推論、ask_user等）を定義するモジュールです。各ツールは統一されたインターフェース（`BaseTool`）を実装し、`ToolRegistry`を通じて管理・実行されます。
 
 ### 主な責務
 
 - ツールの統一インターフェース定義（BaseTool抽象基底クラス）
 - RAG検索ツールによるQdrantベクトルDB検索
+- Web検索ツールによる外部情報の取得（SerpAPI / DuckDuckGo / Google CSE 切り替え対応）
 - LLM推論ツールによる回答生成
 - ユーザー質問ツールによるHITL（Human-in-the-Loop）サポート
 - ツールレジストリによるツールの一元管理
+
+### 各責務対応のモジュール
+
+| # | 責務 | 対応モジュール | 説明 |
+|---|------|--------------|------|
+| 1 | ツールの統一インターフェース定義 | `tools.py` | BaseTool抽象基底クラスとToolResultデータクラス |
+| 2 | RAG検索ツールによるQdrantベクトルDB検索 | `tools.py` | RAGSearchToolクラス（agent_tools委譲） |
+| 3 | Web検索ツールによる外部情報の取得 | `tools.py` | WebSearchToolクラス（SerpAPI/DDG/CSE切り替え） |
+| 4 | LLM推論ツールによる回答生成 | `tools.py` | ReasoningToolクラス（Gemini API呼び出し） |
+| 5 | ユーザー質問ツールによるHITLサポート | `tools.py` | AskUserToolクラス（Executor連携） |
+| 6 | ツールレジストリによるツールの一元管理 | `tools.py` | ToolRegistryクラスとcreate_tool_registry() |
 
 ### 主要機能一覧
 
@@ -64,6 +80,12 @@
 | `BaseTool` | すべてのツールの抽象基底クラス |
 | `RAGSearchTool` | Qdrantベクトルデータベースからの検索 |
 | `RAGSearchTool.execute()` | コレクション自動フォールバック付きRAG検索 |
+| `WebSearchTool` | Web検索で最新情報を取得（SerpAPI/DDG/CSE対応） |
+| `WebSearchTool.execute()` | RAG互換フォーマットでWeb検索結果を返却 |
+| `WebSearchTool._search_serpapi()` | SerpAPI検索バックエンド（リトライ1回付き） |
+| `WebSearchTool._search_ddg()` | DuckDuckGo検索バックエンド |
+| `WebSearchTool._search_google()` | Google CSE検索バックエンド |
+| `WebSearchTool._parse_to_rag_format()` | 検索結果をrag_search互換形式に変換 |
 | `ReasoningTool` | 検索結果を元にした回答生成 |
 | `ReasoningTool.execute()` | LLMによる推論・回答生成 |
 | `AskUserTool` | ユーザーへの質問・確認要求 |
@@ -78,39 +100,42 @@
 
 ### 1.1 システム全体構成
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Executor 層                              │
-│  ┌──────────────────┐                                          │
-│  │     Executor     │                                          │
-│  │   (計画実行)     │                                          │
-│  └────────┬─────────┘                                          │
-└───────────┼────────────────────────────────────────────────────┘
-            │ execute(tool_name, **kwargs)
-            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        tools.py                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  ToolRegistry                                              │ │
-│  │    ├── register(tool)                                      │ │
-│  │    ├── get(name) → BaseTool                                │ │
-│  │    ├── list_tools() → List[str]                            │ │
-│  │    └── execute(name, **kwargs) → ToolResult                │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                              │                                  │
-│              ┌───────────────┼───────────────┐                  │
-│              ▼               ▼               ▼                  │
-│  ┌──────────────────┐ ┌──────────────┐ ┌──────────────┐        │
-│  │  RAGSearchTool   │ │ ReasoningTool│ │  AskUserTool │        │
-│  │  (rag_search)    │ │ (reasoning)  │ │  (ask_user)  │        │
-│  └────────┬─────────┘ └──────┬───────┘ └──────────────┘        │
-└───────────┼──────────────────┼──────────────────────────────────┘
-            │                  │
-            ▼                  ▼
-┌─────────────────────┐  ┌─────────────────────┐
-│     Qdrant          │  │    Gemini API       │
-│  (ベクトルDB)       │  │    (LLM)            │
-└─────────────────────┘  └─────────────────────┘
+```mermaid
+flowchart TB
+    subgraph CLIENT["クライアント層"]
+        EXECUTOR[Executor]
+        API[API Endpoints]
+        CLI[CLI Tools]
+    end
+
+    subgraph MODULE["tools.py"]
+        REGISTRY[ToolRegistry]
+        RAG[RAGSearchTool]
+        WEB[WebSearchTool]
+        REASON[ReasoningTool]
+        ASKUSER[AskUserTool]
+    end
+
+    subgraph EXTERNAL["外部サービス層"]
+        QDRANT[(Qdrant Vector DB)]
+        GEMINI[Gemini API]
+        SERPAPI[SerpAPI]
+        DDG[DuckDuckGo]
+        GCSE[Google CSE]
+    end
+
+    EXECUTOR --> REGISTRY
+    API --> REGISTRY
+    CLI --> REGISTRY
+    REGISTRY --> RAG
+    REGISTRY --> WEB
+    REGISTRY --> REASON
+    REGISTRY --> ASKUSER
+    RAG --> QDRANT
+    REASON --> GEMINI
+    WEB --> SERPAPI
+    WEB --> DDG
+    WEB --> GCSE
 ```
 
 ### 1.2 データフロー
@@ -120,6 +145,12 @@
 2. RAGSearchTool がコレクション候補を決定
 3. 各コレクションを順次検索（フォールバック付き）
 4. 検索結果を `ToolResult` として返却
+
+**Web検索フロー**:
+1. Executor が `ToolRegistry.execute("web_search", query=...)` を呼び出し
+2. WebSearchTool が設定された検索バックエンド（SerpAPI/DDG/CSE）を使用
+3. 検索結果をRAG互換フォーマットに変換
+4. `ToolResult` として返却
 
 **推論フロー**:
 1. Executor が `ToolRegistry.execute("reasoning", query=..., sources=...)` を呼び出し
@@ -133,47 +164,44 @@
 
 ### 2.1 内部モジュール構成
 
-```
-tools.py
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```mermaid
+flowchart TB
+    subgraph DATACLASS["データクラス"]
+        TR[ToolResult]
+    end
 
-[データクラス]
-  └── ToolResult                - ツール実行結果
+    subgraph ABSTRACT["抽象基底クラス"]
+        BT[BaseTool]
+    end
 
-[抽象基底クラス]
-  └── BaseTool                  - ツールの共通インターフェース
-        ├── name: str
-        ├── description: str
-        └── execute(**kwargs) → ToolResult [abstract]
+    subgraph TOOLS["具象ツールクラス"]
+        RAG_CLS["RAGSearchTool"]
+        WEB_CLS["WebSearchTool"]
+        REASON_CLS["ReasoningTool"]
+        ASK_CLS["AskUserTool"]
+    end
 
-[具象ツールクラス]
-  ├── RAGSearchTool             - RAG検索ツール
-  │     ├── __init__(config, qdrant_url)
-  │     ├── client (property)
-  │     ├── execute(query, collection, limit, score_threshold)
-  │     ├── _get_all_collections_dynamic()
-  │     └── _calculate_confidence_factors(scores)
-  │
-  ├── ReasoningTool             - LLM推論ツール
-  │     ├── __init__(config, model_name)
-  │     ├── execute(query, context, sources)
-  │     └── _build_prompt(query, context, sources)
-  │
-  └── AskUserTool               - ユーザー質問ツール
-        ├── FUNCTION_DECLARATION (class attr)
-        └── execute(question, reason, urgency, options)
+    subgraph REGISTRY_GRP["レジストリ"]
+        REG["ToolRegistry"]
+    end
 
-[レジストリ]
-  └── ToolRegistry              - ツール管理
-        ├── __init__(config)
-        ├── _register_default_tools()
-        ├── register(tool)
-        ├── get(name)
-        ├── list_tools()
-        └── execute(name, **kwargs)
+    subgraph FACTORY["ファクトリ関数"]
+        CREATE["create_tool_registry()"]
+    end
 
-[ファクトリ関数]
-  └── create_tool_registry(config) → ToolRegistry
+    BT --> RAG_CLS
+    BT --> WEB_CLS
+    BT --> REASON_CLS
+    BT --> ASK_CLS
+    CREATE --> REG
+    REG --> RAG_CLS
+    REG --> WEB_CLS
+    REG --> REASON_CLS
+    REG --> ASK_CLS
+    RAG_CLS --> TR
+    WEB_CLS --> TR
+    REASON_CLS --> TR
+    ASK_CLS --> TR
 ```
 
 ### 2.2 外部依存関係
@@ -182,6 +210,8 @@ tools.py
 |-----------|-----------|------|
 | `qdrant_client` | - | Qdrantベクトルデータベースクライアント |
 | `google-genai` | - | Gemini API クライアント |
+| `duckduckgo_search` | - | DuckDuckGo検索（WebSearchTool） |
+| `requests` | - | SerpAPI / Google CSE HTTP通信（WebSearchTool） |
 | `dataclasses` | 標準 | データクラス定義 |
 | `abc` | 標準 | 抽象基底クラス |
 | `typing` | 標準 | 型ヒント |
@@ -208,10 +238,14 @@ tools.py
 |---------|------|
 | `config.qdrant.url` | Qdrant接続URL（デフォルト: http://localhost:6333） |
 | `config.qdrant.search_priority` | コレクション検索優先順位リスト |
-| `config.llm.model` | 使用するLLMモデル（デフォルト: gemini-2.5-flash） |
+| `config.llm.model` | 使用するLLMモデル（デフォルト: gemini-3-flash-preview） |
 | `config.llm.temperature` | LLM生成時の温度 |
 | `config.llm.max_tokens` | 最大出力トークン数 |
 | `config.tools.enabled` | 有効なツールリスト |
+| `config.web_search.backend` | Web検索バックエンド（serpapi/duckduckgo/google_cse） |
+| `config.web_search.num_results` | Web検索取得件数 |
+| `config.web_search.language` | Web検索言語 |
+| `config.web_search.timeout` | Web検索タイムアウト秒数 |
 
 ---
 
@@ -247,6 +281,18 @@ tools.py
 | `client` (property) | Qdrantクライアント取得（遅延初期化） |
 | `execute(query, collection, limit, score_threshold)` | RAG検索実行 |
 | `_get_all_collections_dynamic()` | 動的コレクション一覧取得 |
+| `_calculate_confidence_factors(scores)` | 信頼度要素計算 |
+
+#### WebSearchTool
+
+| メソッド | 概要 |
+|---------|------|
+| `__init__(config)` | コンストラクタ（バックエンド設定読み込み） |
+| `execute(query, num_results, language)` | Web検索実行（RAG互換形式） |
+| `_search_serpapi(query, num_results, language)` | SerpAPI検索バックエンド（リトライ1回付き） |
+| `_search_ddg(query, num_results, language)` | DuckDuckGo検索バックエンド |
+| `_search_google(query, num_results, language)` | Google CSE検索バックエンド |
+| `_parse_to_rag_format(raw_results, num_results)` | 検索結果をRAG互換フォーマットに変換 |
 | `_calculate_confidence_factors(scores)` | 信頼度要素計算 |
 
 #### ReasoningTool
@@ -314,6 +360,7 @@ class ToolResult:
 | ツール | output型 | 内容 |
 |--------|----------|------|
 | `RAGSearchTool` | List[Dict] | 検索結果のリスト |
+| `WebSearchTool` | List[Dict] | RAG互換形式のWeb検索結果リスト |
 | `ReasoningTool` | str | 生成された回答文 |
 | `AskUserTool` | Dict | 質問情報（question, reason, urgency, options, awaiting_response） |
 
@@ -335,6 +382,23 @@ ToolResult(
         "used_collection": "wikipedia_ja"
     },
     execution_time_ms=150
+)
+
+# Web検索成功時
+ToolResult(
+    success=True,
+    output=[
+        {"score": 1.0, "payload": {"question": "", "answer": "snippet...", "content": "", "source": "https://...", "title": "Page Title"}, "collection": "web_search"},
+        {"score": 0.9, "payload": {...}, "collection": "web_search"}
+    ],
+    confidence_factors={
+        "result_count": 5,
+        "avg_score": 0.8,
+        "top_score": 1.0,
+        "score_spread": 0.5,
+        "search_engine": "serpapi"
+    },
+    execution_time_ms=2500
 )
 
 # 推論成功時
@@ -465,17 +529,6 @@ def execute(
 | **Process** | 1. 検索対象コレクション候補を決定<br>2. 各コレクションを順次検索<br>3. 結果が見つかったら採用してループ終了<br>4. Dynamic Thresholding（Top1が0.98以上なら他を除外）<br>5. confidence_factorsを計算 |
 | **Output** | `ToolResult`: 検索結果 |
 
-**検索フロー**:
-
-```
-1. collection指定あり → そのコレクションを最初に検索
-2. collection指定なし or 結果なし → 動的コレクション一覧を取得
-3. 優先順位に従って順次検索
-4. 結果が見つかったらループ終了
-5. Dynamic Thresholding適用
-6. ToolResultを返却
-```
-
 **Dynamic Thresholding**:
 
 | 条件 | 動作 |
@@ -549,10 +602,6 @@ def _get_all_collections_dynamic(self) -> List[str]
 | **Input** | なし |
 | **Process** | 1. Qdrantから全コレクション取得<br>2. 設定の優先順位リストでソート<br>3. 優先順位リストにないものを後ろに追加 |
 | **Output** | `List[str]`: ソートされたコレクション名リスト |
-
-**ソート順序**:
-1. `config.qdrant.search_priority` にあるコレクション（順序維持）
-2. それ以外のコレクション
 
 **戻り値例**:
 ```python
@@ -674,17 +723,13 @@ ToolResult(
 ```python
 # 使用例
 tool = ReasoningTool()
-
-# RAG検索結果を使用
 sources = [
     {"score": 0.92, "payload": {"question": "...", "answer": "..."}}
 ]
-
 result = tool.execute(
     query="東京の人口を教えてください",
     sources=sources
 )
-
 print(result.output)
 ```
 
@@ -717,21 +762,13 @@ def _build_prompt(
 
 **プロンプト構造**:
 
-```
-1. システム指示
-   - ハイブリッド・ナレッジ・エージェントとしての役割
-2. 【参照情報】
-   - 各ソースの情報（スコア、コレクション、Q&A、出典）
-3. 【補足コンテキスト】（任意）
-   - 他ステップの結果など
-4. 【ユーザーの質問】
-5. 【回答の構成ルール】
-   - 正確性と誠実さ
-   - 判明した事実を優先
-   - 出典の明示
-   - 丁寧な日本語
-   - 捏造禁止
-```
+| 順序 | セクション | 内容 |
+|:---:|----------|------|
+| 1 | システム指示 | ハイブリッド・ナレッジ・エージェントとしての役割 |
+| 2 | 【参照情報】 | 各ソースの情報（スコア、コレクション、Q&A、出典） |
+| 3 | 【補足コンテキスト】 | 他ステップの結果など（任意） |
+| 4 | 【ユーザーの質問】 | 元のクエリ |
+| 5 | 【回答の構成ルール】 | 正確性、出典明示、捏造禁止 等 |
 
 ---
 
@@ -829,13 +866,331 @@ result = tool.execute(
     urgency="blocking",
     options=["2023年", "2024年", "最新"]
 )
-
-# Executorが実際のUI連携を行う
 ```
 
 ---
 
-### 4.6 ToolRegistry クラス
+### 4.6 WebSearchTool クラス
+
+Web検索で最新情報を取得するツール。SerpAPI / DuckDuckGo / Google CSE の3つの検索バックエンドに対応し、検索結果をRAG検索互換のフォーマットで返却します。
+
+#### コンストラクタ: `__init__`
+
+**概要**: WebSearchToolを初期化し、設定からバックエンド・件数・言語・タイムアウトを読み込みます。
+
+```python
+def __init__(self, config: Optional[GraceConfig] = None)
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `config` | Optional[GraceConfig] | None | GRACE設定 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `config: Optional[GraceConfig]` |
+| **Process** | 1. 設定を取得<br>2. `config.web_search` から `backend`, `num_results`, `language`, `timeout` を設定 |
+| **Output** | WebSearchToolインスタンス |
+
+**初期化される属性**:
+
+| 属性 | 型 | ソース | 説明 |
+|------|------|--------|------|
+| `backend` | str | `config.web_search.backend` | 検索バックエンド名 |
+| `num_results` | int | `config.web_search.num_results` | デフォルト取得件数 |
+| `language` | str | `config.web_search.language` | デフォルト検索言語 |
+| `timeout` | int | `config.web_search.timeout` | HTTPタイムアウト秒数 |
+
+---
+
+#### メソッド: `execute`
+
+**概要**: Web検索を実行し、RAG検索互換フォーマットで結果を返却します。
+
+```python
+def execute(
+    self,
+    query: str,
+    num_results: Optional[int] = None,
+    language: Optional[str] = None,
+    **kwargs
+) -> ToolResult
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `query` | str | - | 検索クエリ |
+| `num_results` | Optional[int] | None | 取得件数（デフォルト: configの値） |
+| `language` | Optional[str] | None | 検索言語（デフォルト: configの値） |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `query: str`, `num_results: Optional[int]`, `language: Optional[str]` |
+| **Process** | 1. パラメータのデフォルト値を適用<br>2. `backend` に応じた検索メソッドを呼び出し<br>3. `_parse_to_rag_format()` でRAG互換形式に変換<br>4. confidence_factorsを計算 |
+| **Output** | `ToolResult`: RAG互換形式の検索結果 |
+
+**バックエンド分岐**:
+
+| backend値 | 呼び出しメソッド | 説明 |
+|-----------|----------------|------|
+| `"serpapi"` | `_search_serpapi()` | SerpAPI経由のGoogle検索（リトライ付き） |
+| `"duckduckgo"` | `_search_ddg()` | DuckDuckGo検索 |
+| `"google_cse"` | `_search_google()` | Google Custom Search Engine |
+
+**confidence_factors**:
+
+| キー | 型 | 説明 |
+|-----|------|------|
+| `result_count` | int | 検索結果数 |
+| `avg_score` | float | 平均スコア |
+| `top_score` | float | 最高スコア |
+| `score_spread` | float | スコア幅（max - min） |
+| `search_engine` | str | 使用した検索エンジン名 |
+
+**戻り値例**:
+```python
+# 成功時
+ToolResult(
+    success=True,
+    output=[
+        {
+            "score": 1.0,
+            "payload": {
+                "question": "",
+                "answer": "東京都の人口は約1400万人で...",
+                "content": "",
+                "source": "https://www.example.com/tokyo-population",
+                "title": "東京都の人口統計"
+            },
+            "collection": "web_search"
+        },
+        {
+            "score": 0.9,
+            "payload": {
+                "question": "",
+                "answer": "総務省統計局によると...",
+                "content": "",
+                "source": "https://www.stat.go.jp/...",
+                "title": "人口推計"
+            },
+            "collection": "web_search"
+        }
+    ],
+    confidence_factors={
+        "result_count": 5,
+        "avg_score": 0.8,
+        "top_score": 1.0,
+        "score_spread": 0.5,
+        "search_engine": "serpapi"
+    },
+    execution_time_ms=2500
+)
+
+# 結果なし
+ToolResult(
+    success=False,
+    output=[],
+    error="Web検索結果が見つかりませんでした: 'very specific query'",
+    confidence_factors={"result_count": 0, "search_engine": "serpapi"},
+    execution_time_ms=1200
+)
+
+# エラー時
+ToolResult(
+    success=False,
+    output=None,
+    error="Web検索エラー (serpapi): ReadTimeout",
+    execution_time_ms=30000
+)
+```
+
+```python
+# 使用例
+tool = WebSearchTool()
+result = tool.execute(
+    query="2025年 東京 人口 最新",
+    num_results=5,
+    language="ja"
+)
+
+if result.success:
+    for item in result.output:
+        print(f"[{item['score']:.2f}] {item['payload']['title']}")
+        print(f"  URL: {item['payload']['source']}")
+        print(f"  概要: {item['payload']['answer'][:80]}...")
+```
+
+---
+
+#### メソッド: `_search_serpapi`
+
+**概要**: SerpAPI検索バックエンド。リトライ1回付きでタイムアウト耐性を確保。
+
+```python
+def _search_serpapi(self, query: str, num_results: int, language: str) -> list
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `query` | str | - | 検索クエリ |
+| `num_results` | int | - | 取得件数 |
+| `language` | str | - | 検索言語 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `query: str`, `num_results: int`, `language: str` |
+| **Process** | 1. 環境変数 `SERPAPI_KEY` またはconfig設定からAPIキーを取得<br>2. `hl`（言語）, `gl`（国）パラメータを設定<br>3. `serpapi.com/search.json` にGETリクエスト送信<br>4. ReadTimeout時は最大1回リトライ（待機: 2×(attempt+1)秒） |
+| **Output** | `list`: SerpAPI `organic_results` リスト |
+
+**リトライ仕様**:
+
+| 項目 | 値 |
+|------|-----|
+| 最大試行回数 | 2（初回 + リトライ1回） |
+| リトライ待機 | 2 × (attempt + 1) 秒 |
+| リトライ対象 | `requests.exceptions.ReadTimeout` のみ |
+
+> 📝 **注意**: APIキー未設定時は `ValueError` を送出します。環境変数 `SERPAPI_KEY` の設定を推奨。
+
+---
+
+#### メソッド: `_search_ddg`
+
+**概要**: DuckDuckGo検索バックエンド。
+
+```python
+def _search_ddg(self, query: str, num_results: int, language: str) -> list
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `query` | str | - | 検索クエリ |
+| `num_results` | int | - | 取得件数 |
+| `language` | str | - | 検索言語 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `query: str`, `num_results: int`, `language: str` |
+| **Process** | 1. 言語からregionを決定（"ja" → "jp-jp", それ以外 → "wt-wt"）<br>2. `DDGS().text()` で検索実行 |
+| **Output** | `list`: DDG検索結果リスト（各要素に `title`, `href`, `body`） |
+
+---
+
+#### メソッド: `_search_google`
+
+**概要**: Google Custom Search Engine検索バックエンド。
+
+```python
+def _search_google(self, query: str, num_results: int, language: str) -> list
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `query` | str | - | 検索クエリ |
+| `num_results` | int | - | 取得件数 |
+| `language` | str | - | 検索言語 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `query: str`, `num_results: int`, `language: str` |
+| **Process** | 1. 環境変数またはconfigから `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ENGINE_ID` を取得<br>2. Google CSE REST API にGETリクエスト送信 |
+| **Output** | `list`: Google CSE `items` リスト（各要素に `title`, `link`, `snippet`） |
+
+> ⚠️ **非推奨**: Google CSEは新規受付停止のため、`serpapi` または `duckduckgo` の使用を推奨します。
+
+---
+
+#### メソッド: `_parse_to_rag_format`
+
+**概要**: 各検索バックエンドの結果をRAG検索互換のフォーマットに変換します。
+
+```python
+def _parse_to_rag_format(self, raw_results: list, num_results: int) -> list
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `raw_results` | list | - | 各バックエンドの生の検索結果 |
+| `num_results` | int | - | 取得件数（スコア正規化用） |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `raw_results: list`, `num_results: int` |
+| **Process** | 1. 検索順位ベースの正規化スコアを計算: `1.0 - (i / max(num_results, 1)) * 0.5`<br>2. バックエンド別のフィールドマッピング |
+| **Output** | `list`: RAG互換形式のリスト |
+
+**スコア正規化**:
+
+| 順位 | スコア（num_results=5の場合） |
+|------|-----|
+| 1位 | 1.00 |
+| 2位 | 0.90 |
+| 3位 | 0.80 |
+| 4位 | 0.70 |
+| 5位 | 0.60 |
+
+**バックエンド別フィールドマッピング**:
+
+| RAGフィールド | DuckDuckGo | SerpAPI / Google CSE |
+|-------------|------------|---------------------|
+| `payload.answer` | `body` | `snippet` |
+| `payload.source` | `href` | `link` |
+| `payload.title` | `title` | `title` |
+| `collection` | `"web_search"` | `"web_search"` |
+
+**戻り値例**:
+```python
+[
+    {
+        "score": 1.0,
+        "payload": {
+            "question": "",
+            "answer": "東京都の人口は...",
+            "content": "",
+            "source": "https://www.example.com/...",
+            "title": "東京の人口統計"
+        },
+        "collection": "web_search"
+    }
+]
+```
+
+---
+
+#### メソッド: `_calculate_confidence_factors`
+
+**概要**: Web検索結果のConfidence統計情報を算出します。
+
+```python
+def _calculate_confidence_factors(self, scores: list) -> dict
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `scores` | list | - | スコアリスト |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `scores: list` |
+| **Process** | result_count, avg_score, top_score, score_spreadを計算 |
+| **Output** | `dict`: 統計情報 |
+
+**戻り値例**:
+```python
+{
+    "result_count": 5,
+    "avg_score": 0.8,
+    "top_score": 1.0,
+    "score_spread": 0.5,
+    "search_engine": "serpapi"
+}
+```
+
+> 📝 **注意**: RAGSearchToolの `_calculate_confidence_factors` とはキー構成が異なります（`score_variance` → `score_spread`、`search_engine` の有無）。
+
+---
+
+### 4.7 ToolRegistry クラス
 
 ツールの登録・取得・実行を一元管理するレジストリ。
 
@@ -878,6 +1233,7 @@ def _register_default_tools(self)
 | 設定値 | ツールクラス |
 |--------|-------------|
 | `"rag_search"` | RAGSearchTool |
+| `"web_search"` | WebSearchTool |
 | `"reasoning"` | ReasoningTool |
 | `"ask_user"` | AskUserTool |
 
@@ -952,7 +1308,7 @@ def list_tools(self) -> List[str]
 
 **戻り値例**:
 ```python
-["rag_search", "reasoning", "ask_user"]
+["rag_search", "web_search", "reasoning", "ask_user"]
 ```
 
 ---
@@ -992,6 +1348,9 @@ registry = ToolRegistry()
 # RAG検索
 result = registry.execute("rag_search", query="東京の人口")
 
+# Web検索
+result = registry.execute("web_search", query="東京の人口 最新")
+
 # 推論
 result = registry.execute("reasoning", query="...", sources=[...])
 
@@ -1001,7 +1360,7 @@ result = registry.execute("ask_user", question="...", reason="...", urgency="blo
 
 ---
 
-### 4.7 ファクトリ関数
+### 4.8 ファクトリ関数
 
 #### `create_tool_registry`
 
@@ -1027,7 +1386,7 @@ from grace.tools import create_tool_registry
 
 registry = create_tool_registry()
 print(registry.list_tools())
-# 出力: ['rag_search', 'reasoning', 'ask_user']
+# 出力: ['rag_search', 'web_search', 'reasoning', 'ask_user']
 ```
 
 ---
@@ -1058,198 +1417,70 @@ def search_collection(
 
 | 項目 | 内容 |
 |------|------|
-| **Input** | `client`: QdrantClientインスタンス |
-| | `collection_name`: 検索対象コレクション名 |
-| | `query_vector`: クエリの埋め込みベクトル（Dense） |
-| | `sparse_vector`: スパースベクトル（Hybrid Search用、省略可） |
-| | `limit`: 取得件数上限（デフォルト: 5） |
-| | `hybrid_alpha`: ハイブリッド検索のアルファ値（未使用） |
-| **Process** | 1. コレクション情報を取得し、名前付きベクトルかどうかを判定 |
-| | 2. sparse_vectorがある場合、Hybrid Search（RRF Fusion）を試行 |
-| | 3. Sparse Vectorエラー時は自動的にDense Vectorのみで再試行 |
-| | 4. Dense Searchを実行（名前付きベクトル対応） |
-| | 5. 最終フォールバック: 最もシンプルなquery_points形式 |
+| **Input** | `client`: QdrantClientインスタンス, `collection_name`: コレクション名, `query_vector`: Dense埋め込みベクトル, `sparse_vector`: Sparseベクトル（省略可）, `limit`: 件数上限, `hybrid_alpha`: ハイブリッド検索αスコア |
+| **Process** | 1. コレクション情報を取得し名前付きベクトルかどうかを判定<br>2. sparse_vectorがある場合、Hybrid Search（RRF Fusion）を試行<br>3. Sparse Vectorエラー時はDense Vectorのみで再試行<br>4. 最終フォールバック: query_points形式 |
 | **Output** | `List[Dict[str, Any]]`: 検索結果リスト |
-
-**Output形式**:
-```python
-[
-    {
-        "score": 0.92,       # 類似度スコア
-        "id": 12345,         # ポイントID
-        "payload": {         # メタデータ
-            "question": "...",
-            "answer": "...",
-            "source": "..."
-        }
-    },
-    ...
-]
-```
-
-**Hybrid Search フロー**:
-```
-┌─────────────────────────────────────────────────────────┐
-│ Hybrid Search (RRF Fusion)                              │
-│                                                         │
-│  ┌─────────────────┐    ┌─────────────────┐            │
-│  │ Dense Prefetch  │    │ Sparse Prefetch │            │
-│  │ (query_vector)  │    │ (text-sparse)   │            │
-│  │   limit×2       │    │   limit×2       │            │
-│  └────────┬────────┘    └────────┬────────┘            │
-│           │                      │                      │
-│           └──────────┬───────────┘                      │
-│                      ▼                                  │
-│              ┌─────────────┐                            │
-│              │ RRF Fusion  │                            │
-│              │  (Ranking)  │                            │
-│              └──────┬──────┘                            │
-│                     ▼                                   │
-│              ┌─────────────┐                            │
-│              │   Results   │                            │
-│              │   (limit)   │                            │
-│              └─────────────┘                            │
-└─────────────────────────────────────────────────────────┘
-```
 
 #### 5.1.2 embed_query_unified()
 
-**概要**: クエリテキストを埋め込みベクトルに変換（プロバイダー抽象化版）。OpenAIとGeminiの両方に対応。
+**概要**: クエリテキストを埋め込みベクトルに変換（プロバイダー抽象化版）
 
 ```python
-def embed_query_unified(
-    text: str,
-    provider: str = None
-) -> List[float]
+def embed_query_unified(text: str, provider: str = None) -> List[float]
 ```
 
 | 項目 | 内容 |
 |------|------|
-| **Input** | `text`: 埋め込むテキスト |
-| | `provider`: "gemini" or "openai"（Noneの場合は環境変数デフォルト） |
-| **Process** | 1. プロバイダーを決定（デフォルト: 環境変数 `EMBEDDING_PROVIDER`） |
-| | 2. `create_embedding_client(provider)` でクライアント作成 |
-| | 3. `embed_text(text, task_type="retrieval_query")` を実行 |
+| **Input** | `text`: 埋め込むテキスト, `provider`: "gemini" or "openai" |
+| **Process** | プロバイダーを決定→クライアント作成→embed_text実行 |
 | **Output** | `List[float]`: 埋め込みベクトル |
-
-**プロバイダー別次元数**:
-
-| プロバイダー | モデル | 次元数 |
-|------------|--------|-------|
-| `gemini` | gemini-embedding-001 | 3072 |
-| `openai` | text-embedding-3-small | 1536 |
-| `fastembed` | BAAI/bge-small-en-v1.5 | 384 |
 
 #### 5.1.3 embed_sparse_query_unified()
 
-**概要**: クエリテキストをSparse Embeddingに変換（キーワードベクトル）
+**概要**: クエリテキストをSparse Embeddingに変換
 
 ```python
-def embed_sparse_query_unified(
-    text: str,
-    model_name: str = None
-) -> models.SparseVector
+def embed_sparse_query_unified(text: str, model_name: str = None) -> models.SparseVector
 ```
 
 | 項目 | 内容 |
 |------|------|
-| **Input** | `text`: クエリテキスト |
-| | `model_name`: 使用するSparseモデル（省略可） |
-| **Process** | 1. `get_sparse_embedding_client(model_name)` でクライアント取得 |
-| | 2. `embed_text(text)` でスパースベクトル生成 |
-| | 3. Qdrant用 `SparseVector` に変換 |
+| **Input** | `text`: クエリテキスト, `model_name`: Sparseモデル名 |
+| **Process** | Sparseクライアント取得→スパースベクトル生成→SparseVector変換 |
 | **Output** | `models.SparseVector`: スパースベクトル |
-
-**SparseVector構造**:
-```python
-models.SparseVector(
-    indices=[1, 5, 23, 156, ...],  # 非ゼロ要素のインデックス
-    values=[0.8, 0.5, 0.3, 0.2, ...]  # 対応する値
-)
-```
 
 ---
 
 ### 5.2 services.qdrant_service
 
 **ファイル**: `services/qdrant_service.py`（1066行）
-**概要**: Qdrantベクトルデータベースの操作を担当するサービス層
 
 #### 5.2.1 get_collection_embedding_params()
 
-**概要**: コレクションの設定（ベクトル次元数）から埋め込みモデル設定を推論
+**概要**: コレクションの設定からベクトル次元数に基づきモデル設定を推論
 
 ```python
 def get_collection_embedding_params(
-    client: QdrantClient,
-    collection_name: str
+    client: QdrantClient, collection_name: str
 ) -> Dict[str, Any]
 ```
 
 | 項目 | 内容 |
 |------|------|
-| **Input** | `client`: QdrantClientインスタンス |
-| | `collection_name`: コレクション名 |
-| **Process** | 1. `client.get_collection()` でコレクション情報取得 |
-| | 2. `vectors_config` からベクトルサイズを取得 |
-| | 3. マルチベクトルの場合は最初のものを採用 |
-| | 4. サイズに基づいてモデルを推論 |
-| **Output** | `Dict[str, Any]`: モデル設定 `{"model": str, "dims": int}` |
-
-**次元数→モデルマッピング**:
-
-| 次元数 | 推論モデル |
-|-------|-----------|
-| 1536 | text-embedding-3-small |
-| 3072 | gemini-embedding-001 |
-| 768 | gemini-embedding-001 |
-| その他 | unknown-embedding-model |
-| 取得失敗 | gemini-embedding-001（デフォルト） |
+| **Input** | `client`: QdrantClient, `collection_name`: コレクション名 |
+| **Process** | コレクション情報取得→ベクトルサイズ取得→モデル推論 |
+| **Output** | `Dict[str, Any]`: `{"model": str, "dims": int}` |
 
 ---
 
 ### 5.3 agent_tools
 
 **ファイル**: `agent_tools.py`（645行）
-**概要**: Legacy Agent の検索ロジックを提供。RAGSearchTool が内部で使用。
+**概要**: Legacy Agent の検索ロジック。RAGSearchTool が内部で使用。
 
-#### 5.3.1 カスタム例外クラス
+#### 5.3.1 search_rag_knowledge_base_structured()
 
-```python
-class RAGToolError(Exception):
-    """RAGツール固有のエラー基底クラス"""
-
-class QdrantConnectionError(RAGToolError):
-    """Qdrant接続エラー"""
-
-class CollectionNotFoundError(RAGToolError):
-    """コレクション未存在エラー"""
-
-class EmbeddingError(RAGToolError):
-    """埋め込み生成エラー"""
-```
-
-#### 5.3.2 SearchMetrics データクラス
-
-**概要**: 検索結果のメトリクス（評価用）
-
-```python
-@dataclass
-class SearchMetrics:
-    query: str                              # 検索クエリ
-    collection_name: str                    # コレクション名
-    latency_ms: float                       # 検索遅延（ミリ秒）
-    total_results: int                      # 総結果数
-    filtered_results: int                   # フィルタ後結果数
-    top_score: float                        # 最高スコア
-    scores: List[float] = field(default_factory=list)  # 全スコアリスト
-    error: Optional[str] = None             # エラーメッセージ
-    timestamp: str = field(default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S"))
-```
-
-#### 5.3.3 search_rag_knowledge_base_structured()
-
-**概要**: Qdrantデータベースから専門的な知識を検索（構造化データ版）。RAGSearchTool が内部で使用する主要関数。
+**概要**: Qdrantから知識を検索（構造化データ版）
 
 ```python
 def search_rag_knowledge_base_structured(
@@ -1261,109 +1492,17 @@ def search_rag_knowledge_base_structured(
 
 | 項目 | 内容 |
 |------|------|
-| **Input** | `query`: 検索クエリ |
-| | `collection_name`: 検索対象コレクション（省略時はデフォルト） |
-| | `use_hybrid_search`: ハイブリッド検索を使用するか（デフォルト: True） |
-| **Process** | 1. Qdrantヘルスチェック |
-| | 2. コレクション存在確認 |
-| | 3. `embed_query()` でクエリベクトル生成 |
-| | 4. `use_hybrid_search` が True なら `embed_sparse_query_unified()` でスパースベクトル生成 |
-| | 5. `search_collection()` で検索実行（候補20件） |
-| | 6. `rerank_results()` でCohere Re-ranking（オプション） |
-| | 7. メトリクス記録 |
-| **Output** | 成功: `List[Dict[str, Any]]` 検索結果リスト |
-| | 失敗: `str` エラーメッセージ |
-
-**検索フロー図**:
-```
-┌────────────────────────────────────────────────────────────┐
-│ search_rag_knowledge_base_structured                        │
-├────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────────┐                                           │
-│  │ Health Check│──No──► QdrantConnectionError              │
-│  └──────┬──────┘                                           │
-│         │ Yes                                               │
-│         ▼                                                   │
-│  ┌─────────────────┐                                       │
-│  │Collection Exists?│──No──► CollectionNotFoundError       │
-│  └──────┬──────────┘                                       │
-│         │ Yes                                               │
-│         ▼                                                   │
-│  ┌─────────────────┐                                       │
-│  │ embed_query()   │──► query_vector                       │
-│  └──────┬──────────┘                                       │
-│         │                                                   │
-│         ▼                                                   │
-│  ┌─────────────────────────┐                               │
-│  │ use_hybrid_search?      │                               │
-│  │   True → sparse_vector  │                               │
-│  │   False → None          │                               │
-│  └──────┬──────────────────┘                               │
-│         │                                                   │
-│         ▼                                                   │
-│  ┌─────────────────────────┐                               │
-│  │ search_collection()     │──► candidates (20件)          │
-│  └──────┬──────────────────┘                               │
-│         │                                                   │
-│         ▼                                                   │
-│  ┌─────────────────────────┐                               │
-│  │ rerank_results()        │──► reranked_results           │
-│  │ (Cohere Re-ranking)     │    (AgentConfig.RAG_SEARCH_LIMIT件) │
-│  └──────┬──────────────────┘                               │
-│         │                                                   │
-│         ▼                                                   │
-│  ┌─────────────────┐                                       │
-│  │ Return Results  │                                       │
-│  └─────────────────┘                                       │
-│                                                             │
-└────────────────────────────────────────────────────────────┘
-```
+| **Input** | `query`: 検索クエリ, `collection_name`: コレクション名, `use_hybrid_search`: ハイブリッド検索フラグ |
+| **Process** | ヘルスチェック→コレクション確認→ベクトル生成→検索→リランキング |
+| **Output** | 成功: `List[Dict]`, 失敗: `str`（エラーメッセージ） |
 
 **エラーメッセージ形式**:
 
 | パターン | 意味 |
 |---------|------|
-| `[[NO_RAG_RESULT]]` | 検索結果が見つからなかった |
-| `[[NO_RAG_RESULT_LOW_SCORE]]` | スコア閾値未満の結果のみ |
-| `[[RAG_TOOL_ERROR]]` | 検索中にエラー発生 |
-
-#### 5.3.4 rerank_results()
-
-**概要**: 検索結果をCohere Rerank APIで再評価し、スコアを更新してソート
-
-```python
-def rerank_results(
-    query: str,
-    results: List[Dict[str, Any]],
-    top_k: int = 3,
-    threshold: float = 0.5
-) -> List[Dict[str, Any]]
-```
-
-| 項目 | 内容 |
-|------|------|
-| **Input** | `query`: ユーザーの検索クエリ |
-| | `results`: Qdrantからの検索結果リスト |
-| | `top_k`: 最終的に残す件数（デフォルト: 3） |
-| | `threshold`: スコアの足切りライン（デフォルト: 0.5） |
-| **Process** | 1. Cohere APIキーがない場合 → RRFスコアのままソートして返却 |
-| | 2. 各結果から Q&A テキストを作成 |
-| | 3. `cohere.rerank()` でリランキング実行 |
-| | 4. `original_score`, `rerank_score` を記録 |
-| | 5. threshold以上の結果のみ返却 |
-| **Output** | `List[Dict[str, Any]]`: リランク済み結果リスト |
-
-**Re-ranking後のスコア構造**:
-```python
-{
-    "score": 0.902,           # Cohereスコア（互換性用）
-    "original_score": 0.66,   # 元のRRFスコア
-    "rerank_score": 0.902,    # Cohereスコア
-    "payload": {...},
-    "id": ...
-}
-```
+| `[[NO_RAG_RESULT]]` | 検索結果なし |
+| `[[NO_RAG_RESULT_LOW_SCORE]]` | スコア閾値未満 |
+| `[[RAG_TOOL_ERROR]]` | 検索エラー |
 
 ---
 
@@ -1371,10 +1510,6 @@ def rerank_results(
 
 **ファイル**: `regex_mecab.py`（390行）
 **概要**: MeCabと正規表現を統合したキーワード抽出システム
-
-#### 5.4.1 KeywordExtractor クラス
-
-**概要**: MeCabが利用可能な場合は複合名詞抽出を優先し、利用不可の場合は正規表現版に自動フォールバック
 
 ```python
 class KeywordExtractor:
@@ -1385,128 +1520,9 @@ class KeywordExtractor:
 
 | 項目 | 内容 |
 |------|------|
-| **属性** | `prefer_mecab`: MeCabを優先的に使用するか |
-| | `mecab_available`: MeCabの利用可能フラグ |
-| | `stopwords`: ストップワードセット（日本語+英語） |
-| | `important_keywords`: 重要キーワードセット（スコアブースト用） |
-
-**extract() メソッド**:
-
-| 項目 | 内容 |
-|------|------|
-| **Input** | `text`: 分析対象テキスト |
-| | `top_n`: 抽出するキーワード数（デフォルト: 5） |
-| | `use_scoring`: スコアリングを使用するか（デフォルト: True） |
-| **Process** | 1. 言語判定（日本語文字が含まれているか） |
-| | 2. MeCab利用可能 & 日本語 → `_extract_with_mecab()` |
-| | 3. 上記以外 → `_extract_with_regex()` |
+| **Input** | `text`: 分析対象テキスト, `top_n`: 抽出数, `use_scoring`: スコアリング使用 |
+| **Process** | 言語判定→MeCab/正規表現で抽出→スコアリング |
 | **Output** | `List[str]`: キーワードリスト |
-
-**抽出フロー**:
-```
-┌─────────────────────────────────────────────────────────┐
-│ KeywordExtractor.extract(text, top_n)                   │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  ┌─────────────────────────────────────┐                │
-│  │ 言語判定: 日本語文字が含まれるか？  │                │
-│  │ re.search(r'[ぁ-んァ-ヶー一-龠]')  │                │
-│  └──────────────┬──────────────────────┘                │
-│                 │                                        │
-│        ┌───────┴───────┐                                │
-│        │               │                                │
-│        ▼               ▼                                │
-│  ┌──────────┐    ┌──────────┐                          │
-│  │ Japanese │    │ English  │                          │
-│  └────┬─────┘    └────┬─────┘                          │
-│       │               │                                 │
-│       ▼               │                                 │
-│  ┌────────────────┐   │                                │
-│  │ MeCab Available?│  │                                │
-│  └───┬────────┬───┘   │                                │
-│      │Yes     │No     │                                │
-│      ▼        ▼       ▼                                │
-│  ┌────────┐ ┌─────────────────────┐                    │
-│  │ MeCab  │ │ Regex Extraction    │                    │
-│  │複合名詞│ │[ァ-ヴー]{2,}|        │                    │
-│  │ 抽出   │ │[一-龥]{2,}|          │                    │
-│  └────┬───┘ │[A-Za-z]{2,}[A-Za-z0-9]*│                  │
-│       │     └──────────┬──────────┘                    │
-│       │                │                                │
-│       └───────┬────────┘                                │
-│               ▼                                         │
-│  ┌─────────────────────────────────────┐               │
-│  │ Scoring (use_scoring=True)          │               │
-│  │ - 頻度スコア (×0.3)                 │               │
-│  │ - 長さスコア (×0.3)                 │               │
-│  │ - 重要キーワードブースト (+0.5)     │               │
-│  │ - 文字種スコア (カタカナ/英大文字等)│               │
-│  └──────────────┬──────────────────────┘               │
-│                 ▼                                       │
-│  ┌─────────────────────────────────────┐               │
-│  │ Return top_n keywords               │               │
-│  └─────────────────────────────────────┘               │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
-```
-
-**スコアリング詳細**:
-
-| スコア種別 | 計算方法 | 重み |
-|-----------|----------|------|
-| 頻度スコア | `min(freq / 3.0, 1.0)` | ×0.3 |
-| 長さスコア | `min(len(word) / 8.0, 1.0)` | ×0.3 |
-| 重要キーワードブースト | important_keywordsに部分一致 | +0.5 |
-| カタカナ3文字以上 | `^[ァ-ヴー]{3,}$` | +0.2 |
-| 英大文字2文字以上（頭字語） | `^[A-Z]{2,}$` | +0.3 |
-| 英語固有名詞 | `^[A-Z][a-z]+$` | +0.1 |
-| 漢字4文字以上 | `^[一-龥]{4,}$` | +0.2 |
-
-**ストップワード（一部）**:
-```python
-stopwords = {
-    # 日本語
-    'こと', 'もの', 'これ', 'それ', 'ため', 'よう', 'さん',
-    'ます', 'です', 'ある', 'いる', 'する', 'なる', 'できる', ...
-    # 英語
-    'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-    'have', 'has', 'had', 'having', 'do', 'does', 'did', ...
-}
-```
-
-**重要キーワード（スコアブースト用）**:
-```python
-important_keywords = {
-    'AI', 'Artificial Intelligence', 'Machine Learning', 'Deep Learning',
-    'NLP', 'Natural Language Processing', 'Transformer', 'BERT', 'GPT',
-    'CNN', 'Vision', '医療', 'Diagnosis', 'Autonomous Driving',
-    'Ethics', 'Bias', 'Challenges', 'Issues', 'Model', 'Data'
-}
-```
-
-**使用例**:
-```python
-from regex_mecab import KeywordExtractor
-
-extractor = KeywordExtractor(prefer_mecab=True)
-
-# 日本語テキスト
-text_jp = """
-人工知能（AI）は、機械学習と深層学習を基盤として急速に発展しています。
-特に自然言語処理（NLP）の分野では、トランスフォーマーモデルが革命的な成果を上げました。
-"""
-
-keywords = extractor.extract(text_jp, top_n=5)
-# 出力例: ['トランスフォーマー', '自然言語処理', '人工知能', '機械学習', '深層学習']
-
-# 詳細情報付き
-details = extractor.extract_with_details(text_jp, top_n=5)
-# 出力例: {
-#     'MeCab複合名詞': [('自然言語処理', 0.85), ('人工知能', 0.82), ...],
-#     '正規表現': [('トランスフォーマー', 0.78), ...],
-#     '統合版': [('自然言語処理', 0.85), ...]
-# }
-```
 
 ---
 
@@ -1516,41 +1532,71 @@ details = extractor.extract_with_details(text_jp, top_n=5)
 
 RAGSearchToolで使用するQdrant関連の設定。
 
+| キー | デフォルト値 | 説明 |
+|-----|-------------|------|
+| `url` | `"http://localhost:6333"` | Qdrant接続URL |
+| `collection_name` | `"customer_support_faq"` | デフォルトコレクション名 |
+| `search_limit` | `5` | 検索結果の取得件数上限 |
+| `score_threshold` | `0.45` | スコア閾値 |
+| `search_priority` | `["wikipedia_ja", "livedoor", "cc_news", "japanese_text"]` | コレクション検索優先順位 |
+
+### 6.2 WebSearchConfig（Web検索設定）
+
+WebSearchToolで使用するWeb検索関連の設定。
+
 ```python
-class QdrantConfig(BaseModel):
-    url: str = "http://localhost:6333"
-    collection_name: str = "customer_support_faq"
-    search_limit: int = 5
-    score_threshold: float = 0.35
-    search_priority: list = Field(default_factory=lambda: [
-        "wikipedia_ja", "livedoor", "cc_news", "japanese_text"
-    ])
+class WebSearchConfig(BaseModel):
+    backend: str = "serpapi"
+    num_results: int = 5
+    language: str = "ja"
+    timeout: int = 30
+    google_cse_api_key: str = ""
+    google_cse_engine_id: str = ""
+    serpapi_api_key: str = ""
 ```
 
 | キー | デフォルト値 | 説明 |
 |-----|-------------|------|
-| `url` | "http://localhost:6333" | Qdrant接続URL |
-| `collection_name` | "customer_support_faq" | デフォルトコレクション名 |
-| `search_limit` | 5 | 検索結果の取得件数上限 |
-| `score_threshold` | 0.35 | スコア閾値 |
-| `search_priority` | ["wikipedia_ja", ...] | コレクション検索優先順位 |
+| `backend` | `"serpapi"` | 検索バックエンド（`"serpapi"` / `"duckduckgo"` / `"google_cse"`） |
+| `num_results` | `5` | デフォルト取得件数 |
+| `language` | `"ja"` | デフォルト検索言語 |
+| `timeout` | `30` | HTTPタイムアウト秒数 |
+| `google_cse_api_key` | `""` | Google CSE APIキー（環境変数 `GOOGLE_CSE_API_KEY` 推奨） |
+| `google_cse_engine_id` | `""` | Google CSE エンジンID（環境変数 `GOOGLE_CSE_ENGINE_ID` 推奨） |
+| `serpapi_api_key` | `""` | SerpAPI キー（環境変数 `SERPAPI_KEY` 推奨） |
 
-### 6.2 ToolsConfig（ツール設定）
+**grace_config.yml での設定例**:
+```yaml
+web_search:
+  backend: "serpapi"
+  num_results: 5
+  language: "ja"
+  timeout: 30
+```
+
+### 6.3 ToolsConfig（ツール設定）
 
 有効なツールを制御する設定。
 
-```python
-class ToolsConfig(BaseModel):
-    enabled: list = Field(default_factory=lambda: ["rag_search", "reasoning", "ask_user"])
-```
-
 | キー | デフォルト値 | 説明 |
 |-----|-------------|------|
-| `enabled` | ["rag_search", "reasoning", "ask_user"] | 有効なツールリスト |
+| `enabled` | `["rag_search", "web_search", "reasoning", "ask_user"]` | 有効なツールリスト |
 
-### 6.3 ReasoningToolのプロンプトルール
+**grace_config.yml での設定例**:
+```yaml
+tools:
+  enabled:
+    - rag_search
+    - web_search
+    - reasoning
+    - ask_user
+  disabled:
+    - write_file
+    - replace
+    - run_shell_command
+```
 
-回答生成時に適用されるルール。
+### 6.4 ReasoningToolのプロンプトルール
 
 | ルール | 内容 |
 |--------|------|
@@ -1560,7 +1606,7 @@ class ToolsConfig(BaseModel):
 | 丁寧な日本語 | です・ます調で読みやすく構造化 |
 | 捏造禁止 | 事前知識での補完・推測を禁止 |
 
-### 6.4 Dynamic Thresholding
+### 6.5 Dynamic Thresholding
 
 RAG検索結果のノイズ除去ルール。
 
@@ -1583,7 +1629,7 @@ registry = create_tool_registry()
 
 # 2. 登録されているツールを確認
 print(f"利用可能なツール: {registry.list_tools()}")
-# 出力: 利用可能なツール: ['rag_search', 'reasoning', 'ask_user']
+# 出力: 利用可能なツール: ['rag_search', 'web_search', 'reasoning', 'ask_user']
 
 # 3. RAG検索を実行
 search_result = registry.execute(
@@ -1612,10 +1658,7 @@ else:
 ```python
 from grace.tools import RAGSearchTool
 
-# ツールを直接作成
 tool = RAGSearchTool()
-
-# 特定コレクションを指定して検索
 result = tool.execute(
     query="Python の基本文法",
     collection="wikipedia_ja"
@@ -1623,24 +1666,41 @@ result = tool.execute(
 
 if result.success:
     for item in result.output:
-        print(f"スコア: {item['score']:.2f}")
-        print(f"コレクション: {item.get('collection', 'unknown')}")
+        print(f"スコア: {item['score']:.2f}, コレクション: {item.get('collection')}")
         print(f"回答: {item['payload'].get('answer', '')[:100]}...")
-        print("---")
-
-# 信頼度情報を確認
-print(f"信頼度要素: {result.confidence_factors}")
 ```
 
-### 7.3 推論ツールの使用
+### 7.3 Web検索の直接実行
+
+```python
+from grace.tools import WebSearchTool
+
+tool = WebSearchTool()
+
+# SerpAPI（デフォルト）でWeb検索
+result = tool.execute(
+    query="Python 3.12 新機能",
+    num_results=5,
+    language="ja"
+)
+
+if result.success:
+    print(f"検索エンジン: {result.confidence_factors.get('search_engine')}")
+    print(f"検索結果: {result.confidence_factors.get('result_count')}件")
+    for item in result.output:
+        print(f"  [{item['score']:.2f}] {item['payload']['title']}")
+        print(f"    URL: {item['payload']['source']}")
+        print(f"    概要: {item['payload']['answer'][:80]}...")
+else:
+    print(f"検索失敗: {result.error}")
+```
+
+### 7.4 推論ツールの使用
 
 ```python
 from grace.tools import ReasoningTool
 
-# ツールを作成
 tool = ReasoningTool()
-
-# ソース情報を準備（RAG検索結果の形式）
 sources = [
     {
         "score": 0.92,
@@ -1653,30 +1713,22 @@ sources = [
     }
 ]
 
-# 追加コンテキスト（他のステップの結果など）
-context = "前のステップで、ユーザーは2024年のデータを希望していることが判明しました。"
-
-# 推論実行
 result = tool.execute(
     query="東京の人口について詳しく教えてください",
-    context=context,
+    context="ユーザーは2024年のデータを希望",
     sources=sources
 )
 
 if result.success:
     print(f"回答:\n{result.output}")
-    print(f"\nトークン使用量: {result.confidence_factors.get('token_usage')}")
 ```
 
-### 7.4 AskUserToolの使用
+### 7.5 AskUserToolの使用
 
 ```python
 from grace.tools import AskUserTool
 
-# ツールを作成
 tool = AskUserTool()
-
-# 選択肢付きの質問
 result = tool.execute(
     question="どの年度のデータをお探しですか？",
     reason="検索結果に複数年度のデータが含まれているため",
@@ -1684,17 +1736,44 @@ result = tool.execute(
     options=["2022年", "2023年", "2024年", "最新のデータ"]
 )
 
-# 結果を確認
-output = result.output
-print(f"質問: {output['question']}")
-print(f"理由: {output['reason']}")
-print(f"緊急度: {output['urgency']}")
-print(f"選択肢: {output['options']}")
-print(f"回答待ち: {output['awaiting_response']}")
-
 # 実際のUIとの連携はExecutorで行う
-# Executorが output['awaiting_response'] を見て
-# ユーザー入力を待機する
+```
+
+### 7.6 RAG検索 → Web検索フォールバックワークフロー
+
+```python
+from grace.tools import create_tool_registry
+
+registry = create_tool_registry()
+
+query = "2025年の最新技術トレンド"
+
+# 1. まずRAG検索を試行
+rag_result = registry.execute("rag_search", query=query)
+
+if rag_result.success and len(rag_result.output) > 0:
+    sources = rag_result.output
+    print(f"RAG検索で {len(sources)} 件の結果を取得")
+else:
+    # 2. RAG検索で結果が得られなければWeb検索にフォールバック
+    print("RAG検索で結果なし → Web検索にフォールバック")
+    web_result = registry.execute("web_search", query=query)
+    if web_result.success:
+        sources = web_result.output
+        print(f"Web検索で {len(sources)} 件の結果を取得")
+    else:
+        sources = []
+        print(f"Web検索も失敗: {web_result.error}")
+
+# 3. 取得した情報源で推論
+if sources:
+    reasoning_result = registry.execute(
+        "reasoning",
+        query=query,
+        sources=sources
+    )
+    if reasoning_result.success:
+        print(f"\n回答:\n{reasoning_result.output}")
 ```
 
 ---
@@ -1713,6 +1792,7 @@ __all__ = [
 
     # Tools
     "RAGSearchTool",
+    "WebSearchTool",
     "ReasoningTool",
     "AskUserTool",
 
@@ -1730,75 +1810,79 @@ __all__ = [
 |-----------|---------|
 | 1.0 | 初版作成（2025-01-29） |
 | 1.1 | 外部カスタムモジュール IPO詳細を追加（2025-01-29） |
+| 2.0 | WebSearchToolクラスのIPO詳細を追加（2026-02-19）: SerpAPI/DuckDuckGo/Google CSE対応、ToolRegistry登録、WebSearchConfig設定、Mermaidアーキテクチャ図更新、使用例追加 |
 
 ---
 
 ## 付録: 依存関係図
 
-```
-tools.py
-    │
-    ├──► abc
-    │        └── ABC
-    │        └── abstractmethod
-    │
-    ├──► dataclasses
-    │        └── dataclass
-    │        └── field
-    │
-    ├──► typing
-    │        └── Dict, Any, Optional, List
-    │
-    ├──► logging
-    │        └── getLogger
-    │
-    ├──► qdrant_client
-    │        └── QdrantClient
-    │
-    ├──► google.genai
-    │        └── genai.Client
-    │        └── types.GenerateContentConfig
-    │
-    ├──► qdrant_client_wrapper (カスタム)
-    │        └── search_collection
-    │        └── embed_query_unified
-    │        └── embed_sparse_query_unified
-    │
-    ├──► services.qdrant_service (カスタム)
-    │        └── get_collection_embedding_params
-    │
-    ├──► agent_tools (カスタム)
-    │        └── search_rag_knowledge_base_structured
-    │
-    ├──► regex_mecab (カスタム)
-    │        └── KeywordExtractor
-    │
-    └──► .config (内部)
-             └── get_config()
-             └── GraceConfig
+```mermaid
+flowchart LR
+    TOOLS["tools.py"]
+
+    subgraph STD["標準ライブラリ"]
+        ABC_LIB[abc]
+        DC[dataclasses]
+        TYPING[typing]
+        LOG[logging]
+    end
+
+    subgraph EXT["外部ライブラリ"]
+        QC["qdrant_client"]
+        GENAI["google.genai"]
+        DDG_LIB["duckduckgo_search"]
+        REQ["requests"]
+    end
+
+    subgraph CUSTOM["カスタムモジュール"]
+        QCW["qdrant_client_wrapper"]
+        QS["services.qdrant_service"]
+        AT["agent_tools"]
+        RM["regex_mecab"]
+    end
+
+    subgraph INTERNAL["内部モジュール"]
+        CFG["grace.config"]
+    end
+
+    TOOLS --> STD
+    TOOLS --> EXT
+    TOOLS --> CUSTOM
+    TOOLS --> CFG
 ```
 
 ### ツール → 外部サービス連携図
 
-```
-ToolRegistry
-    │
-    ├── RAGSearchTool
-    │       │
-    │       ├── QdrantClient
-    │       │       └── Qdrant Server (localhost:6333)
-    │       │
-    │       └── search_rag_knowledge_base_structured
-    │               └── Legacy Agent検索ロジック
-    │
-    ├── ReasoningTool
-    │       │
-    │       └── genai.Client
-    │               └── Gemini API
-    │
-    └── AskUserTool
-            │
-            └── (UI連携はExecutorが担当)
+```mermaid
+flowchart TB
+    subgraph REG["ToolRegistry"]
+        direction LR
+    end
+
+    subgraph TOOLS_GRP["ツール"]
+        RAG_T["RAGSearchTool"]
+        WEB_T["WebSearchTool"]
+        REASON_T["ReasoningTool"]
+        ASK_T["AskUserTool"]
+    end
+
+    subgraph SERVICES["外部サービス"]
+        QDRANT_SVC[(Qdrant Server)]
+        GEMINI_SVC[Gemini API]
+        SERPAPI_SVC[SerpAPI]
+        DDG_SVC[DuckDuckGo]
+        GCSE_SVC[Google CSE]
+    end
+
+    REG --> RAG_T
+    REG --> WEB_T
+    REG --> REASON_T
+    REG --> ASK_T
+    RAG_T --> QDRANT_SVC
+    WEB_T --> SERPAPI_SVC
+    WEB_T --> DDG_SVC
+    WEB_T --> GCSE_SVC
+    REASON_T --> GEMINI_SVC
 ```
 
 ---
@@ -1816,26 +1900,25 @@ ToolRegistry
 
 ## 解決済み・残存課題
 
-### Version 1.1 で解決した項目
+### Version 2.0 で解決した項目
 
-ドキュメント作成にあたり、以下の情報が **Version 1.1 で追加されました**：
-
-1. ✅ **外部カスタムモジュールの詳細**:
-   - `qdrant_client_wrapper` の `search_collection`, `embed_query_unified`, `embed_sparse_query_unified` の仕様 → [セクション 5.1](#51-qdrant_client_wrapper)
-   - `services.qdrant_service` の `get_collection_embedding_params` の仕様 → [セクション 5.2](#52-servicesqdrant_service)
-   - `agent_tools` の `search_rag_knowledge_base_structured` の詳細な入出力仕様 → [セクション 5.3](#53-agent_tools)
-   - `regex_mecab.KeywordExtractor` の詳細仕様 → [セクション 5.4](#54-regex_mecab)
+1. ✅ **WebSearchToolの全メソッドIPO詳細**:
+   - コンストラクタ、`execute()`、`_search_serpapi()`、`_search_ddg()`、`_search_google()`、`_parse_to_rag_format()`、`_calculate_confidence_factors()` → [セクション 4.6](#46-websearchtool-クラス)
+2. ✅ **ToolRegistry にWebSearchTool登録を反映**: `_register_default_tools()` に `"web_search"` 分岐を追加 → [セクション 4.7](#47-toolregistry-クラス)
+3. ✅ **WebSearchConfig設定の文書化**: grace_config.yml の `web_search` セクション → [セクション 6.2](#62-websearchconfigweb検索設定)
+4. ✅ **アーキテクチャ構成図をMermaid化**: ASCII図からMermaid v9フローチャートに移行 → [セクション 1.1](#11-システム全体構成)
 
 ### 残存する課題・注意事項
 
 1. **コメントアウトされた機能**:
    - `RAGSearchTool.execute()` 内のキーワードフィルタリング機能（tools.py 116-125行、166-179行）がコメントアウトされています。
-   - この機能は将来の有効化が検討されている可能性があります。有効化時は `required_keywords` によるフィルタリングが追加されます。
+   - 将来の有効化が検討されている可能性があります。
 
 2. **limit, score_threshold パラメータの使用**:
    - `RAGSearchTool.execute()` のパラメータ `limit`, `score_threshold` が定義されていますが、現在の実装では `search_rag_knowledge_base_structured` に直接渡されていません。
-   - 検索件数は `agent_tools.py` 内で `limit=20`（候補取得）、`top_k=AgentConfig.RAG_SEARCH_LIMIT`（最終結果）としてハードコードされています。
 
 3. **KeywordExtractor の現状**:
-   - `RAGSearchTool.__init__` で `KeywordExtractor` が初期化されていますが、キーワードフィルタリング機能がコメントアウトされているため、現在は使用されていません。
+   - `RAGSearchTool.__init__` で初期化されていますが、キーワードフィルタリング機能がコメントアウトされているため現在未使用。
 
+4. **Google CSE非推奨**:
+   - `google_cse` バックエンドは新規受付停止のため非推奨。`serpapi` または `duckduckgo` の使用を推奨。

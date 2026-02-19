@@ -24,6 +24,8 @@ from grace.schemas import (
     ExecutionResult,
     ActionType,
     StepStatus,
+    SearchResultPayload,
+    SearchResultItem,
     create_plan_id,
     validate_plan_dependencies,
 )
@@ -46,6 +48,7 @@ from grace.tools import (
     ToolResult,
     BaseTool,
     RAGSearchTool,
+    WebSearchTool,
     ReasoningTool,
     AskUserTool,
     ToolRegistry,
@@ -114,6 +117,8 @@ __all__ = [
     "ExecutionResult",
     "ActionType",
     "StepStatus",
+    "SearchResultPayload",
+    "SearchResultItem",
     "create_plan_id",
     "validate_plan_dependencies",
 
@@ -130,6 +135,7 @@ __all__ = [
     "ToolResult",
     "BaseTool",
     "RAGSearchTool",
+    "WebSearchTool",
     "ReasoningTool",
     "AskUserTool",
     "ToolRegistry",

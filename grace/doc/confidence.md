@@ -1,6 +1,6 @@
 # confidence.py - 信頼度計算システム ドキュメント
 
-**Version 1.1** | 最終更新: 2025-01-29
+**Version 2.0** | 最終更新: 2026-02-19
 
 ---
 
@@ -15,64 +15,95 @@
    - [外部依存関係](#22-外部依存関係)
    - [内部依存モジュール](#23-内部依存モジュール)
 4. [クラス・関数一覧表](#3-クラス関数一覧表)
-   - [データクラス一覧](#31-データクラス一覧)
-   - [Enum一覧](#32-enum一覧)
-   - [クラス一覧](#33-クラス一覧)
-   - [ファクトリ関数一覧](#34-ファクトリ関数一覧)
+   - [クラス一覧](#31-クラス一覧)
+   - [関数一覧（カテゴリ別）](#32-関数一覧カテゴリ別)
 5. [クラス・関数 IPO詳細](#4-クラス関数-ipo詳細)
-   - [ConfidenceFactors データクラス](#41-confidencefactors-データクラス)
-   - [ConfidenceScore データクラス](#42-confidencescore-データクラス)
-   - [InterventionLevel Enum](#43-interventionlevel-enum)
-   - [ActionDecision データクラス](#44-actiondecision-データクラス)
-   - [ConfidenceCalculator クラス](#45-confidencecalculator-クラス)
-   - [LLMSelfEvaluator クラス](#46-llmselfevaluator-クラス)
-   - [SourceAgreementCalculator クラス](#47-sourceagreementcalculator-クラス)
-   - [QueryCoverageCalculator クラス](#48-querycoveragecalculator-クラス)
-   - [ConfidenceAggregator クラス](#49-confidenceaggregator-クラス)
-   - [ファクトリ関数](#410-ファクトリ関数)
+   - [EvaluationResult クラス](#41-evaluationresult-クラス)
+   - [ConfidenceFactors クラス](#42-confidencefactors-クラス)
+   - [ConfidenceScore クラス](#43-confidencescore-クラス)
+   - [InterventionLevel 列挙型](#44-interventionlevel-列挙型)
+   - [ActionDecision クラス](#45-actiondecision-クラス)
+   - [ConfidenceCalculator クラス](#46-confidencecalculator-クラス)
+   - [LLMSelfEvaluator クラス](#47-llmselfevaluator-クラス)
+   - [SourceAgreementCalculator クラス](#48-sourceagreementcalculator-クラス)
+   - [QueryCoverageCalculator クラス](#49-querycoveragecalculator-クラス)
+   - [ConfidenceAggregator クラス](#410-confidenceaggregator-クラス)
+   - [ファクトリ関数](#411-ファクトリ関数)
 6. [設定・定数](#5-設定定数)
+   - [Confidence重み設定](#51-confidence重み設定)
+   - [Confidence閾値設定](#52-confidence閾値設定)
+   - [LLMプロンプトテンプレート](#53-llmプロンプトテンプレート)
 7. [使用例](#6-使用例)
    - [基本的なワークフロー](#61-基本的なワークフロー)
-   - [LLM評価を使用したワークフロー](#62-llm評価を使用したワークフロー)
+   - [LLMベース信頼度計算](#62-llmベース信頼度計算)
    - [複数ステップの集計](#63-複数ステップの集計)
 8. [エクスポート](#7-エクスポート)
 9. [変更履歴](#8-変更履歴)
 10. [付録: 依存関係図](#付録-依存関係図)
-11. [関連ドキュメント](#関連ドキュメント)
 
 ---
 
 ## 概要
 
-`confidence.py`は、GRACEシステムにおける多軸信頼度計算を担当するモジュールです。ハイブリッド方式（重み付き平均 + LLM自己評価）により、RAG検索結果、ツール実行結果、複数ソースの一致度などを総合的に評価し、信頼度スコアを算出します。
+`confidence.py`は、GRACEエージェントにおける信頼度計算システムを実装するモジュール。ハイブリッド方式（重み付き平均 + LLM自己評価）による多軸信頼度計算を提供し、各ステップの実行結果に対して信頼度スコアを算出する。信頼度に基づくアクション決定（自動進行/通知/確認要求/エスカレーション）を行い、Human-in-the-Loopの介入レベルを制御する。
 
 ### 主な責務
 
-- RAG検索品質に基づく信頼度計算
-- LLMによる自己評価の実行
-- 複数情報源間の一致度算出（Embedding類似度）
-- クエリに対する回答網羅度の評価
-- 信頼度に基づく介入レベルの決定
-- 複数ステップの信頼度集計
+- ハイブリッド方式による多軸信頼度スコアの計算（検索品質・ソース一致度・LLM自己評価・ツール成功率・クエリ網羅度）
+- LLM（Gemini API）を活用した自己評価・信頼度判定
+- 複数情報源間の一致度計算（Embedding類似度ベース）
+- クエリに対する回答の網羅度評価
+- 信頼度スコアに基づく介入レベル決定（SILENT/NOTIFY/CONFIRM/ESCALATE）
+- 複数ステップの信頼度集計（平均/最小値/重み付き平均）
+
+### 各責務対応のモジュール
+
+| # | 責務 | 対応モジュール | 説明 |
+|---|------|--------------|------|
+| 1 | ハイブリッド方式による多軸信頼度スコアの計算 | `confidence.py` | `ConfidenceCalculator`が重み付き平均 + ペナルティで算出 |
+| 2 | LLMを活用した自己評価・信頼度判定 | `confidence.py` | `LLMSelfEvaluator`がGemini APIで評価、`ConfidenceCalculator.llm_calculate()`で統合 |
+| 3 | 複数情報源間の一致度計算 | `confidence.py` | `SourceAgreementCalculator`がEmbedding類似度で算出 |
+| 4 | クエリに対する回答の網羅度評価 | `confidence.py` | `QueryCoverageCalculator`がLLMで網羅度を0.0-1.0で評価 |
+| 5 | 信頼度スコアに基づく介入レベル決定 | `confidence.py` | `ConfidenceCalculator.decide_action()`が閾値ベースで判定 |
+| 6 | 複数ステップの信頼度集計 | `confidence.py` | `ConfidenceAggregator`が複数ステップのスコアを集計 |
 
 ### 主要機能一覧
 
 | 機能 | 説明 |
 |------|------|
-| `ConfidenceFactors` | 信頼度計算に使用する各要素を保持するデータクラス |
-| `ConfidenceScore` | 計算された信頼度スコアと内訳を保持 |
-| `InterventionLevel` | 介入レベルを定義するEnum |
-| `ActionDecision` | 信頼度に基づくアクション決定を保持 |
-| `ConfidenceCalculator` | ハイブリッド方式による信頼度計算の主クラス |
-| `ConfidenceCalculator.calculate()` | 重み付き平均による信頼度計算 |
-| `ConfidenceCalculator.llm_calculate()` | LLMを使用した信頼度計算 |
-| `ConfidenceCalculator.decide_action()` | 信頼度に基づく介入レベル決定 |
+| `EvaluationResult` | LLM信頼度評価の応答スキーマ（Pydantic） |
+| `ConfidenceFactors` | 信頼度を構成する各要素を保持するデータクラス |
+| `ConfidenceScore` | 信頼度スコアと内訳を保持するデータクラス |
+| `ConfidenceScore.level` | 信頼度レベル（high/medium/low/very_low）を返すプロパティ |
+| `InterventionLevel` | 介入レベル列挙型（SILENT/NOTIFY/CONFIRM/ESCALATE） |
+| `ActionDecision` | 信頼度に基づくアクション決定データクラス |
+| `ActionDecision.should_proceed` | 自動進行可能か判定するプロパティ |
+| `ActionDecision.needs_confirmation` | 確認が必要か判定するプロパティ |
+| `ActionDecision.needs_user_input` | ユーザー入力が必要か判定するプロパティ |
+| `ConfidenceCalculator` | ハイブリッド方式によるConfidence計算クラス |
+| `ConfidenceCalculator.__init__()` | コンストラクタ（設定読込・重み検証） |
+| `ConfidenceCalculator.calculate()` | 統計ベースのハイブリッドConfidence計算 |
+| `ConfidenceCalculator.llm_calculate()` | LLMを使用した信頼度計算（次世代版） |
+| `ConfidenceCalculator._calc_search_quality()` | RAG検索品質のスコア化（内部メソッド） |
+| `ConfidenceCalculator._calc_tool_success()` | ツール成功率の計算（内部メソッド） |
+| `ConfidenceCalculator._apply_penalties()` | ペナルティ適用（内部メソッド） |
+| `ConfidenceCalculator._validate_weights()` | 重み合計検証（内部メソッド） |
+| `ConfidenceCalculator.decide_action()` | 信頼度に基づくアクション決定 |
 | `LLMSelfEvaluator` | LLMによる自己評価クラス |
-| `LLMSelfEvaluator.evaluate()` | 質問・回答ペアの自己評価 |
-| `LLMSelfEvaluator.evaluate_with_factors()` | Factorsを考慮した総合評価 |
-| `SourceAgreementCalculator` | 複数ソース間の一致度計算 |
-| `QueryCoverageCalculator` | クエリ網羅度計算 |
-| `ConfidenceAggregator` | 複数ステップの信頼度集計 |
+| `LLMSelfEvaluator.__init__()` | コンストラクタ（Gemini Client初期化） |
+| `LLMSelfEvaluator.evaluate()` | LLMに回答の信頼度を自己評価させる |
+| `LLMSelfEvaluator.evaluate_with_factors()` | Factors考慮の総合LLM評価（Structured Output） |
+| `SourceAgreementCalculator` | 複数ソース間の一致度計算クラス |
+| `SourceAgreementCalculator.__init__()` | コンストラクタ（Embedding設定） |
+| `SourceAgreementCalculator.calculate()` | 複数回答間の一致度をEmbedding類似度で算出 |
+| `SourceAgreementCalculator._cosine_similarity()` | コサイン類似度計算（静的メソッド） |
+| `QueryCoverageCalculator` | クエリ網羅度計算クラス |
+| `QueryCoverageCalculator.__init__()` | コンストラクタ（LLMモデル設定） |
+| `QueryCoverageCalculator.calculate()` | クエリに対する回答の網羅度をLLMで算出 |
+| `ConfidenceAggregator` | 複数ステップの信頼度集計クラス |
+| `ConfidenceAggregator.__init__()` | コンストラクタ（設定読込） |
+| `ConfidenceAggregator.aggregate()` | 複数スコアを集計（mean/min/weighted） |
+| `ConfidenceAggregator.aggregate_with_critical_check()` | 重要度チェック付きの集計 |
 | `create_confidence_calculator()` | ConfidenceCalculatorのファクトリ関数 |
 | `create_llm_evaluator()` | LLMSelfEvaluatorのファクトリ関数 |
 | `create_source_agreement_calculator()` | SourceAgreementCalculatorのファクトリ関数 |
@@ -85,42 +116,53 @@
 
 ### 1.1 システム全体構成
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        GRACE エージェント層                      │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │
-│  │     Executor     │  │     Planner      │  │   Reasoner   │  │
-│  └────────┬─────────┘  └────────┬─────────┘  └──────┬───────┘  │
-└───────────┼─────────────────────┼───────────────────┼──────────┘
-            │                     │                   │
-            └──────────────────┬──┴───────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      confidence.py                              │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  ConfidenceCalculator  │  LLMSelfEvaluator                 │ │
-│  │  SourceAgreementCalc   │  QueryCoverageCalc                │ │
-│  │  ConfidenceAggregator  │  ActionDecision                   │ │
-│  └────────────────────────────────────────────────────────────┘ │
-└───────────────────────────────┬─────────────────────────────────┘
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       外部サービス層                             │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐    │
-│  │  Gemini API    │  │  Embedding API │  │    config.py   │    │
-│  │  (生成/評価)   │  │  (類似度計算)  │  │   (設定管理)   │    │
-│  └────────────────┘  └────────────────┘  └────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph CLIENT["クライアント層"]
+        EXECUTOR[Executor]
+        REPLAN[ReplanManager]
+        INTERVENTION[InterventionHandler]
+    end
+
+    subgraph MODULE["confidence.py"]
+        CALC[ConfidenceCalculator]
+        LLM_EVAL[LLMSelfEvaluator]
+        SRC_AGR[SourceAgreementCalculator]
+        QRY_COV[QueryCoverageCalculator]
+        AGG[ConfidenceAggregator]
+    end
+
+    subgraph EXTERNAL["外部サービス層"]
+        GEMINI[Gemini API]
+        EMBED[Gemini Embedding API]
+        CONFIG[GraceConfig]
+    end
+
+    EXECUTOR --> CALC
+    EXECUTOR --> AGG
+    REPLAN --> CALC
+    INTERVENTION --> CALC
+    CALC --> LLM_EVAL
+    LLM_EVAL --> GEMINI
+    SRC_AGR --> EMBED
+    QRY_COV --> GEMINI
+    CALC --> CONFIG
+    LLM_EVAL --> CONFIG
+    SRC_AGR --> CONFIG
+    QRY_COV --> CONFIG
+    AGG --> CONFIG
 ```
 
 ### 1.2 データフロー
 
-1. エージェント層（Executor/Planner/Reasoner）からステップ実行結果を受信
-2. ConfidenceFactorsに検索結果・ツール実行結果などの要素を格納
-3. ConfidenceCalculatorが重み付き平均またはLLM評価で信頼度を計算
-4. 必要に応じてSourceAgreementCalculator/QueryCoverageCalculatorで補完評価
-5. decide_action()で介入レベル（SILENT/NOTIFY/CONFIRM/ESCALATE）を決定
-6. ActionDecisionをエージェント層に返却
+1. Executorがステップ実行結果から`ConfidenceFactors`を構築
+2. `ConfidenceCalculator.calculate()`または`llm_calculate()`で信頼度スコアを算出
+3. 必要に応じて`LLMSelfEvaluator`がGemini APIで自己評価を実行
+4. 必要に応じて`SourceAgreementCalculator`がEmbedding類似度でソース一致度を算出
+5. 必要に応じて`QueryCoverageCalculator`がLLMでクエリ網羅度を評価
+6. `ConfidenceCalculator.decide_action()`が介入レベルを決定
+7. `ConfidenceAggregator`が計画全体の信頼度を集計
+8. 結果をExecutor/ReplanManager/InterventionHandlerに返却
 
 ---
 
@@ -128,96 +170,258 @@
 
 ### 2.1 内部モジュール構成
 
-```
-confidence.py
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```mermaid
+flowchart TB
+    subgraph SCHEMA["スキーマ・データクラス"]
+        EVAL_RESULT[EvaluationResult]
+        FACTORS[ConfidenceFactors]
+        SCORE[ConfidenceScore]
+        LEVEL[InterventionLevel]
+        DECISION[ActionDecision]
+    end
 
-[データクラス]
-  ├── ConfidenceFactors       - 信頼度を構成する各要素
-  ├── ConfidenceScore         - 信頼度スコアと内訳
-  └── ActionDecision          - アクション決定結果
+    subgraph CALCULATOR["ConfidenceCalculator クラス"]
+        CC_INIT["__init__()"]
+        CC_CALC["calculate()"]
+        CC_LLM["llm_calculate()"]
+        CC_SEARCH["_calc_search_quality()"]
+        CC_TOOL["_calc_tool_success()"]
+        CC_PENALTY["_apply_penalties()"]
+        CC_VALIDATE["_validate_weights()"]
+        CC_DECIDE["decide_action()"]
+    end
 
-[Enum]
-  └── InterventionLevel       - 介入レベル定義
+    subgraph LLM_EVALUATOR["LLMSelfEvaluator クラス"]
+        LE_INIT["__init__()"]
+        LE_EVAL["evaluate()"]
+        LE_FACTORS["evaluate_with_factors()"]
+    end
 
-[クラス]
-  ├── ConfidenceCalculator    - ハイブリッド信頼度計算
-  │     ├── __init__()
-  │     ├── _validate_weights()
-  │     ├── calculate()
-  │     ├── llm_calculate()
-  │     ├── _calc_search_quality()
-  │     ├── _calc_tool_success()
-  │     ├── _apply_penalties()
-  │     └── decide_action()
-  │
-  ├── LLMSelfEvaluator        - LLM自己評価
-  │     ├── __init__()
-  │     ├── evaluate()
-  │     └── evaluate_with_factors()
-  │
-  ├── SourceAgreementCalculator - ソース一致度計算
-  │     ├── __init__()
-  │     ├── calculate()
-  │     └── _cosine_similarity()
-  │
-  ├── QueryCoverageCalculator - クエリ網羅度計算
-  │     ├── __init__()
-  │     └── calculate()
-  │
-  └── ConfidenceAggregator    - 複数ステップ集計
-        ├── __init__()
-        ├── aggregate()
-        └── aggregate_with_critical_check()
+    subgraph SRC_CALC["SourceAgreementCalculator クラス"]
+        SA_INIT["__init__()"]
+        SA_CALC["calculate()"]
+        SA_COS["_cosine_similarity()"]
+    end
 
-[ファクトリ関数]
-  ├── create_confidence_calculator()
-  ├── create_llm_evaluator()
-  ├── create_source_agreement_calculator()
-  ├── create_query_coverage_calculator()
-  └── create_confidence_aggregator()
+    subgraph QRY_CALC["QueryCoverageCalculator クラス"]
+        QC_INIT["__init__()"]
+        QC_CALC["calculate()"]
+    end
+
+    subgraph AGGREGATOR["ConfidenceAggregator クラス"]
+        AG_INIT["__init__()"]
+        AG_AGG["aggregate()"]
+        AG_CRIT["aggregate_with_critical_check()"]
+    end
+
+    subgraph FACTORY["ファクトリ関数"]
+        F1["create_confidence_calculator()"]
+        F2["create_llm_evaluator()"]
+        F3["create_source_agreement_calculator()"]
+        F4["create_query_coverage_calculator()"]
+        F5["create_confidence_aggregator()"]
+    end
+
+    SCHEMA --> CALCULATOR
+    SCHEMA --> LLM_EVALUATOR
+    CC_LLM --> LE_FACTORS
+    CC_CALC --> CC_SEARCH
+    CC_CALC --> CC_TOOL
+    CC_CALC --> CC_PENALTY
+    CC_INIT --> CC_VALIDATE
+    CC_DECIDE --> LEVEL
+    CC_DECIDE --> DECISION
+    CC_CALC --> SCORE
+    CC_LLM --> SCORE
+    SA_CALC --> SA_COS
+    F1 --> CC_INIT
+    F2 --> LE_INIT
+    F3 --> SA_INIT
+    F4 --> QC_INIT
+    F5 --> AG_INIT
 ```
 
 ### 2.2 外部依存関係
 
 | ライブラリ | バージョン | 用途 |
 |-----------|-----------|------|
-| `google-genai` | - | Gemini API クライアント（生成・Embedding） |
-| `dataclasses` | 標準 | データクラス定義 |
-| `typing` | 標準 | 型ヒント |
-| `enum` | 標準 | 列挙型定義 |
-| `logging` | 標準 | ログ出力 |
+| `google-genai` | - | Gemini API（LLM呼び出し・Embedding取得） |
+| `pydantic` | v2 | `EvaluationResult`スキーマ定義、Structured Output |
 
 ### 2.3 内部依存モジュール
 
-| モジュール | インポート | 用途 |
-|-----------|-----------|------|
-| `.config` | `get_config` | 設定取得関数（シングルトン） |
-| `.config` | `GraceConfig` | GRACE統合設定モデル |
-
-**GraceConfigから使用するサブ設定**:
-
-| サブ設定 | 説明 |
-|---------|------|
-| `config.confidence.weights` | ConfidenceWeights - 信頼度計算の重み |
-| `config.confidence.thresholds` | ConfidenceThresholds - 介入レベルの閾値 |
-| `config.llm.model` | LLMモデル名（デフォルト: gemini-2.5-flash） |
-| `config.embedding.model` | Embeddingモデル名（デフォルト: gemini-embedding-001） |
+| モジュール | 用途 |
+|-----------|------|
+| `grace.config` | `get_config()`, `GraceConfig`（設定読込） |
 
 ---
 
 ## 3. クラス・関数一覧表
 
-### 3.1 データクラス一覧
+### 3.1 クラス一覧
+
+#### EvaluationResult
+
+| メソッド | 概要 |
+|---------|------|
+| _(Pydanticモデル)_ | `score: float`, `reason: str` のスキーマ定義 |
 
 #### ConfidenceFactors
 
-| フィールド | 型 | デフォルト | 説明 |
-|-----------|------|-----------|------|
+| フィールド | 概要 |
+|-----------|------|
+| `search_result_count` | 検索結果数 |
+| `search_avg_score` | 平均類似度スコア |
+| `search_max_score` | 最高類似度スコア |
+| `search_score_variance` | スコアの分散 |
+| `source_agreement` | 情報源間の一致度 (0-1) |
+| `source_count` | 引用ソース数 |
+| `llm_self_confidence` | LLMの自己評価 (0-1) |
+| `tool_success_rate` | ツール成功率 |
+| `tool_execution_count` | 実行ツール数 |
+| `tool_success_count` | 成功ツール数 |
+| `query_coverage` | クエリへの回答網羅度 |
+| `is_search_step` | 検索ステップかどうか |
+
+#### ConfidenceScore
+
+| メソッド / プロパティ | 概要 |
+|---------------------|------|
+| `score` | 最終スコア (0.0-1.0) |
+| `factors` | 計算に使用した要素 |
+| `breakdown` | 各要素のスコア内訳 |
+| `penalties_applied` | 適用されたペナルティ |
+| `reason` | 信頼度スコアの理由 |
+| `level` (property) | 信頼度レベル（high/medium/low/very_low） |
+
+#### ActionDecision
+
+| メソッド / プロパティ | 概要 |
+|---------------------|------|
+| `level` | 介入レベル (InterventionLevel) |
+| `confidence_score` | 信頼度スコア |
+| `reason` | 理由 |
+| `suggested_action` | 推奨アクション |
+| `should_proceed` (property) | 自動進行可能か |
+| `needs_confirmation` (property) | 確認が必要か |
+| `needs_user_input` (property) | ユーザー入力が必要か |
+
+#### ConfidenceCalculator
+
+| メソッド | 概要 |
+|---------|------|
+| `__init__(config)` | コンストラクタ（設定読込・重み検証） |
+| `calculate(factors)` | 統計ベースのハイブリッドConfidence計算 |
+| `llm_calculate(factors, step_description, tool_output)` | LLMを使用した信頼度計算 |
+| `_calc_search_quality(factors)` | RAG検索品質のスコア化 |
+| `_calc_tool_success(factors)` | ツール成功率の計算 |
+| `_apply_penalties(base_score, factors)` | ペナルティ適用 |
+| `_validate_weights()` | 重み合計の検証 |
+| `decide_action(score)` | 信頼度に基づくアクション決定 |
+
+#### LLMSelfEvaluator
+
+| メソッド | 概要 |
+|---------|------|
+| `__init__(config, model_name)` | コンストラクタ（Gemini Client初期化） |
+| `evaluate(query, answer, sources)` | LLMに自己評価させる |
+| `evaluate_with_factors(description, output, factors)` | Factors考慮の総合LLM評価 |
+
+#### SourceAgreementCalculator
+
+| メソッド | 概要 |
+|---------|------|
+| `__init__(config)` | コンストラクタ（Embedding設定） |
+| `calculate(answers)` | 複数回答間の一致度を計算 |
+| `_cosine_similarity(vec1, vec2)` | コサイン類似度計算（静的メソッド） |
+
+#### QueryCoverageCalculator
+
+| メソッド | 概要 |
+|---------|------|
+| `__init__(config, model_name)` | コンストラクタ（LLMモデル設定） |
+| `calculate(query, answer)` | クエリに対する回答の網羅度を計算 |
+
+#### ConfidenceAggregator
+
+| メソッド | 概要 |
+|---------|------|
+| `__init__(config)` | コンストラクタ（設定読込） |
+| `aggregate(scores, method)` | 複数スコアを集計 |
+| `aggregate_with_critical_check(scores, critical_threshold)` | 重要度チェック付きの集計 |
+
+### 3.2 関数一覧（カテゴリ別）
+
+#### ファクトリ関数
+
+| 関数名 | 概要 |
+|-------|------|
+| `create_confidence_calculator(config)` | ConfidenceCalculatorインスタンスを作成 |
+| `create_llm_evaluator(config, model_name)` | LLMSelfEvaluatorインスタンスを作成 |
+| `create_source_agreement_calculator(config)` | SourceAgreementCalculatorインスタンスを作成 |
+| `create_query_coverage_calculator(config, model_name)` | QueryCoverageCalculatorインスタンスを作成 |
+| `create_confidence_aggregator(config)` | ConfidenceAggregatorインスタンスを作成 |
+
+---
+
+## 4. クラス・関数 IPO詳細
+
+### 4.1 EvaluationResult クラス
+
+LLM信頼度評価の応答スキーマ。Gemini Structured Outputで使用するPydanticモデル。
+
+#### コンストラクタ: `__init__`
+
+**概要**: Pydanticモデルとして自動生成。
+
+```python
+EvaluationResult(score: float, reason: str)
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `score` | float | - | 信頼度スコア (0.0-1.0) |
+| `reason` | str | - | 評価理由 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `score: float`, `reason: str` |
+| **Process** | Pydanticによるバリデーション |
+| **Output** | `EvaluationResult`インスタンス |
+
+---
+
+### 4.2 ConfidenceFactors クラス
+
+信頼度を構成する各要素を保持するデータクラス（`@dataclass`）。検索品質、ソース一致度、LLM自己評価、ツール成功率、クエリ網羅度の5軸の入力値を格納する。
+
+#### コンストラクタ: `__init__`
+
+**概要**: データクラスとして各フィールドをデフォルト値付きで初期化。
+
+```python
+ConfidenceFactors(
+    search_result_count: int = 0,
+    search_avg_score: float = 0.0,
+    search_max_score: float = 0.0,
+    search_score_variance: float = 1.0,
+    source_agreement: float = 0.0,
+    source_count: int = 0,
+    llm_self_confidence: float = 0.5,
+    tool_success_rate: float = 1.0,
+    tool_execution_count: int = 0,
+    tool_success_count: int = 0,
+    query_coverage: float = 0.0,
+    is_search_step: bool = False
+)
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
 | `search_result_count` | int | 0 | 検索結果数 |
 | `search_avg_score` | float | 0.0 | 平均類似度スコア |
 | `search_max_score` | float | 0.0 | 最高類似度スコア |
-| `search_score_variance` | float | 1.0 | スコアの分散 |
+| `search_score_variance` | float | 1.0 | スコアの分散（低いほど一貫性あり） |
 | `source_agreement` | float | 0.0 | 情報源間の一致度 (0-1) |
 | `source_count` | int | 0 | 引用ソース数 |
 | `llm_self_confidence` | float | 0.5 | LLMの自己評価 (0-1) |
@@ -227,296 +431,190 @@ confidence.py
 | `query_coverage` | float | 0.0 | クエリへの回答網羅度 |
 | `is_search_step` | bool | False | 検索ステップかどうか |
 
-#### ConfidenceScore
-
-| フィールド/プロパティ | 型 | 説明 |
-|-----------|------|------|
-| `score` | float | 最終スコア (0.0-1.0) |
-| `factors` | ConfidenceFactors | 計算に使用した要素 |
-| `breakdown` | Dict[str, float] | 各要素のスコア内訳 |
-| `penalties_applied` | List[str] | 適用されたペナルティ |
-| `reason` | str | 信頼度スコアの理由 |
-| `level` (property) | str | 信頼度レベル (high/medium/low/very_low) |
-
-#### ActionDecision
-
-| フィールド/プロパティ | 型 | 説明 |
-|-----------|------|------|
-| `level` | InterventionLevel | 介入レベル |
-| `confidence_score` | float | 信頼度スコア |
-| `reason` | str | 理由 |
-| `suggested_action` | Optional[str] | 推奨アクション |
-| `should_proceed` (property) | bool | 自動進行可能か |
-| `needs_confirmation` (property) | bool | 確認が必要か |
-| `needs_user_input` (property) | bool | ユーザー入力が必要か |
-
-### 3.2 Enum一覧
-
-#### InterventionLevel
-
-| 値 | 説明 |
-|------|------|
-| `SILENT` | バックグラウンドで進行 |
-| `NOTIFY` | ステータス表示 |
-| `CONFIRM` | 確認を求める |
-| `ESCALATE` | ユーザー入力を要求 |
-
-### 3.3 クラス一覧
-
-#### ConfidenceCalculator
-
-| メソッド | 概要 |
-|---------|------|
-| `__init__(config)` | コンストラクタ（設定指定） |
-| `calculate(factors)` | 重み付き平均による信頼度計算 |
-| `llm_calculate(factors, step_description, tool_output)` | LLMを使用した信頼度計算 |
-| `decide_action(score)` | 信頼度に基づくアクション決定 |
-
-#### LLMSelfEvaluator
-
-| メソッド | 概要 |
-|---------|------|
-| `__init__(config, model_name)` | コンストラクタ |
-| `evaluate(query, answer, sources)` | 質問・回答ペアの自己評価 |
-| `evaluate_with_factors(description, output, factors)` | Factorsを考慮した総合評価 |
-
-#### SourceAgreementCalculator
-
-| メソッド | 概要 |
-|---------|------|
-| `__init__(config)` | コンストラクタ |
-| `calculate(answers)` | 複数回答間の一致度計算 |
-
-#### QueryCoverageCalculator
-
-| メソッド | 概要 |
-|---------|------|
-| `__init__(config, model_name)` | コンストラクタ |
-| `calculate(query, answer)` | クエリ網羅度計算 |
-
-#### ConfidenceAggregator
-
-| メソッド | 概要 |
-|---------|------|
-| `__init__(config)` | コンストラクタ |
-| `aggregate(scores, method)` | 複数スコアの集計 |
-| `aggregate_with_critical_check(scores, critical_threshold)` | 重要度チェック付き集計 |
-
-### 3.4 ファクトリ関数一覧
-
-| 関数名 | 概要 |
-|-------|------|
-| `create_confidence_calculator(config)` | ConfidenceCalculatorインスタンス作成 |
-| `create_llm_evaluator(config, model_name)` | LLMSelfEvaluatorインスタンス作成 |
-| `create_source_agreement_calculator(config)` | SourceAgreementCalculatorインスタンス作成 |
-| `create_query_coverage_calculator(config, model_name)` | QueryCoverageCalculatorインスタンス作成 |
-| `create_confidence_aggregator(config)` | ConfidenceAggregatorインスタンス作成 |
-
----
-
-## 4. クラス・関数 IPO詳細
-
-### 4.1 ConfidenceFactors データクラス
-
-**概要**: 信頼度計算に使用する各要素を保持するデータクラス。RAG検索結果、ツール実行結果、LLM自己評価などの要素を格納します。
-
-```python
-@dataclass
-class ConfidenceFactors:
-    search_result_count: int = 0
-    search_avg_score: float = 0.0
-    search_max_score: float = 0.0
-    search_score_variance: float = 1.0
-    source_agreement: float = 0.0
-    source_count: int = 0
-    llm_self_confidence: float = 0.5
-    tool_success_rate: float = 1.0
-    tool_execution_count: int = 0
-    tool_success_count: int = 0
-    query_coverage: float = 0.0
-    is_search_step: bool = False
-```
-
-**戻り値例**:
-```python
-ConfidenceFactors(
-    search_result_count=5,
-    search_avg_score=0.75,
-    search_max_score=0.92,
-    search_score_variance=0.05,
-    source_agreement=0.85,
-    source_count=3,
-    llm_self_confidence=0.8,
-    tool_success_rate=1.0,
-    tool_execution_count=1,
-    tool_success_count=1,
-    query_coverage=0.9,
-    is_search_step=True
-)
-```
-
-```python
-# 使用例
-factors = ConfidenceFactors(
-    search_result_count=5,
-    search_max_score=0.92,
-    is_search_step=True
-)
-print(f"検索結果: {factors.search_result_count}件")
-# 出力: 検索結果: 5件
-```
-
----
-
-### 4.2 ConfidenceScore データクラス
-
-**概要**: 計算された信頼度スコアと内訳を保持するデータクラス。`level`プロパティで信頼度レベル（high/medium/low/very_low）を取得可能。
-
-```python
-@dataclass
-class ConfidenceScore:
-    score: float
-    factors: ConfidenceFactors
-    breakdown: Dict[str, float] = field(default_factory=dict)
-    penalties_applied: List[str] = field(default_factory=list)
-    reason: str = ""
-```
-
 | 項目 | 内容 |
 |------|------|
-| **Input** | `score: float`, `factors: ConfidenceFactors`, `breakdown: Dict`, `penalties_applied: List`, `reason: str` |
-| **Process** | データを保持し、levelプロパティでスコアに応じたレベル文字列を返す |
-| **Output** | ConfidenceScoreインスタンス |
-
-**levelプロパティの閾値**:
-
-| スコア範囲 | レベル |
-|-----------|--------|
-| 0.9 以上 | high |
-| 0.7 以上 | medium |
-| 0.4 以上 | low |
-| 0.4 未満 | very_low |
-
-**戻り値例**:
-```python
-ConfidenceScore(
-    score=0.85,
-    factors=ConfidenceFactors(...),
-    breakdown={
-        "search_quality": 0.92,
-        "source_agreement": 0.85,
-        "llm_self_eval": 0.8,
-        "tool_success": 1.0,
-        "query_coverage": 0.9
-    },
-    penalties_applied=[],
-    reason=""
-)
-# score.level -> "medium"
-```
+| **Input** | 上記各フィールド（すべてオプション、デフォルト値あり） |
+| **Process** | dataclassによるフィールド初期化 |
+| **Output** | `ConfidenceFactors`インスタンス |
 
 ---
 
-### 4.3 InterventionLevel Enum
+### 4.3 ConfidenceScore クラス
 
-**概要**: 信頼度に基づく介入レベルを定義するEnum。
-
-```python
-class InterventionLevel(str, Enum):
-    SILENT = "silent"
-    NOTIFY = "notify"
-    CONFIRM = "confirm"
-    ESCALATE = "escalate"
-```
-
-| 値 | 説明 | 動作 |
-|------|------|------|
-| `SILENT` | silent | バックグラウンドで自動進行 |
-| `NOTIFY` | notify | ステータス表示しながら進行 |
-| `CONFIRM` | confirm | ユーザーに確認を求める |
-| `ESCALATE` | escalate | ユーザー入力を要求 |
-
----
-
-### 4.4 ActionDecision データクラス
-
-**概要**: 信頼度に基づくアクション決定を保持するデータクラス。プロパティで進行可否を判定可能。
-
-```python
-@dataclass
-class ActionDecision:
-    level: InterventionLevel
-    confidence_score: float
-    reason: str
-    suggested_action: Optional[str] = None
-```
-
-| 項目 | 内容 |
-|------|------|
-| **Input** | `level: InterventionLevel`, `confidence_score: float`, `reason: str`, `suggested_action: Optional[str]` |
-| **Process** | データ保持、プロパティで進行可否を判定 |
-| **Output** | ActionDecisionインスタンス |
-
-**プロパティ**:
-
-| プロパティ | 条件 |
-|-----------|------|
-| `should_proceed` | level が SILENT または NOTIFY の場合 True |
-| `needs_confirmation` | level が CONFIRM の場合 True |
-| `needs_user_input` | level が ESCALATE の場合 True |
-
-**戻り値例**:
-```python
-ActionDecision(
-    level=InterventionLevel.NOTIFY,
-    confidence_score=0.75,
-    reason="中程度の信頼度: ステータス表示しながら進行",
-    suggested_action="proceed_with_status"
-)
-# decision.should_proceed -> True
-# decision.needs_confirmation -> False
-```
-
----
-
-### 4.5 ConfidenceCalculator クラス
-
-ハイブリッド方式によるConfidence計算の主クラス。
+信頼度スコアと内訳を保持するデータクラス（`@dataclass`）。
 
 #### コンストラクタ: `__init__`
 
-**概要**: ConfidenceCalculatorを初期化し、重みの妥当性を検証します。
+**概要**: 計算済みの信頼度スコアとメタ情報を保持。
 
 ```python
-def __init__(self, config: Optional[GraceConfig] = None)
+ConfidenceScore(
+    score: float,
+    factors: ConfidenceFactors,
+    breakdown: Dict[str, float] = field(default_factory=dict),
+    penalties_applied: List[str] = field(default_factory=list),
+    reason: str = ""
+)
 ```
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `config` | Optional[GraceConfig] | None | GRACE設定（Noneの場合はデフォルト） |
+| `score` | float | - | 最終スコア (0.0-1.0) |
+| `factors` | ConfidenceFactors | - | 計算に使用した要素 |
+| `breakdown` | Dict[str, float] | {} | 各要素のスコア内訳 |
+| `penalties_applied` | List[str] | [] | 適用されたペナルティ |
+| `reason` | str | "" | 信頼度スコアの理由 |
 
 | 項目 | 内容 |
 |------|------|
-| **Input** | `config: Optional[GraceConfig] = None` |
-| **Process** | 1. 設定を取得（Noneならデフォルト）<br>2. 重みを設定から読み込み<br>3. 重みの合計が1.0か検証 |
-| **Output** | ConfidenceCalculatorインスタンス |
+| **Input** | `score`, `factors`, `breakdown`, `penalties_applied`, `reason` |
+| **Process** | dataclassによるフィールド初期化 |
+| **Output** | `ConfidenceScore`インスタンス |
+
+#### プロパティ: `level`
+
+**概要**: 信頼度スコアを4段階のレベル文字列に変換する。
+
+```python
+@property
+def level(self) -> str
+```
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | なし（selfのみ） |
+| **Process** | `self.score`の値に基づき閾値判定:<br>1. >= 0.9 → "high"<br>2. >= 0.7 → "medium"<br>3. >= 0.4 → "low"<br>4. < 0.4 → "very_low" |
+| **Output** | `str`: 信頼度レベル（"high" / "medium" / "low" / "very_low"） |
+
+**戻り値例**:
+```python
+"high"
+```
 
 ```python
 # 使用例
-from grace.config import get_config
-from grace.confidence import ConfidenceCalculator
-
-calculator = ConfidenceCalculator()
-# または
-config = get_config()
-calculator = ConfidenceCalculator(config=config)
+score = ConfidenceScore(score=0.85, factors=ConfidenceFactors())
+print(score.level)
+# 出力: "medium"
 ```
 
 ---
 
+### 4.4 InterventionLevel 列挙型
+
+介入レベルを定義する列挙型（`str, Enum`）。
+
+| 値 | 文字列 | 説明 |
+|----|--------|------|
+| `SILENT` | "silent" | バックグラウンドで進行 |
+| `NOTIFY` | "notify" | ステータス表示 |
+| `CONFIRM` | "confirm" | 確認を求める |
+| `ESCALATE` | "escalate" | ユーザー入力を要求 |
+
+---
+
+### 4.5 ActionDecision クラス
+
+信頼度に基づくアクション決定データクラス（`@dataclass`）。
+
+#### コンストラクタ: `__init__`
+
+**概要**: 信頼度スコアに基づく介入レベルと推奨アクションを保持。
+
+```python
+ActionDecision(
+    level: InterventionLevel,
+    confidence_score: float,
+    reason: str,
+    suggested_action: Optional[str] = None
+)
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `level` | InterventionLevel | - | 介入レベル |
+| `confidence_score` | float | - | 信頼度スコア |
+| `reason` | str | - | 決定理由 |
+| `suggested_action` | Optional[str] | None | 推奨アクション |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `level`, `confidence_score`, `reason`, `suggested_action` |
+| **Process** | dataclassによるフィールド初期化 |
+| **Output** | `ActionDecision`インスタンス |
+
+#### プロパティ: `should_proceed`
+
+**概要**: SILENT/NOTIFYの場合Trueを返す。自動進行が可能かどうかを判定する。
+
+```python
+@property
+def should_proceed(self) -> bool
+```
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | なし（selfのみ） |
+| **Process** | `self.level`が`SILENT`または`NOTIFY`に含まれるか判定 |
+| **Output** | `bool`: 自動進行可能ならTrue |
+
+#### プロパティ: `needs_confirmation`
+
+**概要**: CONFIRMレベルの場合Trueを返す。
+
+```python
+@property
+def needs_confirmation(self) -> bool
+```
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | なし（selfのみ） |
+| **Process** | `self.level == InterventionLevel.CONFIRM`を判定 |
+| **Output** | `bool`: 確認が必要ならTrue |
+
+#### プロパティ: `needs_user_input`
+
+**概要**: ESCALATEレベルの場合Trueを返す。
+
+```python
+@property
+def needs_user_input(self) -> bool
+```
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | なし（selfのみ） |
+| **Process** | `self.level == InterventionLevel.ESCALATE`を判定 |
+| **Output** | `bool`: ユーザー入力が必要ならTrue |
+
+---
+
+### 4.6 ConfidenceCalculator クラス
+
+ハイブリッド方式（重み付き平均 + LLM自己評価）によるConfidence計算クラス。検索ステップと非検索ステップで異なるスコアリングロジックを使用する。
+
+#### コンストラクタ: `__init__`
+
+**概要**: GRACE設定を読み込み、重みの合計が1.0であることを検証する。
+
+```python
+ConfidenceCalculator(config: Optional[GraceConfig] = None)
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `config` | Optional[GraceConfig] | None | GRACE設定（Noneの場合はデフォルト設定を使用） |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `config: Optional[GraceConfig] = None` |
+| **Process** | 1. 設定読込（`get_config()`フォールバック）<br>2. confidence.weightsを取得<br>3. `_validate_weights()`で重み合計を検証 |
+| **Output** | `ConfidenceCalculator`インスタンス |
+
 #### メソッド: `calculate`
 
-**概要**: 重み付き平均による信頼度計算。検索ステップと非検索ステップで計算ロジックが異なります。
+**概要**: 統計ベースのハイブリッドConfidence計算。検索ステップと非検索ステップで異なるアルゴリズムを使用する。
 
 ```python
 def calculate(self, factors: ConfidenceFactors) -> ConfidenceScore
@@ -529,28 +627,20 @@ def calculate(self, factors: ConfidenceFactors) -> ConfidenceScore
 | 項目 | 内容 |
 |------|------|
 | **Input** | `factors: ConfidenceFactors` |
-| **Process** | 1. 各要素を0-1にスケーリング<br>2. 検索/非検索ステップで異なる重み計算<br>3. ペナルティ適用<br>4. 0.0-1.0の範囲に収める |
+| **Process** | 1. 各要素をスコア化（search_quality, source_agreement, llm_self_eval, tool_success, query_coverage）<br>2. 検索ステップの場合: search_qualityベース × tool_success減点<br>3. 非検索ステップの場合: 有効な要素のみで加重平均を計算し正規化<br>4. `_apply_penalties()`でペナルティ適用<br>5. 0.0-1.0の範囲にクランプ |
 | **Output** | `ConfidenceScore`: 信頼度スコアと内訳 |
-
-**検索ステップの場合**:
-- 検索品質（search_quality）をベースにする
-- tool_successは減点として扱う
-
-**非検索ステップの場合**:
-- 有効な要素だけで加重平均を計算
-- 重み: 検索品質(0.6)、ツール成功(0.4)、ソース一致度(0.2)、LLM自己評価(0.3)、クエリ網羅度(0.1)
 
 **戻り値例**:
 ```python
 ConfidenceScore(
-    score=0.85,
-    factors=factors,
+    score=0.782,
+    factors=ConfidenceFactors(...),
     breakdown={
-        "search_quality": 0.92,
-        "source_agreement": 0.85,
-        "llm_self_eval": 0.0,
+        "search_quality": 0.85,
+        "source_agreement": 0.7,
+        "llm_self_eval": 0.8,
         "tool_success": 1.0,
-        "query_coverage": 0.0
+        "query_coverage": 0.6
     },
     penalties_applied=[]
 )
@@ -558,22 +648,26 @@ ConfidenceScore(
 
 ```python
 # 使用例
-calculator = ConfidenceCalculator()
+from grace.confidence import ConfidenceCalculator, ConfidenceFactors
+
+calc = ConfidenceCalculator()
 factors = ConfidenceFactors(
-    search_result_count=5,
-    search_max_score=0.92,
+    search_result_count=3,
+    search_max_score=0.85,
+    search_avg_score=0.72,
+    tool_success_rate=1.0,
+    tool_execution_count=1,
+    tool_success_count=1,
     is_search_step=True
 )
-score = calculator.calculate(factors)
-print(f"信頼度: {score.score}, レベル: {score.level}")
-# 出力: 信頼度: 0.92, レベル: high
+score = calc.calculate(factors)
+print(f"Score: {score.score}, Level: {score.level}")
+# 出力: Score: 0.85, Level: medium
 ```
-
----
 
 #### メソッド: `llm_calculate`
 
-**概要**: LLMを使用した信頼度計算。統計的要因とLLM評価を組み合わせます。
+**概要**: LLMを使用した信頼度計算（次世代版）。`LLMSelfEvaluator.evaluate_with_factors()`を呼び出し、検索スコアのガードレールを適用する。
 
 ```python
 def llm_calculate(
@@ -586,51 +680,127 @@ def llm_calculate(
 
 | パラメータ | 型 | デフォルト | 説明 |
 |------------|------|-----------|------|
-| `factors` | ConfidenceFactors | - | 統計的要因（参考情報） |
+| `factors` | ConfidenceFactors | - | 統計的要因（参考情報として使用） |
 | `step_description` | str | "" | ステップの目的 |
 | `tool_output` | str | "" | ツールの出力 |
 
 | 項目 | 内容 |
 |------|------|
 | **Input** | `factors: ConfidenceFactors`, `step_description: str`, `tool_output: str` |
-| **Process** | 1. LLMSelfEvaluatorで評価実行<br>2. ガードレール: 検索スコアが高い場合は優先<br>3. 内訳を作成 |
-| **Output** | `ConfidenceScore`: LLM評価に基づく信頼度 |
+| **Process** | 1. `create_llm_evaluator()`でLLMSelfEvaluatorを生成<br>2. `evaluate_with_factors()`でLLM評価を実行<br>3. ガードレール: 検索ステップで検索最高スコア > 0.7 かつ検索スコア > LLMスコアの場合、検索スコアを優先<br>4. 内訳を作成 |
+| **Output** | `ConfidenceScore`: LLM評価による信頼度スコア |
 
 **戻り値例**:
 ```python
 ConfidenceScore(
     score=0.8,
-    factors=factors,
-    breakdown={
-        "llm_score": 0.8,
-        "reason": 1.0
-    },
-    reason="主要な情報が取得でき、信頼できる回答が可能",
+    factors=ConfidenceFactors(...),
+    breakdown={"llm_score": 0.8, "reason": 1.0},
+    reason="検索品質が高く、関連性の高い情報が取得されている。",
     penalties_applied=[]
 )
 ```
 
 ```python
 # 使用例
-calculator = ConfidenceCalculator()
+from grace.confidence import ConfidenceCalculator, ConfidenceFactors
+
+calc = ConfidenceCalculator()
 factors = ConfidenceFactors(
-    search_result_count=3,
-    search_max_score=0.85,
+    search_result_count=5,
+    search_max_score=0.9,
     is_search_step=True
 )
-score = calculator.llm_calculate(
+score = calc.llm_calculate(
     factors=factors,
-    step_description="東京の天気を検索",
-    tool_output="検索結果: 東京は晴れ、気温25度..."
+    step_description="FAQからの情報検索",
+    tool_output="ご質問の件について、以下の通りご案内いたします..."
 )
-print(f"LLM評価: {score.score}, 理由: {score.reason}")
+print(f"Score: {score.score}, Reason: {score.reason}")
+# 出力: Score: 0.9, Reason: 検索品質が高く... (検索スコア 0.9000 を優先)
 ```
 
----
+#### メソッド: `_calc_search_quality`
+
+**概要**: RAG検索品質のスコア化（最高スコア重視版）。検索結果の最高スコアと平均スコアから品質を算出する。
+
+```python
+def _calc_search_quality(self, factors: ConfidenceFactors) -> float
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `factors` | ConfidenceFactors | - | 信頼度要素 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `factors: ConfidenceFactors` |
+| **Process** | 1. 検索結果0件かつ最大スコア0の場合は0.0を返す<br>2. 最高スコア >= 0.6 の場合はそのまま採用<br>3. それ以外は 70% Max + 30% Avg で算出し、分散ペナルティを適用 |
+| **Output** | `float`: 検索品質スコア (0.0-1.0) |
+
+#### メソッド: `_calc_tool_success`
+
+**概要**: ツール成功率の計算。
+
+```python
+def _calc_tool_success(self, factors: ConfidenceFactors) -> float
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `factors` | ConfidenceFactors | - | 信頼度要素 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `factors: ConfidenceFactors` |
+| **Process** | 1. 実行数0の場合は`tool_success_rate`をそのまま返す<br>2. それ以外は `success_count / execution_count` を返す |
+| **Output** | `float`: ツール成功率 (0.0-1.0) |
+
+#### メソッド: `_apply_penalties`
+
+**概要**: 特定条件でのペナルティ適用。検索結果0件・ツール失敗・ソース0件の場合にスコアを減点する。
+
+```python
+def _apply_penalties(
+    self,
+    base_score: float,
+    factors: ConfidenceFactors
+) -> tuple[float, List[str]]
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `base_score` | float | - | ベーススコア |
+| `factors` | ConfidenceFactors | - | 信頼度要素 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `base_score: float`, `factors: ConfidenceFactors` |
+| **Process** | 1. 検索ステップで検索結果0件: × 0.5 ("no_search_results")<br>2. ツール失敗あり: × (0.8 + 0.2 × success_rate) ("tool_failures")<br>3. ソース0件（条件付き）: × 0.7 ("no_sources") |
+| **Output** | `tuple[float, List[str]]`: (調整済スコア, 適用されたペナルティ名のリスト) |
+
+**戻り値例**:
+```python
+(0.425, ["no_search_results"])
+```
+
+#### メソッド: `_validate_weights`
+
+**概要**: 重みの合計が1.0であることを確認する。0.01の許容誤差を持つ。
+
+```python
+def _validate_weights(self) -> None
+```
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | なし（selfのみ） |
+| **Process** | 5つの重み（search_quality, source_agreement, llm_self_eval, tool_success, query_coverage）の合計を検証 |
+| **Output** | なし（検証失敗時は`ValueError`を送出） |
 
 #### メソッド: `decide_action`
 
-**概要**: 信頼度スコアに基づいて介入レベルを決定します。
+**概要**: 信頼度スコアに基づいてアクション（介入レベル）を決定する。
 
 ```python
 def decide_action(self, score: ConfidenceScore) -> ActionDecision
@@ -643,55 +813,43 @@ def decide_action(self, score: ConfidenceScore) -> ActionDecision
 | 項目 | 内容 |
 |------|------|
 | **Input** | `score: ConfidenceScore` |
-| **Process** | 設定の閾値と比較して介入レベルを決定 |
+| **Process** | 設定の閾値に基づき判定:<br>1. >= silent (0.9): SILENT ("proceed")<br>2. >= notify (0.7): NOTIFY ("proceed_with_status")<br>3. >= confirm (0.4): CONFIRM ("ask_confirmation")<br>4. < confirm: ESCALATE ("request_clarification") |
 | **Output** | `ActionDecision`: アクション決定 |
-
-**閾値（設定から読み込み）**:
-
-| 介入レベル | 条件 | 推奨アクション |
-|-----------|------|---------------|
-| SILENT | score >= thresholds.silent | proceed |
-| NOTIFY | score >= thresholds.notify | proceed_with_status |
-| CONFIRM | score >= thresholds.confirm | ask_confirmation |
-| ESCALATE | score < thresholds.confirm | request_clarification |
 
 **戻り値例**:
 ```python
 ActionDecision(
-    level=InterventionLevel.SILENT,
-    confidence_score=0.92,
-    reason="高い信頼度: 自動進行",
-    suggested_action="proceed"
+    level=InterventionLevel.NOTIFY,
+    confidence_score=0.85,
+    reason="中程度の信頼度: ステータス表示しながら進行",
+    suggested_action="proceed_with_status"
 )
 ```
 
 ```python
 # 使用例
-calculator = ConfidenceCalculator()
-score = calculator.calculate(factors)
-action = calculator.decide_action(score)
+from grace.confidence import ConfidenceCalculator, ConfidenceFactors
 
-if action.should_proceed:
-    print("自動進行")
-elif action.needs_confirmation:
-    print("確認が必要です")
-elif action.needs_user_input:
-    print("追加情報が必要です")
+calc = ConfidenceCalculator()
+factors = ConfidenceFactors(search_max_score=0.85, is_search_step=True)
+score = calc.calculate(factors)
+decision = calc.decide_action(score)
+print(f"Level: {decision.level}, Proceed: {decision.should_proceed}")
+# 出力: Level: InterventionLevel.NOTIFY, Proceed: True
 ```
 
 ---
 
-### 4.6 LLMSelfEvaluator クラス
+### 4.7 LLMSelfEvaluator クラス
 
-LLMによる自己評価を実行するクラス。
+LLM（Gemini API）による自己評価クラス。回答の確信度をLLMに評価させる。
 
 #### コンストラクタ: `__init__`
 
-**概要**: LLMSelfEvaluatorを初期化し、Gemini Clientを準備します。
+**概要**: Gemini Clientを初期化し、使用するモデル名を設定する。
 
 ```python
-def __init__(
-    self,
+LLMSelfEvaluator(
     config: Optional[GraceConfig] = None,
     model_name: Optional[str] = None
 )
@@ -705,14 +863,12 @@ def __init__(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig]`, `model_name: Optional[str]` |
-| **Process** | 1. 設定を取得<br>2. モデル名を設定<br>3. Gemini Client初期化 |
-| **Output** | LLMSelfEvaluatorインスタンス |
-
----
+| **Process** | 1. 設定読込（`get_config()`フォールバック）<br>2. モデル名の決定（引数 or 設定値）<br>3. `genai.Client()`の初期化 |
+| **Output** | `LLMSelfEvaluator`インスタンス |
 
 #### メソッド: `evaluate`
 
-**概要**: 質問・回答ペアに対するLLMの自己評価を実行します。
+**概要**: LLMに回答の信頼度を自己評価させる。プロンプトベースで0.0-1.0のスコアを返す。
 
 ```python
 def evaluate(
@@ -732,36 +888,31 @@ def evaluate(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `query: str`, `answer: str`, `sources: Optional[List[str]]` |
-| **Process** | 1. 評価プロンプトを作成<br>2. LLMに送信（temperature=0.0）<br>3. 数値を抽出して0.0-1.0に収める |
-| **Output** | `float`: 信頼度 (0.0-1.0) |
-
-**評価基準**:
-- 正確性 (Accuracy): 情報源に基づいているか
-- 適切性 (Relevance): 質問に直接答えているか
-- スタイル (Style): 読みやすい日本語か
+| **Process** | 1. EVAL_PROMPTテンプレートにパラメータを埋め込み<br>2. Gemini APIで評価を実行（temperature=0.0, max_output_tokens=10）<br>3. レスポンスから数値を抽出<br>4. 0.0-1.0の範囲にクランプ |
+| **Output** | `float`: 信頼度 (0.0-1.0)。エラー時は0.5をデフォルト返却 |
 
 **戻り値例**:
 ```python
-0.8  # ほぼ確実（信頼できる情報源あり）
+0.8
 ```
 
 ```python
 # 使用例
-evaluator = LLMSelfEvaluator()
-confidence = evaluator.evaluate(
-    query="東京の人口は？",
-    answer="東京都の人口は約1400万人です。",
-    sources=["総務省統計局"]
-)
-print(f"自己評価: {confidence}")
-# 出力: 自己評価: 0.85
-```
+from grace.confidence import create_llm_evaluator
 
----
+evaluator = create_llm_evaluator()
+score = evaluator.evaluate(
+    query="営業時間を教えてください",
+    answer="営業時間は9:00〜17:00です。",
+    sources=["FAQ-001"]
+)
+print(f"LLM評価: {score}")
+# 出力: LLM評価: 0.8
+```
 
 #### メソッド: `evaluate_with_factors`
 
-**概要**: ConfidenceFactorsとコンテキストを考慮した総合評価を実行します。
+**概要**: Factorsとコンテキストを考慮した総合評価。Gemini Structured Output（`EvaluationResult`スキーマ）を使用してスコアと理由を取得する。
 
 ```python
 def evaluate_with_factors(
@@ -781,50 +932,48 @@ def evaluate_with_factors(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `description: str`, `output: str`, `factors: ConfidenceFactors` |
-| **Process** | 1. 統計データを含むプロンプト作成<br>2. LLMに送信（JSON出力）<br>3. スコアと理由を抽出 |
+| **Process** | 1. 評価プロンプトを構築（ステップ目的・出力・統計データ・評価基準を含む）<br>2. Gemini APIでStructured Output（response_schema=EvaluationResult）を実行<br>3. response.parsed → text JSON → 手動パースの順でフォールバック<br>4. パース失敗時はsearch_max_scoreへフォールバック |
 | **Output** | `Dict[str, Any]`: `{"score": float, "reason": str}` |
-
-**評価項目**:
-1. 検索品質: 根拠となる情報が十分にマッチしているか
-2. ツール成功: エラーなく期待される情報を返しているか
-3. ソース一致度: 複数の情報源が矛盾していないか
-4. 目標達成度: ステップの目的を達成できているか
 
 **戻り値例**:
 ```python
 {
     "score": 0.8,
-    "reason": "検索結果が質問に関連しており、信頼できる情報が得られました。"
+    "reason": "検索品質が高く、関連性の高い情報が取得されている。目的を達成できている。"
 }
 ```
 
 ```python
 # 使用例
-evaluator = LLMSelfEvaluator()
+from grace.confidence import create_llm_evaluator, ConfidenceFactors
+
+evaluator = create_llm_evaluator()
 factors = ConfidenceFactors(
-    search_result_count=5,
-    search_max_score=0.92
+    search_result_count=3,
+    search_max_score=0.85,
+    tool_success_rate=1.0
 )
 result = evaluator.evaluate_with_factors(
-    description="東京の天気を検索",
-    output="検索結果: 東京は晴れ...",
+    description="FAQからの情報検索",
+    output="営業時間は9:00〜17:00です。",
     factors=factors
 )
-print(f"スコア: {result['score']}, 理由: {result['reason']}")
+print(f"Score: {result['score']}, Reason: {result['reason']}")
+# 出力: Score: 0.8, Reason: 検索品質が高く...
 ```
 
 ---
 
-### 4.7 SourceAgreementCalculator クラス
+### 4.8 SourceAgreementCalculator クラス
 
-複数ソース間の一致度を計算するクラス。
+複数ソース間の一致度計算クラス。Embedding（Gemini Embedding API）の類似度を使用してソース間の一致度を算出する。
 
 #### コンストラクタ: `__init__`
 
-**概要**: SourceAgreementCalculatorを初期化し、Embedding用のクライアントを準備します。
+**概要**: Gemini Clientと Embeddingモデルを初期化する。
 
 ```python
-def __init__(self, config: Optional[GraceConfig] = None)
+SourceAgreementCalculator(config: Optional[GraceConfig] = None)
 ```
 
 | パラメータ | 型 | デフォルト | 説明 |
@@ -834,14 +983,12 @@ def __init__(self, config: Optional[GraceConfig] = None)
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig]` |
-| **Process** | 1. 設定を取得<br>2. Gemini Client初期化<br>3. Embeddingモデル名を設定 |
-| **Output** | SourceAgreementCalculatorインスタンス |
-
----
+| **Process** | 1. 設定読込<br>2. `genai.Client()`の初期化<br>3. Embeddingモデル名の取得 |
+| **Output** | `SourceAgreementCalculator`インスタンス |
 
 #### メソッド: `calculate`
 
-**概要**: 複数の回答間の一致度をEmbedding類似度で計算します。
+**概要**: 複数の回答間の一致度をEmbedding類似度で算出する。ペアワイズのコサイン類似度の平均を返す。
 
 ```python
 def calculate(self, answers: List[str]) -> float
@@ -854,42 +1001,60 @@ def calculate(self, answers: List[str]) -> float
 | 項目 | 内容 |
 |------|------|
 | **Input** | `answers: List[str]` |
-| **Process** | 1. 各回答のEmbeddingを取得<br>2. ペアワイズでコサイン類似度を計算<br>3. 平均一致度を返す |
-| **Output** | `float`: 一致度 (0.0-1.0) |
-
-> 📝 **注意**: 単一ソース（1件以下）の場合は1.0（完全一致）を返します。
+| **Process** | 1. 回答が2件未満の場合は1.0（完全一致）を返す<br>2. 各回答のEmbeddingを`genai.Client().models.embed_content()`で取得<br>3. 全ペアのコサイン類似度を計算<br>4. 平均一致度を返す |
+| **Output** | `float`: 一致度 (0.0-1.0)。エラー時は0.5をデフォルト返却 |
 
 **戻り値例**:
 ```python
-0.85  # 3つの回答が高い一致度
+0.87
 ```
 
 ```python
 # 使用例
-calculator = SourceAgreementCalculator()
-answers = [
-    "東京の人口は約1400万人です。",
-    "東京都には約1400万人が住んでいます。",
-    "東京の人口は1380万人程度です。"
-]
-agreement = calculator.calculate(answers)
+from grace.confidence import create_source_agreement_calculator
+
+sa_calc = create_source_agreement_calculator()
+agreement = sa_calc.calculate([
+    "営業時間は9:00〜17:00です。",
+    "当店は朝9時から夕方5時まで営業しております。",
+    "9時開店、17時閉店です。"
+])
 print(f"一致度: {agreement}")
-# 出力: 一致度: 0.92
+# 出力: 一致度: 0.87
 ```
+
+#### メソッド: `_cosine_similarity` (staticmethod)
+
+**概要**: 2つのベクトル間のコサイン類似度を計算する。
+
+```python
+@staticmethod
+def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float
+```
+
+| パラメータ | 型 | デフォルト | 説明 |
+|------------|------|-----------|------|
+| `vec1` | List[float] | - | ベクトル1 |
+| `vec2` | List[float] | - | ベクトル2 |
+
+| 項目 | 内容 |
+|------|------|
+| **Input** | `vec1: List[float]`, `vec2: List[float]` |
+| **Process** | 1. 内積を計算<br>2. 各ベクトルのノルムを計算<br>3. ノルムが0の場合は0.0を返す<br>4. 内積 / (ノルム1 × ノルム2) を返す |
+| **Output** | `float`: コサイン類似度 (0.0-1.0) |
 
 ---
 
-### 4.8 QueryCoverageCalculator クラス
+### 4.9 QueryCoverageCalculator クラス
 
-クエリに対する回答の網羅度を計算するクラス。
+クエリ網羅度計算クラス。LLM（Gemini API）を使用して、質問に対する回答の網羅度を評価する。
 
 #### コンストラクタ: `__init__`
 
-**概要**: QueryCoverageCalculatorを初期化します。
+**概要**: Gemini Clientとモデル名を初期化する。
 
 ```python
-def __init__(
-    self,
+QueryCoverageCalculator(
     config: Optional[GraceConfig] = None,
     model_name: Optional[str] = None
 )
@@ -903,14 +1068,12 @@ def __init__(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig]`, `model_name: Optional[str]` |
-| **Process** | 1. 設定を取得<br>2. モデル名を設定<br>3. Gemini Client初期化 |
-| **Output** | QueryCoverageCalculatorインスタンス |
-
----
+| **Process** | 1. 設定読込<br>2. モデル名の決定<br>3. `genai.Client()`の初期化 |
+| **Output** | `QueryCoverageCalculator`インスタンス |
 
 #### メソッド: `calculate`
 
-**概要**: クエリに対する回答の網羅度をLLMで評価します。
+**概要**: クエリに対する回答の網羅度をLLMで算出する。
 
 ```python
 def calculate(self, query: str, answer: str) -> float
@@ -924,48 +1087,39 @@ def calculate(self, query: str, answer: str) -> float
 | 項目 | 内容 |
 |------|------|
 | **Input** | `query: str`, `answer: str` |
-| **Process** | 1. 網羅度評価プロンプトを作成<br>2. LLMに送信（temperature=0.0）<br>3. 数値を抽出して0.0-1.0に収める |
-| **Output** | `float`: 網羅度 (0.0-1.0) |
-
-**網羅度の目安**:
-
-| スコア | 説明 |
-|--------|------|
-| 1.0 | すべての質問要素に完全に回答 |
-| 0.8 | ほぼすべての要素に回答 |
-| 0.6 | 主要な要素に回答 |
-| 0.4 | 一部の要素のみに回答 |
-| 0.2 | ほとんど回答できていない |
-| 0.0 | 全く回答できていない |
+| **Process** | 1. COVERAGE_PROMPTテンプレートにパラメータを埋め込み<br>2. Gemini APIで評価を実行（temperature=0.0, max_output_tokens=10）<br>3. レスポンスから数値を抽出<br>4. 0.0-1.0の範囲にクランプ |
+| **Output** | `float`: 網羅度 (0.0-1.0)。エラー時は0.5をデフォルト返却 |
 
 **戻り値例**:
 ```python
-0.8  # ほぼすべての要素に回答
+0.8
 ```
 
 ```python
 # 使用例
-calculator = QueryCoverageCalculator()
-coverage = calculator.calculate(
-    query="東京の人口と面積を教えてください",
-    answer="東京都の人口は約1400万人です。"
+from grace.confidence import create_query_coverage_calculator
+
+qc_calc = create_query_coverage_calculator()
+coverage = qc_calc.calculate(
+    query="営業時間と定休日を教えてください",
+    answer="営業時間は9:00〜17:00です。"
 )
 print(f"網羅度: {coverage}")
-# 出力: 網羅度: 0.5（面積が回答されていない）
+# 出力: 網羅度: 0.6  (定休日の情報が不足)
 ```
 
 ---
 
-### 4.9 ConfidenceAggregator クラス
+### 4.10 ConfidenceAggregator クラス
 
-複数ステップの信頼度を集計するクラス。
+複数ステップの信頼度を集計するアグリゲータ。計画全体の信頼度を算出する。
 
 #### コンストラクタ: `__init__`
 
-**概要**: ConfidenceAggregatorを初期化します。
+**概要**: GRACE設定を読み込む。
 
 ```python
-def __init__(self, config: Optional[GraceConfig] = None)
+ConfidenceAggregator(config: Optional[GraceConfig] = None)
 ```
 
 | パラメータ | 型 | デフォルト | 説明 |
@@ -975,14 +1129,12 @@ def __init__(self, config: Optional[GraceConfig] = None)
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig]` |
-| **Process** | 設定を取得 |
-| **Output** | ConfidenceAggregatorインスタンス |
-
----
+| **Process** | 設定読込（`get_config()`フォールバック） |
+| **Output** | `ConfidenceAggregator`インスタンス |
 
 #### メソッド: `aggregate`
 
-**概要**: 複数の信頼度スコアを指定した方法で集計します。
+**概要**: 複数の信頼度スコアを集計する。3つの集計方法（mean/min/weighted）を選択可能。
 
 ```python
 def aggregate(
@@ -1000,39 +1152,32 @@ def aggregate(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `scores: List[ConfidenceScore]`, `method: Literal["mean", "min", "weighted"]` |
-| **Process** | 指定された方法でスコアを集計 |
-| **Output** | `float`: 集計された信頼度 |
-
-**集計方法**:
-
-| method | 説明 |
-|--------|------|
-| `mean` | 平均値 |
-| `min` | 最小値（最も弱い部分を重視） |
-| `weighted` | 重み付き平均（後半のステップを重視） |
+| **Process** | 1. 空リストの場合は0.0を返す<br>2. "mean": 単純平均<br>3. "min": 最小値（最も弱い部分を重視）<br>4. "weighted": 後半のステップほど重みを増やす重み付き平均 |
+| **Output** | `float`: 集計された信頼度 (0.0-1.0) |
 
 **戻り値例**:
 ```python
-0.75  # 3ステップの平均
+0.75
 ```
 
 ```python
 # 使用例
-aggregator = ConfidenceAggregator()
-scores = [score1, score2, score3]  # 各ステップの信頼度
+from grace.confidence import ConfidenceAggregator, ConfidenceScore, ConfidenceFactors
 
-avg_score = aggregator.aggregate(scores, method="mean")
-min_score = aggregator.aggregate(scores, method="min")
-weighted_score = aggregator.aggregate(scores, method="weighted")
-
-print(f"平均: {avg_score}, 最小: {min_score}, 重み付き: {weighted_score}")
+agg = ConfidenceAggregator()
+scores = [
+    ConfidenceScore(score=0.9, factors=ConfidenceFactors()),
+    ConfidenceScore(score=0.7, factors=ConfidenceFactors()),
+    ConfidenceScore(score=0.6, factors=ConfidenceFactors()),
+]
+result = agg.aggregate(scores, method="mean")
+print(f"集計スコア: {result}")
+# 出力: 集計スコア: 0.7333...
 ```
-
----
 
 #### メソッド: `aggregate_with_critical_check`
 
-**概要**: 重要度チェック付きの集計。いずれかのステップが閾値を下回る場合、全体の信頼度を低下させます。
+**概要**: 重要度チェック付きの集計。いずれかのステップが閾値を下回る場合、全体スコアにペナルティ（× 0.7）を適用する。
 
 ```python
 def aggregate_with_critical_check(
@@ -1050,33 +1195,31 @@ def aggregate_with_critical_check(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `scores: List[ConfidenceScore]`, `critical_threshold: float = 0.3` |
-| **Process** | 1. 閾値未満のステップをチェック<br>2. 平均を計算<br>3. 重要ステップ失敗時は0.7倍のペナルティ |
+| **Process** | 1. 空リストの場合は(0.0, False)を返す<br>2. いずれかのスコアが閾値未満かチェック<br>3. 閾値未満あり: 平均値 × 0.7 + Trueフラグ<br>4. 閾値未満なし: 平均値 + Falseフラグ |
 | **Output** | `tuple[float, bool]`: (集計スコア, 重要ステップ失敗フラグ) |
 
 **戻り値例**:
 ```python
-(0.525, True)  # 重要ステップ失敗（0.75 * 0.7 = 0.525）
+(0.49, True)
 ```
 
 ```python
 # 使用例
-aggregator = ConfidenceAggregator()
-scores = [score1, score2, score3]
+from grace.confidence import ConfidenceAggregator, ConfidenceScore, ConfidenceFactors
 
-final_score, has_failure = aggregator.aggregate_with_critical_check(
-    scores,
-    critical_threshold=0.3
-)
-
-if has_failure:
-    print(f"警告: 重要ステップに失敗があります（スコア: {final_score}）")
-else:
-    print(f"全ステップ正常（スコア: {final_score}）")
+agg = ConfidenceAggregator()
+scores = [
+    ConfidenceScore(score=0.9, factors=ConfidenceFactors()),
+    ConfidenceScore(score=0.2, factors=ConfidenceFactors()),  # 閾値未満
+]
+total, has_failure = agg.aggregate_with_critical_check(scores)
+print(f"集計: {total}, 失敗あり: {has_failure}")
+# 出力: 集計: 0.385, 失敗あり: True
 ```
 
 ---
 
-### 4.10 ファクトリ関数
+### 4.11 ファクトリ関数
 
 #### `create_confidence_calculator`
 
@@ -1095,17 +1238,8 @@ def create_confidence_calculator(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig] = None` |
-| **Process** | ConfidenceCalculatorをインスタンス化 |
-| **Output** | `ConfidenceCalculator`: インスタンス |
-
-```python
-# 使用例
-from grace.confidence import create_confidence_calculator
-
-calculator = create_confidence_calculator()
-```
-
----
+| **Process** | `ConfidenceCalculator(config=config)`を返す |
+| **Output** | `ConfidenceCalculator`インスタンス |
 
 #### `create_llm_evaluator`
 
@@ -1126,17 +1260,8 @@ def create_llm_evaluator(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig]`, `model_name: Optional[str]` |
-| **Process** | LLMSelfEvaluatorをインスタンス化 |
-| **Output** | `LLMSelfEvaluator`: インスタンス |
-
-```python
-# 使用例
-from grace.confidence import create_llm_evaluator
-
-evaluator = create_llm_evaluator(model_name="gemini-2.0-flash")
-```
-
----
+| **Process** | `LLMSelfEvaluator(config=config, model_name=model_name)`を返す |
+| **Output** | `LLMSelfEvaluator`インスタンス |
 
 #### `create_source_agreement_calculator`
 
@@ -1155,17 +1280,8 @@ def create_source_agreement_calculator(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig] = None` |
-| **Process** | SourceAgreementCalculatorをインスタンス化 |
-| **Output** | `SourceAgreementCalculator`: インスタンス |
-
-```python
-# 使用例
-from grace.confidence import create_source_agreement_calculator
-
-calculator = create_source_agreement_calculator()
-```
-
----
+| **Process** | `SourceAgreementCalculator(config=config)`を返す |
+| **Output** | `SourceAgreementCalculator`インスタンス |
 
 #### `create_query_coverage_calculator`
 
@@ -1186,17 +1302,8 @@ def create_query_coverage_calculator(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig]`, `model_name: Optional[str]` |
-| **Process** | QueryCoverageCalculatorをインスタンス化 |
-| **Output** | `QueryCoverageCalculator`: インスタンス |
-
-```python
-# 使用例
-from grace.confidence import create_query_coverage_calculator
-
-calculator = create_query_coverage_calculator()
-```
-
----
+| **Process** | `QueryCoverageCalculator(config=config, model_name=model_name)`を返す |
+| **Output** | `QueryCoverageCalculator`インスタンス |
 
 #### `create_confidence_aggregator`
 
@@ -1215,31 +1322,26 @@ def create_confidence_aggregator(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `config: Optional[GraceConfig] = None` |
-| **Process** | ConfidenceAggregatorをインスタンス化 |
-| **Output** | `ConfidenceAggregator`: インスタンス |
-
-```python
-# 使用例
-from grace.confidence import create_confidence_aggregator
-
-aggregator = create_confidence_aggregator()
-```
+| **Process** | `ConfidenceAggregator(config=config)`を返す |
+| **Output** | `ConfidenceAggregator`インスタンス |
 
 ---
 
 ## 5. 設定・定数
 
-### 5.1 ConfidenceWeights（重み設定）
+### 5.1 Confidence重み設定
 
-信頼度計算に使用する各要素の重み。合計は1.0である必要があります。
+`grace_config.yml` の `confidence.weights` セクションで定義。5軸の合計は1.0であること。
 
 ```python
-class ConfidenceWeights(BaseModel):
-    search_quality: float = 0.25
-    source_agreement: float = 0.20
-    llm_self_eval: float = 0.25
-    tool_success: float = 0.15
-    query_coverage: float = 0.15
+# GraceConfig.confidence.weights
+{
+    "search_quality": 0.25,
+    "source_agreement": 0.20,
+    "llm_self_eval": 0.25,
+    "tool_success": 0.15,
+    "query_coverage": 0.15,
+}
 ```
 
 | キー | デフォルト値 | 説明 |
@@ -1250,111 +1352,41 @@ class ConfidenceWeights(BaseModel):
 | `tool_success` | 0.15 | ツール成功率の重み |
 | `query_coverage` | 0.15 | クエリ網羅度の重み |
 
-### 5.2 ConfidenceThresholds（閾値設定）
+> 📝 **注意**: `ConfidenceCalculator.calculate()`の非検索ステップでは、有効な要素のみで動的に重みを再配分するため、上記設定値は`_validate_weights()`の検証にのみ使用される。
 
-介入レベルを決定する閾値。
+### 5.2 Confidence閾値設定
 
-```python
-class ConfidenceThresholds(BaseModel):
-    silent: float = 0.9
-    notify: float = 0.7
-    confirm: float = 0.4
-```
-
-| キー | デフォルト値 | 説明 | 介入レベル |
-|-----|-------------|------|-----------|
-| `silent` | 0.9 | 自動進行の閾値 | score >= 0.9 → SILENT |
-| `notify` | 0.7 | ステータス表示の閾値 | score >= 0.7 → NOTIFY |
-| `confirm` | 0.4 | 確認要求の閾値 | score >= 0.4 → CONFIRM |
-| (それ以下) | - | エスカレーションの閾値 | score < 0.4 → ESCALATE |
-
-### 5.3 EmbeddingConfig（Embedding設定）
-
-SourceAgreementCalculatorで使用するEmbeddingモデルの設定。
+`grace_config.yml` の `confidence.thresholds` セクションで定義。`decide_action()`の判定基準。
 
 ```python
-class EmbeddingConfig(BaseModel):
-    provider: str = "gemini"
-    model: str = "gemini-embedding-001"
-    dimensions: int = 3072
+# GraceConfig.confidence.thresholds
+{
+    "silent": 0.9,
+    "notify": 0.7,
+    "confirm": 0.4,
+}
 ```
 
-| キー | デフォルト値 | 説明 |
-|-----|-------------|------|
-| `provider` | "gemini" | Embeddingプロバイダー |
-| `model` | "gemini-embedding-001" | 使用するEmbeddingモデル |
-| `dimensions` | 3072 | Embeddingの次元数 |
+| キー | デフォルト値 | 介入レベル | 説明 |
+|-----|-------------|-----------|------|
+| `silent` | 0.9 | SILENT | > 0.9: 自動実行 |
+| `notify` | 0.7 | NOTIFY | 0.7-0.9: 通知のみ |
+| `confirm` | 0.4 | CONFIRM | 0.4-0.7: 確認要求 |
+| _(implicit)_ | < 0.4 | ESCALATE | < 0.4: 人間介入必須 |
 
-### 5.4 LLMConfig（LLM設定）
+### 5.3 LLMプロンプトテンプレート
 
-LLMSelfEvaluator、QueryCoverageCalculatorで使用するLLMの設定。
+#### EVAL_PROMPT (LLMSelfEvaluator)
 
-```python
-class LLMConfig(BaseModel):
-    provider: str = "gemini"
-    model: str = "gemini-2.5-flash"
-    temperature: float = 0.7
-    max_tokens: int = 4096
-    timeout: int = 30
-```
+LLMに回答の確信度を0.0-1.0で評価させるプロンプト。正確性・適切性・スタイルの3軸で評価。
 
-| キー | デフォルト値 | 説明 |
-|-----|-------------|------|
-| `provider` | "gemini" | LLMプロバイダー |
-| `model` | "gemini-2.5-flash" | 使用するモデル |
-| `temperature` | 0.7 | 生成時の温度（評価時は0.0に上書き） |
-| `max_tokens` | 4096 | 最大トークン数 |
-| `timeout` | 30 | タイムアウト秒数 |
+#### COVERAGE_PROMPT (QueryCoverageCalculator)
 
-### 5.5 LLMSelfEvaluator.EVAL_PROMPT
+質問に対する回答の網羅度を0.0-1.0で評価させるプロンプト。
 
-LLM自己評価用のプロンプトテンプレート。
+#### evaluate_with_factors 内プロンプト (LLMSelfEvaluator)
 
-```python
-EVAL_PROMPT = """以下の基準に基づいて、回答の確信度を0.0から1.0の数値で評価してください。
-
-【評価基準】
-1. 正確性 (Accuracy):
-   - 回答は提供された情報源（検索結果）に基づいているか？
-   - 情報源にない情報を捏造していないか？
-2. 適切性 (Relevance):
-   - ユーザーの質問に直接的かつ明確に答えているか？
-   - 質問の意図を正しく理解しているか？
-3. スタイル (Style):
-   - 親しみやすく、丁寧な日本語（です・ます調）か？
-   - 読みやすい構成か？
-
-【スコアの目安】
-- 1.0: 完全に正確で、適切かつスタイルも完璧
-- 0.8: ほぼ確実（信頼できる情報源あり、回答も適切）
-- 0.6: やや確信あり（関連情報はあるが、完全ではない）
-- 0.4: 不確実（情報が限定的、または質問への回答として不十分）
-- 0.2: 推測に近い（根拠が弱い）
-- 0.0: 全く分からない、または不適切な回答
-...
-"""
-```
-
-### 5.6 QueryCoverageCalculator.COVERAGE_PROMPT
-
-クエリ網羅度評価用のプロンプトテンプレート。
-
-```python
-COVERAGE_PROMPT = """以下の質問に対する回答が、質問のすべての要素をカバーしているか評価してください。
-
-質問: {query}
-回答: {answer}
-
-網羅度（0.0-1.0の数値のみ回答）:
-- 1.0: すべての質問要素に完全に回答
-- 0.8: ほぼすべての要素に回答
-- 0.6: 主要な要素に回答
-- 0.4: 一部の要素のみに回答
-- 0.2: ほとんど回答できていない
-- 0.0: 全く回答できていない
-
-数値のみ回答:"""
-```
+検索品質・ツール成功・ソース一致度・目標達成度の4軸で総合評価するプロンプト。Structured Output（JSON形式）で応答を要求。
 
 ---
 
@@ -1364,138 +1396,97 @@ COVERAGE_PROMPT = """以下の質問に対する回答が、質問のすべて�
 
 ```python
 from grace.confidence import (
-    ConfidenceFactors,
     create_confidence_calculator,
-)
-
-# 1. Calculatorを作成
-calculator = create_confidence_calculator()
-
-# 2. 検索結果から要素を作成
-factors = ConfidenceFactors(
-    search_result_count=5,
-    search_avg_score=0.75,
-    search_max_score=0.92,
-    search_score_variance=0.05,
-    tool_success_rate=1.0,
-    tool_execution_count=1,
-    tool_success_count=1,
-    is_search_step=True
-)
-
-# 3. 信頼度を計算
-score = calculator.calculate(factors)
-print(f"信頼度: {score.score}, レベル: {score.level}")
-# 出力: 信頼度: 0.92, レベル: high
-
-# 4. アクションを決定
-action = calculator.decide_action(score)
-print(f"介入レベル: {action.level}, 推奨: {action.suggested_action}")
-# 出力: 介入レベル: InterventionLevel.SILENT, 推奨: proceed
-
-# 5. 進行可否を判定
-if action.should_proceed:
-    print("自動進行します")
-```
-
-### 6.2 LLM評価を使用したワークフロー
-
-```python
-from grace.confidence import (
     ConfidenceFactors,
-    create_confidence_calculator,
-    create_llm_evaluator,
 )
 
-# 1. Calculatorを作成
-calculator = create_confidence_calculator()
+# 1. Calculator初期化
+calc = create_confidence_calculator()
 
-# 2. 要素を作成
+# 2. Factors構築（検索ステップの場合）
 factors = ConfidenceFactors(
     search_result_count=3,
     search_max_score=0.85,
-    is_search_step=True
+    search_avg_score=0.72,
+    search_score_variance=0.05,
+    source_agreement=0.9,
+    source_count=3,
+    tool_success_rate=1.0,
+    tool_execution_count=1,
+    tool_success_count=1,
+    is_search_step=True,
 )
 
-# 3. LLM評価による信頼度計算
-score = calculator.llm_calculate(
+# 3. 信頼度計算
+score = calc.calculate(factors)
+print(f"Score: {score.score}, Level: {score.level}")
+print(f"Breakdown: {score.breakdown}")
+
+# 4. アクション決定
+decision = calc.decide_action(score)
+print(f"Action: {decision.level}, Proceed: {decision.should_proceed}")
+```
+
+### 6.2 LLMベース信頼度計算
+
+```python
+from grace.confidence import (
+    create_confidence_calculator,
+    ConfidenceFactors,
+)
+
+# 1. Calculator初期化
+calc = create_confidence_calculator()
+
+# 2. Factors構築
+factors = ConfidenceFactors(
+    search_result_count=5,
+    search_max_score=0.9,
+    is_search_step=True,
+)
+
+# 3. LLMベースの信頼度計算
+score = calc.llm_calculate(
     factors=factors,
-    step_description="東京の天気を検索して回答する",
-    tool_output="検索結果: 東京は晴れ、気温25度、湿度60%..."
+    step_description="FAQから営業時間に関する情報を検索",
+    tool_output="営業時間は9:00〜17:00です。土日祝日は休業となります。"
 )
-
-print(f"LLM評価スコア: {score.score}")
-print(f"評価理由: {score.reason}")
-
-# 4. 別途、自己評価のみを実行する場合
-evaluator = create_llm_evaluator()
-confidence = evaluator.evaluate(
-    query="東京の天気は？",
-    answer="東京は現在晴れで、気温は25度です。",
-    sources=["気象庁", "Yahoo天気"]
-)
-print(f"自己評価: {confidence}")
+print(f"Score: {score.score}, Reason: {score.reason}")
 ```
 
 ### 6.3 複数ステップの集計
 
 ```python
 from grace.confidence import (
-    ConfidenceFactors,
-    ConfidenceScore,
     create_confidence_calculator,
     create_confidence_aggregator,
+    ConfidenceFactors,
 )
 
-# 1. 各ステップの信頼度を計算
-calculator = create_confidence_calculator()
+calc = create_confidence_calculator()
+agg = create_confidence_aggregator()
 
-step1_factors = ConfidenceFactors(search_max_score=0.9, is_search_step=True)
-step2_factors = ConfidenceFactors(search_max_score=0.7, is_search_step=True)
-step3_factors = ConfidenceFactors(
-    llm_self_confidence=0.8,
-    tool_success_rate=1.0,
-    is_search_step=False
-)
+# 各ステップの信頼度計算
+step_scores = []
+for step_factors in [factors_step1, factors_step2, factors_step3]:
+    score = calc.calculate(step_factors)
+    step_scores.append(score)
 
-scores = [
-    calculator.calculate(step1_factors),
-    calculator.calculate(step2_factors),
-    calculator.calculate(step3_factors),
-]
+# 集計（重み付き平均 - 後半重視）
+total = agg.aggregate(step_scores, method="weighted")
+print(f"全体信頼度: {total}")
 
-# 2. 集計
-aggregator = create_confidence_aggregator()
-
-# 平均
-avg = aggregator.aggregate(scores, method="mean")
-print(f"平均信頼度: {avg}")
-
-# 最小値（最も弱い部分を重視）
-min_score = aggregator.aggregate(scores, method="min")
-print(f"最小信頼度: {min_score}")
-
-# 重み付き（後半のステップを重視）
-weighted = aggregator.aggregate(scores, method="weighted")
-print(f"重み付き信頼度: {weighted}")
-
-# 3. 重要度チェック付き集計
-final_score, has_failure = aggregator.aggregate_with_critical_check(
-    scores,
-    critical_threshold=0.3
-)
-
+# 重要度チェック付き集計
+total_checked, has_failure = agg.aggregate_with_critical_check(step_scores)
 if has_failure:
-    print(f"警告: 重要ステップに問題があります（最終スコア: {final_score}）")
-else:
-    print(f"全ステップ正常（最終スコア: {final_score}）")
+    print(f"警告: 重要ステップの失敗あり（調整後スコア: {total_checked}）")
 ```
 
 ---
 
 ## 7. エクスポート
 
-`__all__`でエクスポートされる要素：
+`__init__.py`でエクスポートされる要素：
 
 ```python
 __all__ = [
@@ -1529,47 +1520,39 @@ __all__ = [
 
 | バージョン | 変更内容 |
 |-----------|---------|
-| 1.0 | 初版作成（2025-01-29） |
-| 1.1 | config.pyの情報を反映：ConfidenceWeights、ConfidenceThresholds、EmbeddingConfig、LLMConfigの具体的なデフォルト値を追加 |
-
-> 📝 **注意**: コード内のコメントによると、2025-12-26にLLM化の改修が行われています。
+| 1.0 | 初版作成（Phase 2: Confidence計算システム） |
+| 2.0 | `EvaluationResult`スキーマ追加、`llm_calculate()`メソッド追加（LLMベース信頼度計算・ガードレール）、`evaluate_with_factors()`メソッド追加（Structured Output対応）、検索/非検索ステップの分岐ロジック強化、ペナルティ条件の精緻化 |
 
 ---
 
 ## 付録: 依存関係図
 
+```mermaid
+flowchart LR
+    CONFIDENCE["confidence.py"]
+
+    subgraph GOOGLE["google-genai"]
+        GENAI["genai.Client"]
+        TYPES["genai.types"]
+    end
+
+    subgraph PYDANTIC["pydantic"]
+        BASEMODEL["BaseModel"]
+    end
+
+    subgraph INTERNAL["内部モジュール"]
+        CONFIG["grace.config"]
+    end
+
+    CONFIDENCE --> GENAI
+    CONFIDENCE --> TYPES
+    CONFIDENCE --> BASEMODEL
+    CONFIDENCE --> CONFIG
+
+    GENAI --> G1["models.generate_content()"]
+    GENAI --> G2["models.embed_content()"]
+    TYPES --> T1["GenerateContentConfig"]
+    TYPES --> T2["AutomaticFunctionCallingConfig"]
+    CONFIG --> C1["get_config()"]
+    CONFIG --> C2["GraceConfig"]
 ```
-confidence.py
-    │
-    ├──► google-genai
-    │        └── genai.Client
-    │        └── genai.types.GenerateContentConfig
-    │
-    ├──► dataclasses
-    │        └── dataclass
-    │        └── field
-    │
-    ├──► typing
-    │        └── Optional, List, Literal, Dict, Any
-    │
-    ├──► enum
-    │        └── Enum
-    │
-    ├──► logging
-    │        └── getLogger
-    │
-    └──► .config (内部)
-             └── get_config()
-             └── GraceConfig
-```
-
----
-
-## 関連ドキュメント
-
-| ドキュメント | 説明 |
-|-------------|------|
-| `config.md` | GraceConfig設定管理の詳細ドキュメント |
-| `planner.md` | 計画生成エージェントのドキュメント |
-| `executor.md` | 計画実行エージェントのドキュメント |
-| `reasoner.md` | 推論エージェントのドキュメント |

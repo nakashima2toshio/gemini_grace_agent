@@ -1,6 +1,6 @@
-# planner.py - GRACE計画生成エージェント ドキュメント
+## planner.py - GRACE計画生成エージェント ドキュメント
 
-**Version 2.0** | 最終更新: 2026-02-12
+**Version 3.0** | 最終更新: 2026-02-19
 
 ---
 
@@ -59,7 +59,7 @@
 | 2 | LLMを用いた実行計画の自動生成 | `planner.py` | Gemini APIで`ExecutionPlan`スキーマに基づく構造化出力で計画を生成 |
 | 3 | 利用可能なコレクションの動的取得 | `qdrant_service.py` | Qdrantから動的にコレクション一覧を取得 |
 | 4 | フィードバックに基づく計画の修正 | `planner.py` | ユーザーフィードバックに応じてLLMでリファインメント |
-| 5 | フォールバック計画の提供 | `planner.py` | LLMエラー時の安全な代替計画（wikipedia_ja検索→reasoning） |
+| 5 | フォールバック計画の提供 | `planner.py` | LLMエラー時の安全な代替計画（動的コレクション検索→reasoning、fallbackはweb_search） |
 
 ### 主要機能一覧
 
@@ -67,7 +67,7 @@
 |------|------|
 | `Planner` | 計画生成エージェントクラス |
 | `Planner.__init__()` | コンストラクタ（設定・モデル名指定、KeywordExtractor初期化） |
-| `Planner.create_plan()` | LLMを使用して実行計画を生成（構造化出力、AFC無効化） |
+| `Planner.create_plan()` | LLMを使用して実行計画を生成（構造化出力、AFC無効化、最大2回リトライ、JSON完全性チェック） |
 | `Planner._create_plan_legacy()` | Legacy Agent委譲用の単純計画生成（バックアップ） |
 | `Planner._get_available_collections()` | Qdrantからコレクション一覧を取得 |
 | `Planner._create_fallback_plan()` | フォールバック用の単純計画生成 |
@@ -115,7 +115,7 @@ flowchart TB
 1. クライアント層からユーザークエリを受信
 2. Qdrantから利用可能なコレクション一覧を動的取得
 3. LLMで質問の複雑度を推定（失敗時はキーワードベースにフォールバック）
-4. プロンプトを構築しGemini APIで構造化出力（`response_schema=ExecutionPlan`）により計画を生成
+4. プロンプトを構築しGemini APIで構造化出力（`response_schema=ExecutionPlan`）により計画を生成（最大2回リトライ、JSON完全性チェック付き）
 5. `ExecutionPlan`オブジェクトをExecutorに返却
 
 ---
@@ -127,33 +127,35 @@ flowchart TB
 ```mermaid
 flowchart TB
     subgraph CONST["定数・設定"]
-        PROMPT[PLAN_GENERATION_PROMPT]
-        COMPLEXITY[COMPLEXITY_ESTIMATION_PROMPT]
-        SEARCH_INST[SEARCH_QUERY_INSTRUCTION\n※services.promptsから参照]
+        PROMPT["PLAN_GENERATION_PROMPT"]
+        COMPLEXITY_P["COMPLEXITY_ESTIMATION_PROMPT"]
+        SEARCH_INST["SEARCH_QUERY_INSTRUCTION<br/>※services.promptsから参照"]
     end
 
-    subgraph PLANNER["Planner クラス"]
-        INIT["__init__()\n+ KeywordExtractor"]
-        CREATE["create_plan()\nAFC無効化・構造化出力"]
-        LEGACY["_create_plan_legacy()"]
-        GET_COLL["_get_available_collections()"]
-        FALLBACK["_create_fallback_plan()"]
-        EST["estimate_complexity()"]
-        EST_LLM["estimate_complexity_with_llm()\nAFC無効化・Noneガード"]
-        REFINE["refine_plan()\nAFC無効化"]
+    subgraph PLANNER_CLS["Planner クラス"]
+        INIT["__init__<br/>+ KeywordExtractor"]
+        CREATE["create_plan<br/>AFC無効化・構造化出力<br/>リトライ付き・JSON検証"]
+        LEGACY["_create_plan_legacy"]
+        GET_COLL["_get_available_collections"]
+        FALLBACK["_create_fallback_plan"]
+        EST["estimate_complexity"]
+        EST_LLM["estimate_complexity_with_llm<br/>AFC無効化・Noneガード"]
+        REFINE["refine_plan<br/>AFC無効化"]
     end
 
     subgraph FACTORY_GRP["ファクトリ関数"]
-        CREATE_P["create_planner()"]
+        CREATE_P["create_planner"]
     end
 
-    CONST --> PLANNER
+    PROMPT --> CREATE
+    COMPLEXITY_P --> EST_LLM
+    SEARCH_INST --> CREATE
     CREATE_P --> INIT
     INIT --> CREATE
     CREATE --> EST_LLM
     CREATE --> GET_COLL
     CREATE --> FALLBACK
-    EST_LLM -.->|失敗時| EST
+    EST_LLM -.-> |"失敗時"| EST
     CREATE --> REFINE
 ```
 
@@ -186,7 +188,7 @@ flowchart TB
 | メソッド | 概要 |
 |---------|------|
 | `__init__(config, model_name)` | コンストラクタ（設定・モデル名指定、KeywordExtractor初期化） |
-| `create_plan(query)` | LLMを使用して実行計画を生成（構造化出力、AFC無効化） |
+| `create_plan(query)` | LLMを使用して実行計画を生成（構造化出力、AFC無効化、最大2回リトライ、JSON完全性チェック） |
 | `_create_plan_legacy(query)` | Legacy Agent委譲用の単純計画生成 |
 | `_get_available_collections()` | Qdrantからコレクション一覧を取得 |
 | `_create_fallback_plan(query)` | フォールバック用の単純計画生成 |
@@ -249,7 +251,7 @@ planner = Planner(config=config, model_name="gemini-3-flash-preview")
 
 #### メソッド: `create_plan`
 
-**概要**: 質問から実行計画を生成します（LLM使用版）。利用可能なコレクションを取得し、複雑度を推定した上で、Gemini APIの構造化出力（`response_schema=ExecutionPlan`）を使用してJSON形式の計画を生成します。AFC（Automatic Function Calling）は明示的に無効化されています。
+**概要**: 質問から実行計画を生成します（LLM使用版）。利用可能なコレクションを取得し、複雑度を推定した上で、Gemini APIの構造化出力（`response_schema=ExecutionPlan`）を使用してJSON形式の計画を生成します。AFC（Automatic Function Calling）は明示的に無効化されています。リトライロジック（最大2回）とJSON完全性チェックを実装し、空レスポンスや不完全JSONからの耐障害性を強化しています。
 
 ```python
 def create_plan(self, query: str) -> ExecutionPlan
@@ -262,7 +264,7 @@ def create_plan(self, query: str) -> ExecutionPlan
 | 項目 | 内容 |
 |------|------|
 | **Input** | `query: str` |
-| **Process** | 1. 利用可能なコレクションをQdrantから取得（`_get_available_collections`）<br>2. LLMで複雑度を推定（`estimate_complexity_with_llm`）<br>3. `PLAN_GENERATION_PROMPT`にコレクション情報＋クエリを埋め込みプロンプト構築<br>4. IPOログにINPUTを出力<br>5. Gemini APIで構造化出力（`response_schema=ExecutionPlan`, `max_output_tokens=8192`, AFC無効化）<br>6. API応答時間を計測・ログ出力<br>7. IPOログにOUTPUTを出力<br>8. `ExecutionPlan.model_validate_json(response.text)`でパース<br>9. 事前推定した複雑度を`plan.complexity`に上書き<br>10. `create_plan_id()`で計画IDを設定<br>11. `validate_plan_dependencies()`で依存関係を検証（エラーは警告のみ）<br>12. 失敗時は`_create_fallback_plan()`を返却 |
+| **Process** | 1. 利用可能なコレクションをQdrantから取得（`_get_available_collections`）<br>2. LLMで複雑度を推定（`estimate_complexity_with_llm`）<br>3. `PLAN_GENERATION_PROMPT`にコレクション情報＋クエリを埋め込みプロンプト構築<br>4. IPOログにINPUTを出力<br>5. **リトライループ（最大2回）で以下を実行:**<br>&nbsp;&nbsp;5a. Gemini APIで構造化出力（`response_schema=ExecutionPlan`, `max_output_tokens=8192`, AFC無効化）<br>&nbsp;&nbsp;5b. API応答時間を計測・ログ出力<br>&nbsp;&nbsp;5c. IPOログにOUTPUTを出力<br>&nbsp;&nbsp;5d. 空レスポンスガード（`response.text`が空なら`continue`）<br>&nbsp;&nbsp;5e. JSON完全性チェック（`json.loads()`で検証、失敗なら`continue`）<br>&nbsp;&nbsp;5f. `ExecutionPlan.model_validate_json(response.text)`でパース<br>6. 事前推定した複雑度を`plan.complexity`に上書き<br>7. `create_plan_id()`で計画IDを設定<br>8. `validate_plan_dependencies()`で依存関係を検証（エラーは警告のみ）<br>9. 全リトライ失敗時は`_create_fallback_plan()`を返却 |
 | **Output** | `ExecutionPlan`: 実行計画オブジェクト |
 
 > 📝 **注意**: `automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)` を設定し、AFC永続化によるJSON mode空レスポンスバグを防止しています（See: [python-genai#1818](https://github.com/googleapis/python-genai/issues/1818)）。
@@ -390,7 +392,7 @@ print(f"利用可能なコレクション: {collections}")
 
 #### メソッド: `_create_fallback_plan`
 
-**概要**: フォールバック用の単純な計画を生成します。LLMによる計画生成が失敗した場合に使用される、wikipedia_jaを検索してreasoningで回答する2ステップの固定計画を作成します。
+**概要**: フォールバック用の単純な計画を生成します。LLMによる計画生成が失敗した場合に使用される2ステップの計画を作成します。コレクションは動的に取得し、「wikipedia」を含むコレクションを優先的に選択します（該当なしの場合はNone＝自動選択）。Step 1のfallbackは`web_search`です。
 
 ```python
 def _create_fallback_plan(self, query: str) -> ExecutionPlan
@@ -403,7 +405,7 @@ def _create_fallback_plan(self, query: str) -> ExecutionPlan
 | 項目 | 内容 |
 |------|------|
 | **Input** | `query: str` |
-| **Process** | wikipedia_jaを検索→reasoningで回答する2ステップ計画を作成 |
+| **Process** | 1. `_get_available_collections()`で利用可能なコレクションを動的取得<br>2. 「wikipedia」を含むコレクションを検索、見つからなければNone（自動選択）<br>3. rag_search（fallback: web_search）→reasoningの2ステップ計画を作成 |
 | **Output** | `ExecutionPlan`: フォールバック計画 |
 
 **戻り値例**:
@@ -417,11 +419,11 @@ ExecutionPlan(
         PlanStep(
             step_id=1,
             action="rag_search",
-            description="wikipedia_jaから関連情報を検索",
+            description="全コレクションから関連情報を検索",
             query="質問文",
-            collection="wikipedia_ja",
+            collection="wikipedia_ja",  # 動的取得。該当なしの場合はNone
             expected_output="関連するドキュメントや情報",
-            fallback="reasoning"
+            fallback="web_search"  # v3.0: reasoning → web_search に変更
         ),
         PlanStep(
             step_id=2,
@@ -634,7 +636,8 @@ PLAN_GENERATION_PROMPT = f"""
 あなたは計画策定の専門家です。ユーザーの質問を分析し、回答を生成するための実行計画を作成してください。
 
 【利用可能なアクション】
-- rag_search: ベクトルDB（Qdrant）から関連情報を検索
+- rag_search: ベクトルDB（Qdrant）から関連情報を検索（社内ドキュメント・FAQ向け）
+- web_search: Web検索で最新情報や一般的な情報を取得（最新ニュース・外部情報向け）
 - reasoning: 収集した情報を分析・統合して回答を生成
 - ask_user: ユーザーに追加情報や確認を求める
 
@@ -657,6 +660,11 @@ PLAN_GENERATION_PROMPT = f"""
 3. 依存関係を正しく設定してください（depends_onは先行ステップのIDのみ）。
 4. 失敗時の代替手段（fallback）を検討してください。
 5. 最後のステップは必ず "reasoning" で回答を生成してください
+6. rag_search と web_search の使い分け:
+    * 社内ドキュメント・FAQ・ナレッジベースの情報 → rag_search
+    * 最新ニュース・外部Web情報・一般知識 → web_search
+    * RAGに情報がない可能性がある場合 → rag_search（fallbackに"web_search"を指定）
+    * 両方必要な場合 → rag_search → web_search → reasoning の3ステップ
 
 {SEARCH_QUERY_INSTRUCTION}
 
@@ -848,6 +856,7 @@ __all__ = [
 | 1.2 | ドキュメント改修: 目次を追加 |
 | 1.3 | ドキュメント改修: ASCII図をMermaid v9フローチャートに変更、GraceConfig設定情報を詳細化 |
 | 2.0 | コード改修に伴う全面更新: PLAN_GENERATION_PROMPT拡張（コレクション選択ルール・検索クエリ作成ルール・複雑度目安・requires_confirmation条件・SEARCH_QUERY_INSTRUCTION埋め込み）、全LLM呼び出し箇所にAFC無効化追加、create_planにIPOログ出力・API時間計測・max_output_tokens=8192を追加、estimate_complexity_with_llmにNoneガード・API時間計測を追加、refine_planにAPI時間計測を追加、フォーマット仕様v1.4準拠（各責務対応のモジュール テーブル追加） |
+| 3.0 | コード改修に伴う更新: PLAN_GENERATION_PROMPTにweb_searchアクション追加・ルール6（rag_search/web_search使い分け）追加、create_planにリトライロジック（最大2回）・JSON完全性チェック・空レスポンスガードを追加、_create_fallback_planを動的コレクション選択に変更・fallbackをreasoning→web_searchに変更 |
 
 ---
 
@@ -906,8 +915,10 @@ flowchart LR
 
 | 状況 | 動作 | ログレベル |
 |-----|------|----------|
-| Gemini API呼び出し失敗 | `_create_fallback_plan()`を使用 | ERROR |
-| JSONパース失敗 | `_create_fallback_plan()`を使用 | ERROR |
+| Gemini API呼び出し失敗 | リトライ（最大2回）→全失敗時は`_create_fallback_plan()` | WARNING / ERROR |
+| 空レスポンス | リトライ（`continue`）→全失敗時は`_create_fallback_plan()` | WARNING |
+| 不完全/無効なJSON | JSON完全性チェックで検出→リトライ（`continue`） | WARNING |
+| JSONパース失敗（Pydantic） | リトライ→全失敗時は`_create_fallback_plan()` | WARNING / ERROR |
 | AFC永続化による空レスポンス | AFC無効化設定により防止 | ― |
 
 ### コレクション取得失敗時

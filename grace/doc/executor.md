@@ -1,6 +1,6 @@
 # executor.py - GRACE計画実行エージェント ドキュメント
 
-**Version 2.0** | 最終更新: 2026-02-12
+**Version 3.0** | 最終更新: 2026-02-19
 
 ---
 
@@ -112,6 +112,7 @@ flowchart TB
 
         subgraph TOOLS["ToolRegistry"]
             RAG[RAGSearch Tool]
+            WEB[WebSearch Tool]
             REASON[Reasoning Tool]
             ASK[AskUser Tool]
             LEGACY[Legacy ReActAgent]
@@ -246,7 +247,7 @@ flowchart TB
 | `grace.schemas` | ExecutionPlan, PlanStep, StepResult, ExecutionResult, StepStatus, create_plan_id |
 | `grace.tools` | ToolRegistry, ToolResult, create_tool_registry |
 | `grace.config` | get_config, GraceConfig設定管理 |
-| `grace.confidence` | ConfidenceCalculator, ConfidenceFactors, ConfidenceScore, LLMSelfEvaluator, ConfidenceAggregator, ActionDecision, InterventionLevel, create_confidence_calculator, create_llm_evaluator, create_confidence_aggregator, create_query_coverage_calculator |
+| `grace.confidence` | ConfidenceCalculator, ConfidenceFactors, ConfidenceScore, LLMSelfEvaluator, ConfidenceAggregator, ActionDecision, InterventionLevel, create_confidence_calculator, create_llm_evaluator, create_confidence_aggregator, create_query_coverage_calculator, create_source_agreement_calculator |
 | `grace.intervention` | InterventionHandler, InterventionRequest, InterventionResponse, InterventionAction, create_intervention_handler |
 | `grace.replan` | ReplanOrchestrator, create_replan_orchestrator |
 | `services.agent_service` | ReActAgent, get_available_collections_from_qdrant_helper（オプション、Legacy Agent用） |
@@ -661,7 +662,7 @@ def _prepare_tool_kwargs(self, step: PlanStep, state: ExecutionState) -> Dict[st
 | 項目 | 内容 |
 |------|------|
 | **Input** | `step: PlanStep`, `state: ExecutionState` |
-| **Process** | 1. 基本引数（query）を設定<br>2. `rag_search`: collection引数を追加<br>3. `reasoning`: 依存ステップの結果をパースしcontext/sourcesとして追加<br>4. `ask_user`: question/reason/urgencyを追加 |
+| **Process** | 1. 基本引数（query）を設定<br>2. `rag_search`: collection引数を追加<br>3. `web_search`: num_results/language引数を追加（config.web_searchから取得）<br>4. `reasoning`: 依存ステップの結果をパースしcontext/sourcesとして追加<br>5. `ask_user`: question/reason/urgencyを追加 |
 | **Output** | `Dict[str, Any]`: ツール実行引数 |
 
 ---
@@ -1006,6 +1007,10 @@ LEGACY_AGENT_AVAILABLE: bool
 | `qdrant.search_priority` | list | `["wikipedia_ja", ...]` | 検索優先順序（コレクション取得失敗時のフォールバック） |
 | `confidence.weights.*` | float | 各種 | 信頼度計算の重み |
 | `confidence.thresholds.*` | float | 各種 | 介入レベルの閾値 |
+| `web_search.backend` | str | `"serpapi"` | Web検索バックエンド（"serpapi" / "duckduckgo" / "google_cse"） |
+| `web_search.num_results` | int | 5 | Web検索の取得件数（`_prepare_tool_kwargs`で使用） |
+| `web_search.language` | str | `"ja"` | Web検索の言語（`_prepare_tool_kwargs`で使用） |
+| `web_search.timeout` | int | 30 | Web検索のタイムアウト（秒） |
 | `replan.max_replans` | int | 3 | 最大リプラン回数 |
 
 ---
@@ -1136,6 +1141,7 @@ __all__ = [
 | 0.1.0 | 初版作成 |
 | 1.0 | ドキュメント改修: a_md_doc_format.md v1.2に準拠、主な責務・主要機能一覧・IPO詳細に「**概要**:」ラベルを追加 |
 | 2.0 | フォーマット仕様v1.4準拠: ASCII図をMermaid v9フローチャートに全面変更、「各責務対応のモジュール」テーブル追加、`_execute_fallback`/`_prepare_tool_kwargs`/`_format_output`/`_create_execution_result`/各介入処理メソッドのIPO詳細を追加、execute_plan_generatorのProcess詳細化（yield from中継・介入時一時停止・リプラン再帰の記載）、llm.modelを「設定ファイル依存」に変更 |
+| 3.0 | web_search対応: アーキテクチャ図にWebSearch Tool追加、`_prepare_tool_kwargs`にweb_search引数（num_results/language）追加、設定テーブルにweb_search.*設定を追加、内部依存にcreate_source_agreement_calculator追加 |
 
 ---
 

@@ -3,7 +3,6 @@ GRACE Confidence - 信頼度計算システム
 
 ハイブリッド方式（重み付き平均 + LLM自己評価）による
 多軸信頼度計算を実装
-ーー改修： 2025-12-26 LLM化する。
 """
 
 import logging
@@ -592,8 +591,11 @@ class LLMSelfEvaluator:
                     temperature=0.0,
                     max_output_tokens=200,
                     response_mime_type="application/json",
+                    # Python SDK: types.GenerateContentConfig では response_schema にPydanticクラスを直接渡す
+                    # dict config の場合は response_json_schema + .model_json_schema()
+                    # See: https://ai.google.dev/gemini-api/docs/structured-output
                     response_schema=EvaluationResult,
-                    # AFC無効化: AFC永続化によりresponse.parsedがNone/テキスト混入するバグを防止
+                    # AFC無効化: AFC永続化によるresponse異常を防止
                     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                 )
             )
@@ -605,31 +607,44 @@ class LLMSelfEvaluator:
                     return {"score": factors.search_max_score, "reason": "LLM empty response, using search score"}
                 return {"score": 0.5, "reason": "No response from LLM"}
 
-            # --- TODO #5: response.parsed の Noneガード + テキストフォールバック ---
-            result = response.parsed  # EvaluationResult オブジェクト
-            if result is not None and hasattr(result, 'score') and result.score is not None:
-                score = float(result.score)
-                reason = result.reason or "No reason provided"
-            else:
-                # parsed が失敗した場合、response.text から手動パース
-                logger.warning(f"response.parsed is None, attempting manual parse from text: {response.text[:200]}")
-                import json as _json
-                try:
-                    text = response.text.strip()
-                    # Markdownコードブロックの除去
-                    if text.startswith("```"):
-                        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-                    data = _json.loads(text)
-                    score = float(data.get("score", 0.5))
-                    reason = data.get("reason", "Parsed from raw text")
-                except (_json.JSONDecodeError, ValueError, KeyError) as parse_err:
-                    logger.warning(f"Manual parse also failed: {parse_err}")
-                    if factors.search_max_score > 0:
-                        logger.info(f"Fallback to search_max_score: {factors.search_max_score:.4f}")
-                        return {"score": factors.search_max_score, "reason": "LLM parse failed, using search score"}
-                    return {"score": 0.5, "reason": f"Parse error: {str(parse_err)}"}
+            # --- response.text からJSONを抽出してパース ---
+            import json as _json
+            raw_text = response.text.strip()
+            logger.info(f"evaluate_with_factors raw response ({len(raw_text)} chars): {raw_text[:300]}")
 
-            return {"score": score, "reason": reason}
+            try:
+                # Step 1: response.parsed を試行（利用可能な場合）
+                result = getattr(response, 'parsed', None)
+                if result is not None and hasattr(result, 'score') and result.score is not None:
+                    score = float(result.score)
+                    reason = result.reason or "No reason provided"
+                    logger.info(f"evaluate_with_factors: parsed successfully: score={score}, reason={reason}")
+                    return {"score": score, "reason": reason}
+
+                # Step 2: response.text から直接JSONパース
+                text = raw_text
+                # Markdownコードブロックの除去
+                if text.startswith("```"):
+                    text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+                # プレーンテキストのプリアンブル除去（"Here is the JSON requested:" 等）
+                json_start = text.find("{")
+                json_end = text.rfind("}") + 1
+                if json_start >= 0 and json_end > json_start:
+                    text = text[json_start:json_end]
+
+                data = _json.loads(text)
+                score = float(data.get("score", 0.5))
+                reason = data.get("reason", "Parsed from raw text")
+                logger.info(f"evaluate_with_factors: manual parse success: score={score}, reason={reason}")
+                return {"score": score, "reason": reason}
+
+            except (_json.JSONDecodeError, ValueError, KeyError, TypeError) as parse_err:
+                logger.warning(f"evaluate_with_factors: all parse attempts failed: {parse_err}")
+                if factors.search_max_score > 0:
+                    logger.info(f"Fallback to search_max_score: {factors.search_max_score:.4f}")
+                    return {"score": factors.search_max_score, "reason": "LLM parse failed, using search score"}
+                return {"score": 0.5, "reason": f"Parse error: {str(parse_err)}"}
 
         except Exception as e:
             logger.error(f"evaluate_with_factors failed: {e}")

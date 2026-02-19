@@ -261,6 +261,60 @@ class ExecutionResult(BaseModel):
 
 
 # =============================================================================
+# 検索結果スキーマ（RAG/Web共通）
+# =============================================================================
+
+class SearchResultPayload(BaseModel):
+    """検索結果ペイロード（RAG/Web共通）"""
+
+    question: str = Field(
+        "",
+        description="関連質問文（RAG検索時）"
+    )
+
+    answer: str = Field(
+        "",
+        description="回答・スニペット文"
+    )
+
+    content: str = Field(
+        "",
+        description="本文コンテンツ（question/answerがない場合）"
+    )
+
+    source: str = Field(
+        "",
+        description="出典URLまたはファイル名"
+    )
+
+    title: str = Field(
+        "",
+        description="ドキュメント・ページタイトル"
+    )
+
+
+class SearchResultItem(BaseModel):
+    """検索結果1件（RAG/Web共通フォーマット）"""
+
+    score: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="関連度スコア（0.0-1.0）"
+    )
+
+    payload: SearchResultPayload = Field(
+        default_factory=SearchResultPayload,
+        description="検索結果の詳細情報"
+    )
+
+    collection: str = Field(
+        "",
+        description="検索元コレクション名（例: 'wikipedia_ja', 'web_search'）"
+    )
+
+
+# =============================================================================
 # ユーティリティ
 # =============================================================================
 
@@ -312,6 +366,10 @@ __all__ = [
     # Result schemas
     "StepResult",
     "ExecutionResult",
+
+    # Search result schemas (RAG/Web common)
+    "SearchResultPayload",
+    "SearchResultItem",
 
     # Utilities
     "create_plan_id",

@@ -1,6 +1,6 @@
 # replan.py - 動的リプランニングシステム ドキュメント
 
-**Version 1.3** | 最終更新: 2026-02-13
+**Version 1.4** | 最終更新: 2026-02-20
 
 ---
 
@@ -27,7 +27,7 @@
 
 - リプランのトリガー条件判定（ステップ失敗・低信頼度・ユーザーフィードバック）
 - リプラン戦略の決定（部分再計画・全体再計画・代替・スキップ・中断）
-- 失敗情報やフィードバックを考慮した新計画の生成
+- 失敗情報やフィードバックを考慮した新計画の生成（フォールバックチェーン付き）
 - リプラン履歴の管理
 - Executorとの統合によるリプランフロー制御
 
@@ -37,7 +37,7 @@
 |---|------|--------------|------|
 | 1 | リプランのトリガー条件判定 | `replan.py` | `ReplanManager.should_replan()` / `should_replan_from_feedback()` |
 | 2 | リプラン戦略の決定 | `replan.py` | `ReplanManager.determine_strategy()` でコンテキストに応じた戦略選択 |
-| 3 | 失敗情報やフィードバックを考慮した新計画の生成 | `replan.py` + `planner.py` | `ReplanManager.create_new_plan()` が `Planner.create_plan()` を呼び出し |
+| 3 | 失敗情報やフィードバックを考慮した新計画の生成 | `replan.py` + `planner.py` | `ReplanManager.create_new_plan()` が `Planner.create_plan()` を呼び出し。フォールバック時は `_SEARCH_FALLBACK_CHAIN` で検索系アクションを優先 |
 | 4 | リプラン履歴の管理 | `replan.py` | `ReplanManager` が `history: List[ReplanResult]` で管理 |
 | 5 | Executorとの統合によるリプランフロー制御 | `replan.py` | `ReplanOrchestrator` が判定→コンテキスト作成→戦略決定→実行を統合 |
 
@@ -50,10 +50,12 @@
 | `ReplanContext` | リプラン時のコンテキストデータクラス |
 | `ReplanResult` | リプラン結果データクラス |
 | `ReplanManager` | リプランの判定・戦略決定・計画生成を担う中核クラス |
+| `ReplanManager._SEARCH_FALLBACK_CHAIN` | 検索系アクションのフォールバック優先順位マッピング（クラス変数） |
 | `ReplanManager.should_replan()` | ステップ実行結果に基づくリプラン要否判定 |
 | `ReplanManager.should_replan_from_feedback()` | ユーザーフィードバックに基づくリプラン要否判定 |
 | `ReplanManager.determine_strategy()` | コンテキストに応じたリプラン戦略の決定 |
 | `ReplanManager.create_new_plan()` | 戦略に応じた新計画の生成 |
+| `ReplanManager._apply_fallback()` | 代替アクション適用（フォールバックチェーン昇格付き） |
 | `ReplanOrchestrator` | ExecutorとReplanManagerを統合するオーケストレーター |
 | `ReplanOrchestrator.handle_step_failure()` | ステップ失敗時の自動リプラン処理 |
 | `ReplanOrchestrator.handle_user_feedback()` | ユーザーフィードバックによるリプラン処理 |
@@ -67,22 +69,22 @@
 ### 1.1 システム全体構成
 
 ```mermaid
-graph TB
-    subgraph CLIENT [クライアント層]
+flowchart TB
+    subgraph CLIENT["クライアント層"]
         EXECUTOR[StepExecutor]
         UI[UserInterface]
         MON[Monitoring]
     end
 
-    subgraph MODULE [replan.py]
+    subgraph MODULE["replan.py"]
         ORCH[ReplanOrchestrator]
         MGR[ReplanManager]
     end
 
-    subgraph EXTERNAL [外部サービス層]
-        PLANNER_MOD[planner.py Planner]
-        SCHEMAS[schemas.py ExecutionPlan PlanStep StepResult]
-        CONFIG[config.py GraceConfig]
+    subgraph EXTERNAL["外部サービス層"]
+        PLANNER_MOD["planner.py Planner"]
+        SCHEMAS["schemas.py ExecutionPlan PlanStep StepResult"]
+        CONFIG["config.py GraceConfig"]
     end
 
     ORCH --> MGR
@@ -99,7 +101,7 @@ graph TB
 1. クライアント層（Executor/UI）がステップ失敗またはユーザーフィードバックを検知
 2. `ReplanOrchestrator`がリプラン要否を`ReplanManager`に問い合わせ
 3. `ReplanManager`がトリガー条件を判定し、リプラン戦略を決定
-4. 戦略に応じて`Planner`を呼び出し、新しい`ExecutionPlan`を生成
+4. 戦略に応じて`Planner`を呼び出し、新しい`ExecutionPlan`を生成（FALLBACK戦略では`_SEARCH_FALLBACK_CHAIN`で検索系アクションを優先昇格）
 5. `ReplanResult`をクライアント層に返却
 
 ---
@@ -129,6 +131,7 @@ flowchart TB
         FULL["_create_full_replan()"]
         PARTIAL["_create_partial_replan()"]
         FALLBACK["_apply_fallback()"]
+        CHAIN["_SEARCH_FALLBACK_CHAIN"]
         SKIP["_skip_failed_step()"]
         ENHANCE["_enhance_query_with_context()"]
         REMAIN["_create_remaining_query()"]
@@ -164,6 +167,7 @@ flowchart TB
     PARTIAL --> REMAIN
     PARTIAL --> ADJUST
     DET --> FIND
+    FALLBACK --> CHAIN
 ```
 
 ### 2.2 外部依存関係
@@ -240,9 +244,10 @@ flowchart TB
 
 #### ReplanManager
 
-| メソッド | 概要 |
-|---------|------|
+| メソッド / 属性 | 概要 |
+|----------------|------|
 | `__init__(config, planner)` | コンストラクタ（設定・Planner指定） |
+| `_SEARCH_FALLBACK_CHAIN` | 検索系アクションのフォールバック優先順位（クラス変数） |
 | `should_replan(step_result, replan_count)` | ステップ結果に基づくリプラン要否判定 |
 | `should_replan_from_feedback(feedback, replan_count)` | フィードバックに基づくリプラン要否判定 |
 | `determine_strategy(context, current_plan)` | リプラン戦略の決定 |
@@ -253,7 +258,7 @@ flowchart TB
 | `_get_planner()` | Plannerの遅延初期化取得 |
 | `_create_full_replan(context)` | 全体再計画の実行 |
 | `_create_partial_replan(context, current_plan)` | 部分再計画の実行 |
-| `_apply_fallback(context, current_plan)` | 代替アクションの適用 |
+| `_apply_fallback(context, current_plan)` | 代替アクションの適用（フォールバックチェーン昇格付き） |
 | `_skip_failed_step(context, current_plan)` | 失敗ステップのスキップ |
 | `_enhance_query_with_context(original_query, context)` | エラーコンテキスト付きクエリ生成 |
 | `_create_remaining_query(context, completed_steps)` | 残りステップ用クエリ生成 |
@@ -510,7 +515,7 @@ print(f"成功: {result.success}, 戦略: {result.strategy.value}")
 
 ### 4.5 ReplanManager クラス
 
-動的リプランニングの中核クラス。リプランの要否判定、戦略決定、新計画の生成を担う。内部で`Planner`を遅延初期化し、設定に基づいた閾値管理とリプラン履歴の記録を行う。
+動的リプランニングの中核クラス。リプランの要否判定、戦略決定、新計画の生成を担う。内部で`Planner`を遅延初期化し、設定に基づいた閾値管理とリプラン履歴の記録を行う。検索系アクションのフォールバック時には`_SEARCH_FALLBACK_CHAIN`により代替検索手段への昇格を行う。
 
 #### コンストラクタ: `__init__`
 
@@ -546,6 +551,24 @@ manager = ReplanManager()
 config = get_config()
 manager = ReplanManager(config=config)
 ```
+
+#### クラス変数: `_SEARCH_FALLBACK_CHAIN`
+
+**概要**: 検索系アクションのフォールバック優先順位を定義するクラス変数。`_apply_fallback()`で使用され、検索系アクションが失敗した際にfallbackが`reasoning`に設定されていても、別の検索手段に昇格させる。
+
+```python
+_SEARCH_FALLBACK_CHAIN = {
+    "rag_search": "web_search",
+    "web_search": "rag_search",
+}
+```
+
+| キー | 値 | 説明 |
+|-----|-----|------|
+| `"rag_search"` | `"web_search"` | RAG検索失敗 → Web検索にフォールバック |
+| `"web_search"` | `"rag_search"` | Web検索失敗 → RAG検索にフォールバック |
+
+> 📝 **注意**: このフォールバックチェーンは`_apply_fallback()`内でのみ参照される。元のステップの`fallback`が`"reasoning"`で、かつ元の`action`が検索系（`_SEARCH_FALLBACK_CHAIN`のキーに存在）の場合に昇格が発動する。
 
 #### メソッド: `should_replan`
 
@@ -827,7 +850,7 @@ def _create_partial_replan(
 
 #### メソッド: `_apply_fallback`
 
-**概要**: 失敗ステップを代替アクション（`step.fallback`）に置き換える。
+**概要**: 失敗ステップを代替アクション（`step.fallback`）に置き換える。検索系アクション（`rag_search`/`web_search`）のfallbackが`reasoning`に設定されている場合、`_SEARCH_FALLBACK_CHAIN`に基づき別の検索手段に昇格させる。
 
 ```python
 def _apply_fallback(
@@ -845,8 +868,38 @@ def _apply_fallback(
 | 項目 | 内容 |
 |------|------|
 | **Input** | `context: ReplanContext`, `current_plan: ExecutionPlan` |
-| **Process** | 1. `failed_step_id`がなければ`current_plan`をそのまま返却<br>2. 失敗ステップの`fallback`を`action`に設定した新ステップで置換<br>3. `description`に`[代替]`プレフィックスを付与<br>4. `requires_confirmation = False`で返却 |
+| **Process** | 1. `failed_step_id`がなければ`current_plan`をそのまま返却<br>2. 失敗ステップの`fallback`を取得<br>3. **フォールバックチェーン昇格**: `fallback == "reasoning"` かつ `step.action`が`_SEARCH_FALLBACK_CHAIN`のキーに存在する場合、`_SEARCH_FALLBACK_CHAIN[step.action]`に昇格（例: `rag_search`失敗 → fallback `reasoning` → 昇格して `web_search`）<br>4. 昇格後のアクションで新ステップを作成（`description`に`[代替]`プレフィックス付与）<br>5. フォールバック先が`web_search`の場合は`collection=None`に設定<br>6. 代替ステップの`fallback`は`None`（二重フォールバック防止）<br>7. `requires_confirmation = False`で返却 |
 | **Output** | `ExecutionPlan`: 代替アクション適用済みの計画 |
+
+> 📝 **注意**: フォールバックチェーン昇格は`fallback`フィールドが`"reasoning"`の場合にのみ発動する。`fallback`が直接`"web_search"`や`"rag_search"`に設定されている場合はそのまま使用される。
+
+**戻り値例**:
+```python
+# rag_search(fallback="reasoning") → web_searchに昇格された計画
+ExecutionPlan(
+    original_query="...",
+    steps=[
+        PlanStep(step_id=1, action="web_search", description="[代替] RAGで情報検索", collection=None, ...),
+        PlanStep(step_id=2, action="reasoning", ...)
+    ],
+    requires_confirmation=False,
+    ...
+)
+```
+
+```python
+# 使用例: RAG検索失敗 → Web検索にフォールバック昇格
+context = ReplanContext(
+    trigger=ReplanTrigger.STEP_FAILED,
+    original_query="AI研究の最新動向",
+    failed_step_id=1
+)
+# step 1: action="rag_search", fallback="reasoning"
+# → _apply_fallback()により action="web_search" に昇格
+result = manager.create_new_plan(context, ReplanStrategy.FALLBACK, plan)
+print(result.new_plan.steps[0].action)
+# 出力: web_search
+```
 
 #### メソッド: `_skip_failed_step`
 
@@ -1197,7 +1250,25 @@ class ReplanConfig(BaseModel):
 
 > 📝 **注意**: `cooldown_seconds`は`ReplanConfig`に定義されているが、現在の`replan.py`実装では参照されていない。将来的なリプラン間隔制御に使用される予定と推測される。
 
-### 5.2 修正キーワード
+### 5.2 _SEARCH_FALLBACK_CHAIN（クラス変数）
+
+`ReplanManager`のクラス変数として定義される検索系アクションのフォールバック優先順位マッピング。`_apply_fallback()`内で、元の`fallback`が`"reasoning"`に設定されている検索系アクションの代替手段を決定する際に使用される。
+
+```python
+_SEARCH_FALLBACK_CHAIN = {
+    "rag_search": "web_search",   # RAG失敗 → Web検索
+    "web_search": "rag_search",   # Web失敗 → RAG検索
+}
+```
+
+| 元アクション | フォールバック先 | 説明 |
+|-------------|----------------|------|
+| `rag_search` | `web_search` | RAG検索が失敗した場合、Web検索で代替 |
+| `web_search` | `rag_search` | Web検索が失敗した場合、RAG検索で代替 |
+
+**昇格条件**: 元ステップの`fallback`が`"reasoning"`かつ元の`action`が`_SEARCH_FALLBACK_CHAIN`のキーに存在する場合に発動。
+
+### 5.3 修正キーワード
 
 `should_replan_from_feedback()`で使用するフィードバック判定キーワード。
 
@@ -1205,7 +1276,7 @@ class ReplanConfig(BaseModel):
 modification_keywords = ["修正", "変更", "やり直し", "違う", "別の"]
 ```
 
-### 5.3 戦略決定ロジック定数
+### 5.4 戦略決定ロジック定数
 
 | 条件 | 閾値 | 結果 |
 |------|------|------|
@@ -1330,6 +1401,7 @@ __all__ = [
 | 1.1 | IPO詳細の追加、使用例の充実 |
 | 1.2 | アーキテクチャ構成図・モジュール構成図追加、プライベートメソッドの詳細記述 |
 | 1.3 | フォーマット仕様v1.4準拠: 「各責務対応のモジュール」テーブル追加、ASCII図をMermaid v9フローチャートに変更、クラス一覧・関数一覧の構成を仕様に準拠、ReplanContext/ReplanResultのIPO詳細にコンストラクタ・プロパティ・メソッドを個別記述化、config.pyのReplanConfig定義に基づく設定・定数セクションの正確化（cooldown_seconds追加・未使用注記） |
+| 1.4 | `_SEARCH_FALLBACK_CHAIN`クラス変数の追加記載、`_apply_fallback()`のフォールバックチェーン昇格ロジック（検索系アクション→別検索手段への昇格、`collection=None`設定）を反映、モジュール構成図にCHAINノード追加、主要機能一覧・クラス一覧にフォールバックチェーン関連を追加、Mermaid図のノードラベルをダブルクォート化（PyCharm Pro v9準拠） |
 
 ---
 
@@ -1337,7 +1409,7 @@ __all__ = [
 
 ```mermaid
 flowchart LR
-    REPLAN[replan.py]
+    REPLAN["replan.py"]
 
     subgraph STDLIB["標準ライブラリ"]
         LOGGING[logging]
@@ -1348,9 +1420,9 @@ flowchart LR
     end
 
     subgraph INTERNAL["内部モジュール"]
-        SCHEMAS[.schemas]
-        PLANNER[.planner]
-        CONFIG[.config]
+        SCHEMAS[".schemas"]
+        PLANNER[".planner"]
+        CONFIG[".config"]
     end
 
     REPLAN --> LOGGING

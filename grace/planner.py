@@ -187,6 +187,7 @@ class Planner:
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             response_mime_type="application/json",
+                            # Python SDK: types.GenerateContentConfig では response_schema にPydanticクラスを直接渡す
                             response_schema=ExecutionPlan,
                             temperature=self.config.llm.temperature,
                             max_output_tokens=8192,
@@ -453,6 +454,7 @@ class Planner:
                 contents=refine_prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
+                    # Python SDK: types.GenerateContentConfig では response_schema にPydanticクラスを直接渡す
                     response_schema=ExecutionPlan,
                     temperature=self.config.llm.temperature,
                     # AFC無効化

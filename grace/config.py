@@ -155,6 +155,7 @@ class WebSearchConfig(BaseModel):
 class ToolsConfig(BaseModel):
     """ツール設定"""
     enabled: list = Field(default_factory=lambda: ["rag_search", "web_search", "reasoning", "ask_user"])
+    disabled: list = Field(default_factory=list, description="プロジェクト全体で恒久的に禁止するツールのリスト")
 
 
 class GraceConfig(BaseModel):
