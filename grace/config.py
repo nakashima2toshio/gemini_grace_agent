@@ -136,6 +136,7 @@ class QdrantConfig(BaseModel):
     collection_name: str = "customer_support_faq"
     search_limit: int = 5
     score_threshold: float = 0.35
+    rag_sufficient_score: float = 0.7  # RAG結果が十分と判断するスコア閾値（これ未満ならweb_searchを動的実行）
     search_priority: list = Field(default_factory=lambda: ["wikipedia_ja", "livedoor", "cc_news", "japanese_text"])
 
 

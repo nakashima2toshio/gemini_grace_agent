@@ -61,10 +61,12 @@ PLAN_GENERATION_PROMPT = f"""
 4. 失敗時の代替手段（fallback）を検討してください。
 5. 最後のステップは必ず "reasoning" で回答を生成してください
 6. rag_search と web_search の使い分け:
-    * 社内ドキュメント・FAQ・ナレッジベースの情報 → rag_search
-    * 最新ニュース・外部Web情報・一般知識 → web_search
-    * RAGに情報がない可能性がある場合 → rag_search（fallbackに"web_search"を指定）
-    * 両方必要な場合 → rag_search → web_search → reasoning の3ステップ
+    * 計画には web_search ステップを含めないでください
+    * web_search は、rag_search の結果が不十分な場合に executor が自動的に実行します
+    * 計画は常に rag_search → reasoning の2ステップ構成としてください
+    * rag_search の fallback には "web_search" を指定してください
+    * 例外: ユーザーが明示的に「最新ニュースを検索して」等と指示した場合のみ、
+      web_search 単体のステップを計画に含めてよい
 
 {SEARCH_QUERY_INSTRUCTION}
 

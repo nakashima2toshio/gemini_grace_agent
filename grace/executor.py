@@ -6,7 +6,7 @@ GRACE Executor - 計画実行エージェント
 
 import logging
 import time
-from typing import Dict, Optional, List, Callable, Any, Generator
+from typing import Dict, Literal, Optional, List, Callable, Any, Generator, cast
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -223,6 +223,12 @@ class Executor:
                     logger.info("Execution cancelled")
                     break
 
+                # スキップ済みチェック（RAGスコア十分時にweb_searchを動的スキップした場合）
+                if state.step_statuses.get(step.step_id) == StepStatus.SKIPPED:
+                    logger.info(f"Step {step.step_id}: Already marked as SKIPPED, skipping")
+                    yield state
+                    continue
+
                 # 依存関係チェック
                 if not self._check_dependencies(step, state):
                     logger.warning(f"Step {step.step_id}: Dependencies not met, skipping")
@@ -253,6 +259,55 @@ class Executor:
                 state.step_statuses[step.step_id] = (
                     StepStatus.SUCCESS if result.status == "success" else StepStatus.FAILED
                 )
+
+                # --- RAG検索結果に基づく動的条件分岐 ---
+                if step.action == "rag_search" and result.status == "success":
+                    rag_max_score = 0.0
+                    if step.step_id in self.step_confidence_scores:
+                        rag_max_score = self.step_confidence_scores[step.step_id].factors.search_max_score
+
+                    rag_threshold = self.config.qdrant.rag_sufficient_score  # デフォルト 0.7
+
+                    # web_searchを実行すべきかの判定
+                    need_web_search = False
+
+                    if rag_max_score < rag_threshold:
+                        # スコア不足 → 無条件でweb_search
+                        logger.info(
+                            f"RAG score insufficient ({rag_max_score:.4f} < {rag_threshold}), "
+                            f"need web_search"
+                        )
+                        need_web_search = True
+                    else:
+                        # スコア十分 → LLMで意味的適合性を検証
+                        logger.info(
+                            f"RAG score sufficient ({rag_max_score:.4f} >= {rag_threshold}), "
+                            f"checking semantic relevance with LLM"
+                        )
+                        is_relevant = self._evaluate_rag_relevance(
+                            query=step.query or step.description,
+                            rag_output=result.output or "",
+                        )
+                        if not is_relevant:
+                            logger.info("RAG result not semantically relevant, need web_search")
+                            need_web_search = True
+                        else:
+                            logger.info("RAG result semantically relevant, skipping web_search")
+
+                    if need_web_search:
+                        # パターン(2)(3): web_search を動的実行
+                        web_result = yield from self._execute_dynamic_web_search(step, state)
+
+                        if web_result is None or web_result.status == "failed":
+                            # パターン(3): Webも失敗 → ask_user を動的実行
+                            logger.info("Web search also failed, executing ask_user")
+                            yield from self._execute_dynamic_ask_user(step, state)
+                    else:
+                        # パターン(1): web_search スキップ
+                        for future_step in steps_to_execute:
+                            if future_step.action == "web_search" and future_step.step_id > step.step_id:
+                                state.step_statuses[future_step.step_id] = StepStatus.SKIPPED
+                                logger.info(f"Skipping planned web_search step {future_step.step_id}")
 
                 # ステップ完了コールバック
                 if self.on_step_complete:
@@ -342,7 +397,9 @@ class Executor:
                 overall_confidence=0.0,
                 overall_status="failed",
                 replan_count=state.replan_count,
-                total_execution_time_ms=state.get_execution_time_ms()
+                total_execution_time_ms=state.get_execution_time_ms(),
+                total_token_usage=None,
+                total_cost_usd=None,
             )
 
     def execute_plan(self, plan: ExecutionPlan) -> ExecutionResult:
@@ -456,7 +513,9 @@ class Executor:
                 overall_confidence=0.0,
                 overall_status="failed",
                 replan_count=state.replan_count,
-                total_execution_time_ms=state.get_execution_time_ms()
+                total_execution_time_ms=state.get_execution_time_ms(),
+                total_token_usage=None,
+                total_cost_usd=None,
             )
 
     def _check_dependencies(self, step: PlanStep, state: ExecutionState) -> bool:
@@ -534,7 +593,8 @@ class Executor:
                 confidence=confidence,
                 sources=sources,
                 error=tool_result.error if not tool_result.success else None,
-                execution_time_ms=execution_time
+                execution_time_ms=execution_time,
+                token_usage=None,
             )
 
         except Exception as e:
@@ -554,7 +614,8 @@ class Executor:
                 output=None,
                 confidence=0.0,
                 error=str(e),
-                execution_time_ms=execution_time
+                execution_time_ms=execution_time,
+                token_usage=None,
             )
 
     def _execute_legacy_agent_step(self, step: PlanStep, state: ExecutionState, start_time: float) -> Generator[
@@ -635,7 +696,8 @@ class Executor:
             confidence=confidence,
             sources=sources,
             error=None,
-            execution_time_ms=execution_time
+            execution_time_ms=execution_time,
+            token_usage=None,
         )
 
     def _prepare_tool_kwargs(
@@ -644,7 +706,7 @@ class Executor:
             state: ExecutionState
     ) -> Dict[str, Any]:
         """ツール実行引数を準備"""
-        kwargs = {
+        kwargs: Dict[str, Any] = {
             "query": step.query or step.description,
         }
 
@@ -656,35 +718,38 @@ class Executor:
             kwargs["language"] = self.config.web_search.language
 
         elif step.action == "reasoning":
-            # 依存ステップの結果をコンテキストとして追加
+            # 全成功ステップの結果をコンテキストとして追加
+            # （depends_on ではなく state.step_results 全体を参照）
+            # → 動的挿入された web_search やリプラン後の結果も取得可能
             context_parts = []
             sources = []
-            logger.info(f"--- Step3 [DEBUG] Reasoning Step ---")
+            logger.info(f"--- Reasoning Step ---")
             logger.info(f"Step: {step}")
-            logger.info(f"State: {state}")
+            logger.info(f"Available step_results: {list(state.step_results.keys())}")
 
-            for dep_id in step.depends_on:
-                if dep_id in state.step_results:
-                    dep_result = state.step_results[dep_id]
-                    dep_output = dep_result.output
+            for dep_id in sorted(state.step_results.keys()):
+                dep_result = state.step_results[dep_id]
+                if dep_result.status != "success":
+                    continue
+                dep_output = dep_result.output
 
-                    if dep_output:
-                        # 文字列化されたリストを復元する試み
-                        if isinstance(dep_output, str):
-                            try:
-                                # RAG検索結果は "[{...}, {...}]" 形式で文字列化されている
-                                if dep_output.startswith("[{") or dep_output.startswith("[{'"):
-                                    import ast
-                                    parsed = ast.literal_eval(dep_output)
-                                    if isinstance(parsed, list):
-                                        sources.extend(parsed)
-                                        continue
-                            except (ValueError, SyntaxError):
-                                pass
-                            # パースできない場合はコンテキストとして追加
-                            context_parts.append(f"--- 参照情報 (Step {dep_id}) ---\n{dep_output}")
-                        elif isinstance(dep_output, list):
-                            sources.extend(dep_output)
+                if dep_output:
+                    # 文字列化されたリストを復元する試み
+                    if isinstance(dep_output, str):
+                        try:
+                            # RAG検索結果は "[{...}, {...}]" 形式で文字列化されている
+                            if dep_output.startswith("[{") or dep_output.startswith("[{'"):
+                                import ast
+                                parsed = ast.literal_eval(dep_output)
+                                if isinstance(parsed, list):
+                                    sources.extend(parsed)
+                                    continue
+                        except (ValueError, SyntaxError):
+                            pass
+                        # パースできない場合はコンテキストとして追加
+                        context_parts.append(f"--- 参照情報 (Step {dep_id}) ---\n{dep_output}")
+                    elif isinstance(dep_output, list):
+                        sources.extend(dep_output)
 
             if sources:
                 kwargs["sources"] = sources
@@ -700,6 +765,205 @@ class Executor:
 
         return kwargs
 
+    def _evaluate_rag_relevance(
+            self,
+            query: str,
+            rag_output: str,
+    ) -> bool:
+        """
+        LLMを使用してRAG検索結果がユーザーの質問に意味的に適合しているかを判定する。
+
+        コサイン類似度は文構造の類似性を反映するが、意味的な適合性は保証しない。
+        例: 「日本の多義性」と「言語の多義性」は文構造が似ているが主題が異なる。
+
+        Args:
+            query: ユーザーの元の質問文
+            rag_output: RAG検索結果の出力文字列
+
+        Returns:
+            bool: 適合していればTrue、不適合ならFalse
+        """
+        prompt = (
+            "以下の【検索結果】が、【ユーザーの質問】に対する回答として使えるかを判定してください。\n"
+            "\n"
+            "【判定基準】\n"
+            "- 検索結果の主題が質問の主題と一致しているか\n"
+            "- 質問に対する回答に必要な情報が含まれているか\n"
+            "\n"
+            f"【ユーザーの質問】\n{query}\n"
+            f"\n"
+            f"【検索結果】\n{rag_output[:500]}\n"
+            "\n"
+            "回答として使える場合は YES、使えない場合は NO とだけ回答してください。"
+        )
+
+        try:
+            from google import genai
+            from google.genai import types
+            import time as _time
+
+            client = genai.Client()
+            t0 = _time.time()
+
+            response = client.models.generate_content(
+                model=self.config.llm.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    max_output_tokens=5,
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
+                )
+            )
+
+            elapsed = _time.time() - t0
+            answer = (response.text or "").strip().upper() if response else ""
+
+            is_relevant = "YES" in answer
+            logger.info(
+                f"RAG relevance check: '{answer}' -> {is_relevant} ({elapsed:.1f}s)"
+            )
+            return is_relevant
+
+        except Exception as e:
+            logger.warning(f"RAG relevance check failed: {e}, defaulting to True")
+            return True  # フォールバック: 判定失敗時は既存動作（スコアのみで判定）を維持
+
+    def _execute_dynamic_web_search(
+            self,
+            rag_step: PlanStep,
+            state: ExecutionState
+    ) -> Generator:
+        """
+        RAGスコア不足時に web_search を動的に実行する。
+
+        Args:
+            rag_step: 直前に実行された rag_search ステップ
+            state: 現在の実行状態
+
+        Yields:
+            state: 中間状態
+
+        Returns:
+            StepResult or None: web_search の結果
+        """
+        web_step_id = rag_step.step_id + 100  # 動的挿入用に大きなIDを付与
+        web_step = PlanStep(
+            step_id=web_step_id,
+            action="web_search",
+            description=f"[動的挿入] RAGスコア不足のためWeb検索を実行",
+            query=rag_step.query,
+            collection=None,
+            depends_on=[rag_step.step_id],
+            expected_output="Web検索結果",
+            fallback=None,
+            timeout_seconds=15,  # タイムアウト短め
+        )
+
+        logger.info(f"Dynamic web_search: step_id={web_step_id}, query={rag_step.query[:50]}")
+
+        state.current_step_id = web_step_id
+        state.step_statuses[web_step_id] = StepStatus.RUNNING
+
+        if self.on_step_start:
+            self.on_step_start(web_step)
+
+        try:
+            step_execution = self._execute_step(web_step, state)
+            web_result = None
+            if isinstance(step_execution, Generator):
+                web_result = yield from step_execution
+            else:
+                web_result = step_execution
+
+            state.step_results[web_step_id] = web_result
+            state.step_statuses[web_step_id] = (
+                StepStatus.SUCCESS if web_result.status == "success" else StepStatus.FAILED
+            )
+
+            if self.on_step_complete:
+                self.on_step_complete(web_result)
+
+            yield state
+            return web_result
+
+        except Exception as e:
+            logger.error(f"Dynamic web_search failed: {e}")
+            failed_result = StepResult(
+                step_id=web_step_id,
+                status="failed",
+                output=None,
+                confidence=0.0,
+                error=str(e),
+                execution_time_ms=0,
+                token_usage=None,
+            )
+            state.step_results[web_step_id] = failed_result
+            state.step_statuses[web_step_id] = StepStatus.FAILED
+            yield state
+            return failed_result
+
+    def _execute_dynamic_ask_user(
+            self,
+            rag_step: PlanStep,
+            state: ExecutionState
+    ) -> Generator:
+        """
+        RAG・Web検索の両方が不十分な場合に ask_user を動的に実行する。
+
+        Args:
+            rag_step: 元の rag_search ステップ
+            state: 現在の実行状態
+
+        Yields:
+            state: 中間状態
+        """
+        ask_step_id = rag_step.step_id + 200  # 動的挿入用ID
+        ask_step = PlanStep(
+            step_id=ask_step_id,
+            action="ask_user",
+            description=f"[動的挿入] 検索結果が不十分なためユーザーに確認",
+            query=(
+                f"「{rag_step.query[:100]}」について検索しましたが、"
+                f"十分な情報が見つかりませんでした。\n"
+                f"追加の情報があれば教えてください。"
+                f"または、現在の情報で回答を試みますか？"
+            ),
+            collection=None,
+            depends_on=[rag_step.step_id],
+            expected_output="ユーザーの指示",
+            fallback=None,
+        )
+
+        logger.info(f"Dynamic ask_user: step_id={ask_step_id}")
+
+        state.current_step_id = ask_step_id
+        state.step_statuses[ask_step_id] = StepStatus.RUNNING
+
+        if self.on_step_start:
+            self.on_step_start(ask_step)
+
+        try:
+            step_execution = self._execute_step(ask_step, state)
+            ask_result = None
+            if isinstance(step_execution, Generator):
+                ask_result = yield from step_execution
+            else:
+                ask_result = step_execution
+
+            state.step_results[ask_step_id] = ask_result
+            state.step_statuses[ask_step_id] = (
+                StepStatus.SUCCESS if ask_result.status == "success" else StepStatus.FAILED
+            )
+
+            if self.on_step_complete:
+                self.on_step_complete(ask_result)
+
+            yield state
+
+        except Exception as e:
+            logger.error(f"Dynamic ask_user failed: {e}")
+            yield state
+
     def _execute_fallback(
             self,
             step: PlanStep,
@@ -708,12 +972,14 @@ class Executor:
         """フォールバックアクションを実行"""
         fallback_step = PlanStep(
             step_id=step.step_id,
-            action=step.fallback,
+            action=cast(Literal["rag_search", "web_search", "reasoning", "ask_user", "code_execute", "run_legacy_agent"], step.fallback),
             description=f"[Fallback] {step.description}",
             query=step.query,
+            collection=step.collection,
             depends_on=step.depends_on,
             expected_output=step.expected_output,
-            fallback=None  # 二重フォールバックは無し
+            fallback=None,  # 二重フォールバックは無し
+            timeout_seconds=step.timeout_seconds,
         )
         step_execution = self._execute_step(fallback_step, state)
         if isinstance(step_execution, Generator):
@@ -1010,12 +1276,17 @@ class Executor:
             # 最後のステップのbreakdownをコピー
             current_breakdown = step_scores[-1].breakdown.copy()
 
-        # 最終回答を取得
-        final_answer = None
-        # ... (中略) ...
+        # 最終回答を取得（最後のreasoningまたはlegacy_agentステップの出力）
+        final_answer: Optional[str] = None
+        for step in reversed(state.plan.steps):
+            if (step.action in ["reasoning", "run_legacy_agent"]) and step.step_id in state.step_results:
+                result = state.step_results[step.step_id]
+                if result.status == "success":
+                    final_answer = result.output
+                    break
 
         # LLMSelfEvaluatorで最終回答を評価（オプション）
-        if final_answer:
+        if final_answer is not None:
             # 1. LLM自己評価 (Accuracy/Style etc.)
             try:
                 eval_result = self.llm_evaluator.evaluate(
@@ -1093,6 +1364,7 @@ class Executor:
         # 全体ステータスを判定
         statuses = [r.status for r in state.step_results.values()]
 
+        overall_status: Literal["success", "partial", "failed", "cancelled"]
         if state.is_cancelled:
             overall_status = "cancelled"
         elif all(s == "success" for s in statuses):
@@ -1119,7 +1391,9 @@ class Executor:
             overall_confidence=state.overall_confidence,
             overall_status=overall_status,
             replan_count=state.replan_count,
-            total_execution_time_ms=state.get_execution_time_ms()
+            total_execution_time_ms=state.get_execution_time_ms(),
+            total_token_usage=None,
+            total_cost_usd=None,
         )
 
     def cancel(self, state: ExecutionState):
