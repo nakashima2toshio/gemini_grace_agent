@@ -1,0 +1,24 @@
+﻿フォルダー,ファイル名,generate_content,embed_content,count_tokens,chat_session,function_calling,structured_output,async,SDK種別,API種別(原文),用途・説明
+(root),agent_main.py,,,,Y,Y,,,旧SDK,"GenerativeModel, ChatSession | start_chat, send_message | Function Calling",RAG チャットエージェント（CLI版） | ReAct + Reflection の2段階処理
+(root),celery_config.py,,,,,,,,設定のみ,GEMINI_CONFIG 定義 | （モデル名・料金設定）,Celery タスク用 Gemini モデル設定
+helper/,helper_api.py,Y,,Y,,,,,helper経由,generate_content | count_tokens,LLM プロバイダー統合ラッパー | （gemini / openai 切り替え対応）
+helper/,helper_llm.py,Y,,Y,,,,,新SDK,client.models.generate_content | client.models.count_tokens,Gemini LLM クライアント実装 | 新旧SDK フォールバック対応
+helper/,helper_embedding.py,,Y,,,,,,新SDK,client.models.embed_content | （Embedding）,テキスト埋め込みベクトル生成 | gemini-embedding-001（3072次元）
+grace/,config.py,,,,,,,,設定のみ,"モデル設定定義 | （provider, model名）",GRACE エージェント用モデル設定
+grace/,executor.py,Y,,,,,,,新SDK,client.models.generate_content,GRACE エージェント：タスク実行
+grace/,planner.py,Y,,,,,,,新SDK,client.models.generate_content,GRACE エージェント：プラン生成 | （Structured Output）
+grace/,tools.py,Y,,,,,,,新SDK,client.models.generate_content,GRACE エージェント：ツール実行
+grace/,confidence.py,Y,Y,,,,,,新SDK,client.models.generate_content | client.models.embed_content,信頼度評価・埋め込み生成 | （Structured Output + Embedding）
+chunking/,async_api_client.py,Y,,,,,,Y,新SDK,client.models.generate_content | （非同期: asyncio.run_in_executor）,非同期テキスト生成クライアント | （チャンキングの基盤クラス）
+chunking/check_code/,step1.py,Y,,,,,Y,,新SDK,client.models.generate_content | （Structured Output）,段落分割処理（Step 1）
+chunking/check_code/,step2.py,Y,,,,,Y,,新SDK,client.models.generate_content | （Structured Output）,セマンティックチャンキング（Step 2）
+chunking/check_code/,step3.py,Y,,,,,Y,,新SDK,client.models.generate_content | （Structured Output）,継続性チェック（Step 3）
+chunking/check_code/,check_async.py,Y,,,,,,Y,新SDK,client.models.generate_content | （非同期）,非同期チャンキング処理の確認
+chunking/,csv_text_to_chunks_text_csv.py,Y,,,,,,Y,経由,generate_content（非同期バッチ）,CSV テキスト → チャンク CSV 変換 | 非同期バッチ処理
+services/,agent_service.py,,,,Y,Y,,,新SDK,client.chats.create | chat.send_message | Function Calling（Tool Use）,RAG チャットエージェントサービス | Streamlit UI 向けストリーミング対応
+qa_generation/,pipeline.py,Y,,,,,,,新旧両対応,generate_content,QA 生成パイプライン全体制御
+qa_generation/,smart_qa_generator.py,Y,,,,,,,新旧両対応,client.models.generate_content | GenerativeModel.generate_content,スマート QA ペア自動生成
+qa_generation/,semantic.py,,Y,Y,,,,,helper経由,embed_content（Embedding） | count_tokens,セマンティックチャンキング | トークン数制御付き
+ui/pages/,qa_generation_page.py,,,,,,,,設定のみ,モデル選択 UI（表示のみ）,QA 生成 Streamlit ページ | モデルドロップダウン表示
+ui/pages/,qdrant_search_page.py,Y,,,,,,,helper経由,generate_content | （LLM 回答生成）,Qdrant 検索 + Gemini 回答生成 | Streamlit 検索 UI
+ui/pages/,qdrant_registration_page.py,,Y,,,,,,helper経由,embed_content（Embedding）,Qdrant ベクトル DB データ登録 | Streamlit 登録 UI

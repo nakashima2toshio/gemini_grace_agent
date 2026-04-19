@@ -80,6 +80,13 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="/dogs/agent_rqg_migration_api.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="/logs/unanswered_questions.csv">
           <value>
             <Attribute>

@@ -15,17 +15,26 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 # SDK imports
+# try:
+#     from openai import OpenAI
+# except ImportError:
+#     OpenAI = None
+#
+# try:
+#     from google import genai
+#     from google.genai import types
+# except ImportError:
+#     genai = None
+#     types = None
+
+# SDK imports <-- new API
 try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
 
-try:
-    from google import genai
-    from google.genai import types
-except ImportError:
-    genai = None
-    types = None
+from google import genai
+from google.genai import types
 
 import tiktoken
 
@@ -137,8 +146,9 @@ class OpenAIClient(LLMClient):
 
 class GeminiClient(LLMClient):
     def __init__(self, api_key: Optional[str] = None, default_model: str = "gemini-2.0-flash"):
-        if not genai:
-            raise ImportError("google-genai package is not installed. Install with: pip install google-genai")
+        # New API改修 2026 03-24
+        # if not genai:
+        #     raise ImportError("google-genai package is not installed. Install with: pip install google-genai")
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY is not set")

@@ -18,8 +18,10 @@ agent_service.py のプロンプトと機能を統合したCLI版
 
 import os
 import uuid
-import google.generativeai as genai
-from google.generativeai import ChatSession, GenerativeModel
+
+from google import genai
+from google.genai import types
+
 from dotenv import load_dotenv
 import logging
 import datetime
@@ -202,13 +204,13 @@ class UpgradedCLIAgent:
 
         logger.info(f"UpgradedCLIAgent initialized (session: {self.session_id})")
 
-    def _setup_session(self) -> ChatSession:
-        """Geminiエージェントのセットアップ"""
+    def _setup_session(self):
+        """Geminiエージェントのセットアップ（新SDK版）"""
         api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not api_key:
             raise ValueError("API Key missing: GEMINI_API_KEY or GOOGLE_API_KEY not set.")
 
-        genai.configure(api_key=api_key)
+        self.client = genai.Client(api_key=api_key)
 
         # 動的にコレクション一覧を取得
         available_collections = get_available_collections_dynamic()
@@ -220,22 +222,21 @@ class UpgradedCLIAgent:
 
         tools_list = [search_rag_knowledge_base, list_rag_collections]
 
-        model = genai.GenerativeModel(
-            model_name=self.model_name,
-            tools=tools_list,
-            system_instruction=system_instruction
+        # 新SDK: agent_service.py L203-211 のパターン
+        chat = self.client.chats.create(
+            model=self.model_name,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                tools=tools_list,
+            ),
         )
-
-        chat = model.start_chat(enable_automatic_function_calling=False)
         return chat
 
     def execute_turn(self, user_input: str) -> str:
         """
         エージェントのターンを実行（ReAct → Reflection）
-
         Args:
             user_input: ユーザーの質問
-
         Returns:
             最終回答
         """
@@ -258,7 +259,7 @@ class UpgradedCLIAgent:
         return self._format_final_answer(draft_answer)
 
     def _execute_react_loop(self, user_input: str) -> str:
-        """ReActループの実行"""
+        """ ReActループの実行 """
         # キーワード抽出とプロンプト拡張
         augmented_input = user_input
         if self.keyword_extractor:
@@ -267,7 +268,6 @@ class UpgradedCLIAgent:
                 if keywords:
                     keywords_str = ", ".join(keywords)
                     augmented_input = f"""{user_input}
-
 【重要: 検索クエリ作成の指示】
 以下の抽出された重要キーワードを、必ず検索クエリに含めてください。
 重要キーワード: {keywords_str}"""
@@ -276,7 +276,7 @@ class UpgradedCLIAgent:
             except Exception as e:
                 logger.warning(f"Keyword extraction failed: {e}")
 
-        current_response = self.chat_session.send_message(augmented_input)
+        current_response = self.chat_session.send_message(message=augmented_input)
         max_turns = 10
         turn_count = 0
         final_text = ""
@@ -286,54 +286,61 @@ class UpgradedCLIAgent:
             function_call_found = False
             current_turn_text = ""
 
-            for part in current_response.parts:
-                if part.text:
-                    text = part.text.strip()
-                    if "Thought:" in text or "考え:" in text:
-                        print_colored(f"💭 {text}", "blue")
-                        logger.info(f"Thought: {text}")
-                        current_turn_text = text
-                    else:
-                        current_turn_text = text
+            # レスポンスの処理（新SDK: candidates[0].content.parts + hasattr ガード）
+            if current_response.candidates and len(current_response.candidates) > 0:
+                candidate = current_response.candidates[0]
 
-                if part.function_call:
-                    function_call_found = True
-                    fn = part.function_call
-                    tool_name = fn.name
-                    tool_args = dict(fn.args)
+                if candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        # テキスト部分の処理
+                        if hasattr(part, 'text') and part.text:
+                            text = part.text.strip()
+                            if "Thought:" in text or "考え:" in text:
+                                print_colored(f"💭 {text}", "blue")
+                                logger.info(f"Thought: {text}")
+                                current_turn_text = text
+                            else:
+                                current_turn_text = text
 
-                    print_colored(f"🛠️  Tool Call: {tool_name}({tool_args})", "green")
-                    logger.info(f"Tool Call: {tool_name}({tool_args})")
+                        # 関数呼び出しの処理
+                        if hasattr(part, 'function_call') and part.function_call:
+                            function_call_found = True
+                            fn = part.function_call
+                            tool_name = fn.name
+                            tool_args = dict(fn.args) if hasattr(fn, 'args') else {}
 
-                    # ツール実行
-                    tool_result = ""
-                    try:
-                        if tool_name in TOOLS_MAP:
-                            tool_result = TOOLS_MAP[tool_name](**tool_args)
-                        else:
-                            tool_result = f"Error: Tool '{tool_name}' not found."
-                    except RAGToolError as e:
-                        tool_result = f"エラーが発生しました: {str(e)}"
-                        logger.error(f"RAG Tool Error: {e}")
-                    except Exception as e:
-                        tool_result = f"予期せぬエラー: {str(e)}"
-                        logger.error(f"Unexpected error: {e}", exc_info=True)
+                            print_colored(f"🛠️  Tool Call: {tool_name}({tool_args})", "green")
+                            logger.info(f"Tool Call: {tool_name}({tool_args})")
 
-                    # ツール結果の表示
-                    log_result = str(tool_result)[:500] + "..." if len(str(tool_result)) > 500 else str(tool_result)
-                    print_colored(f"📝 Tool Result:\n{log_result}", "yellow")
-                    logger.info(f"Tool Result: {log_result}")
+                            # ツール実行
+                            tool_result = ""
+                            try:
+                                if tool_name in TOOLS_MAP:
+                                    tool_result = TOOLS_MAP[tool_name](**tool_args)
+                                else:
+                                    tool_result = f"Error: Tool '{tool_name}' not found."
+                            except RAGToolError as e:
+                                tool_result = f"エラーが発生しました: {str(e)}"
+                                logger.error(f"RAG Tool Error: {e}")
+                            except Exception as e:
+                                tool_result = f"予期せぬエラー: {str(e)}"
+                                logger.error(f"Unexpected error: {e}", exc_info=True)
 
-                    # 次のターンへ
-                    current_response = self.chat_session.send_message(
-                        [genai.protos.Part(
-                            function_response={
-                                "name"    : tool_name,
-                                "response": {'result': tool_result}
-                            }
-                        )]
-                    )
-                    break
+                            # ツール結果の表示
+                            log_result = str(tool_result)[:500] + "..." if len(str(tool_result)) > 500 else str(tool_result)
+                            print_colored(f"📝 Tool Result:\n{log_result}", "yellow")
+                            logger.info(f"Tool Result: {log_result}")
+
+                            # 次のターンへ（ツール結果をモデルに返送 / 新SDK形式）
+                            # tool_name を明示的に str() でキャスト（型エラー回避）
+                            function_response_part = types.Part.from_function_response(
+                                name=str(tool_name),
+                                response={'result': tool_result},
+                            )
+                            current_response = self.chat_session.send_message(
+                                message=function_response_part
+                            )
+                            break
 
             if not function_call_found:
                 final_text = current_turn_text
@@ -345,13 +352,20 @@ class UpgradedCLIAgent:
         """Reflectionフェーズの実行"""
         try:
             reflection_msg = f"{REFLECTION_INSTRUCTION}\n\n**あなたの回答案:**\n{draft_answer}"
-            reflection_response = self.chat_session.send_message(reflection_msg)
+            reflection_response = self.chat_session.send_message(message=reflection_msg)
 
             reflection_text = ""
-            if reflection_response.parts:
-                for part in reflection_response.parts:
-                    if part.text:
-                        reflection_text += part.text
+
+            # レスポンスからテキストを抽出（新SDK形式）
+            if reflection_response.candidates and len(reflection_response.candidates) > 0:
+                candidate = reflection_response.candidates[0]
+                if candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            reflection_text += part.text
+                        elif hasattr(part, 'function_call') and part.function_call:
+                            # Reflection段階では function_call は発生しないはずだが防御的に警告
+                            logger.warning("Reflection phase generated a function call, ignoring.")
 
             if not reflection_text:
                 logger.warning("Reflection phase did not generate text.")
