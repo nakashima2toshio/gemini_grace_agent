@@ -44,28 +44,31 @@ logger = logging.getLogger(__name__)
 
 # --- LLM モデル設定 --- #
 LLM_MODELS = [
+    "gemini-3-flash-preview",
     "gemini-2.5-flash",
     "gemini-3-pro-preview",
     "gemini-2.5-flash-preview",
-    "gemini-2.0-flash",
+    "gemini-2.0-flash",  # ⚠️ 2026-06-01 廃止予定
     "gemini-1.5-pro",
     "gemini-1.5-flash",
 ]
 
 LLM_PRICING = {
+    "gemini-3-flash-preview"  : {"input": 0.0005, "output": 0.003},
     "gemini-2.5-flash"        : {"input": 0.0001, "output": 0.0004},  # Estimated
     "gemini-3-pro-preview"    : {"input": 0.00125, "output": 0.010},
     "gemini-2.5-flash-preview": {"input": 0.00015, "output": 0.0035},
-    "gemini-2.0-flash"        : {"input": 0.0001, "output": 0.0004},
+    "gemini-2.0-flash"        : {"input": 0.0001, "output": 0.0004},  # ⚠️ 2026-06-01 廃止
     "gemini-1.5-pro"          : {"input": 0.00125, "output": 0.005},
     "gemini-1.5-flash"        : {"input": 0.000075, "output": 0.0003},
 }
 
 LLM_LIMITS = {
+    "gemini-3-flash-preview"  : {"max_tokens": 1000000, "max_output": 8192},
     "gemini-2.5-flash"        : {"max_tokens": 1000000, "max_output": 8192},
     "gemini-3-pro-preview"    : {"max_tokens": 1000000, "max_output": 64000},
     "gemini-2.5-flash-preview": {"max_tokens": 1000000, "max_output": 64000},
-    "gemini-2.0-flash"        : {"max_tokens": 1000000, "max_output": 8192},
+    "gemini-2.0-flash"        : {"max_tokens": 1000000, "max_output": 8192},  # ⚠️ 2026-06-01 廃止
     "gemini-1.5-pro"          : {"max_tokens": 1000000, "max_output": 8192},
     "gemini-1.5-flash"        : {"max_tokens": 1000000, "max_output": 8192},
 }
@@ -145,23 +148,20 @@ class OpenAIClient(LLMClient):
 
 
 class GeminiClient(LLMClient):
-    def __init__(self, api_key: Optional[str] = None, default_model: str = "gemini-2.0-flash"):
-        # New API改修 2026 03-24
-        # if not genai:
-        #     raise ImportError("google-genai package is not installed. Install with: pip install google-genai")
+    def __init__(self, api_key: Optional[str] = None, default_model: str = "gemini-3-flash-preview"):
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY is not set")
-
-        # 新しいクライアントの初期化方法
         self.client = genai.Client(api_key=self.api_key)
         self.default_model = default_model
 
     def generate_content(self, prompt: str, model: Optional[str] = None, **kwargs) -> str:
         model_name = model or self.default_model
 
-        # 新しいAPIでのコンテンツ生成
-        config = {}
+        config = {
+            # AFC は常に無効化（有効のままにすると空レスポンスが発生するバグあり）
+            "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
+        }
         if "temperature" in kwargs:
             config["temperature"] = kwargs.pop("temperature")
         if "max_output_tokens" in kwargs:
@@ -170,7 +170,7 @@ class GeminiClient(LLMClient):
         response = self.client.models.generate_content(
             model=model_name,
             contents=prompt,
-            config=types.GenerateContentConfig(**config) if config else None
+            config=types.GenerateContentConfig(**config)
         )
 
         return response.text
@@ -208,13 +208,10 @@ class GeminiClient(LLMClient):
 
     def count_tokens(self, text: str, model: Optional[str] = None) -> int:
         model_name = model or self.default_model
-
-        # 新しいAPIでのトークンカウント
         response = self.client.models.count_tokens(
             model=model_name,
             contents=text
         )
-
         return response.total_tokens
 
 
