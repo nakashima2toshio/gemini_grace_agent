@@ -46,6 +46,7 @@ from ui.pages import (
 )
 from ui.pages.agent_chat_page import show_agent_chat_page
 from ui.pages.log_viewer_page import show_log_viewer_page
+from ui.pages.benchmark_page import show_benchmark_page
 
 
 # --- 関連ドキュメント定義 ---
@@ -91,7 +92,6 @@ def show_rag_data_creation_page():
         )
     )
 
-    # Expanderでドキュメント内容を表示
     for doc in RAG_DATA_DOCS:
         with st.expander(f"📖 {doc['path']}"):
             content = _load_local_markdown(doc["path"])
@@ -155,15 +155,17 @@ def main():
                 "log_viewer",
                 "rag_data_creation",
                 "qdrant_crud",
+                "benchmark",
             ],
             format_func=lambda x: {
-                "explanation": "📖 説明",
-                "qdrant_search": "🔎 Qdrant検索",
-                "agent_chat": "🤖 Agent(ReAct+Reflection)",
-                "grace_chat": "[最新] 自律型Agent(Plan+Executor)",
-                "log_viewer": "📊 未回答ログ",
+                "explanation":     "📖 説明",
+                "qdrant_search":   "🔎 Qdrant検索",
+                "agent_chat":      "🤖 Agent(ReAct+Reflection)",
+                "grace_chat":      "[最新] 自律型Agent(Plan+Executor)",
+                "log_viewer":      "📊 未回答ログ",
                 "rag_data_creation": "📄 RAGデータ作成",
-                "qdrant_crud": "🗄️ QdrantのCRUD",
+                "qdrant_crud":     "🗄️ QdrantのCRUD",
+                "benchmark":       "📊 ベンチマーク (Phase 5)",
             }[x],
             label_visibility="collapsed",
         )
@@ -172,13 +174,14 @@ def main():
 
     # 選択された画面を表示
     page_mapping = {
-        "explanation": show_system_explanation_page,
-        "agent_chat": show_agent_chat_page,
-        "grace_chat": show_grace_chat_page,
-        "log_viewer": show_log_viewer_page,
+        "explanation":      show_system_explanation_page,
+        "agent_chat":       show_agent_chat_page,
+        "grace_chat":       show_grace_chat_page,
+        "log_viewer":       show_log_viewer_page,
         "rag_data_creation": show_rag_data_creation_page,
-        "qdrant_crud": show_qdrant_crud_page,
-        "qdrant_search": show_qdrant_search_page,
+        "qdrant_crud":      show_qdrant_crud_page,
+        "qdrant_search":    show_qdrant_search_page,
+        "benchmark":        show_benchmark_page,
     }
     page_mapping[page]()
 
