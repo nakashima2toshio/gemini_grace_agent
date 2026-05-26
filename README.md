@@ -1,14 +1,41 @@
-# Agent RAG (Gemini) プロジェクト
+# 自律型Agent + RAG (Gemini API版) プロジェクト
+#### (1) 自律型Agent　（Google Gemini API利用、スクラッチで作成）
+- (1-1) 計画策定（Plan）
+- → 実行（Execute）
+- → 信頼度評価（Confidence）
+- → 介入判定（Intervention）
+- → リプラン（Replan）
+
+![自律型Agent](assets/lp_img.png)
+
+## (2) Chunking（意味ある文章に分割する）
+- (2-1) 評価用データ：HuggingFaceからダウンロード
+- (2-2) RAG: Chunkデータの作成
+- (2-3) RAG: Qdrant(ベクターDB)への登録、検索
+
+![RagデータDL・登録](assets/qa_pair_img.png)
 
 > **はじめにお読みください**
 >
 > | # | ドキュメント | 説明 |
 > | - | ----------- | ---- |
-> | 1 | [環境構築手順書 (readme_make_env.md)](./readme_make_env.md) | Mac 向け環境構築（Python / Docker / Celery / API キー設定） |
-> | 2 | [RAG ツール使用ガイド (readme_usage_tools.md)](./readme_usage_tools.md) | チャンク作成 → Q/A 生成・Qdrant 登録 → Agent 検索の操作手順 |
-> | 3 | [RAG Q/A 生成・検索システム (readme_rag.md)](./readme_rag.md) | RAG パイプライン全体の設計・クラス・関数 IPO 詳細（セマンティックチャンキング / Q&A 生成 / Qdrant 検索） |
-> | 4 | [ReAct+Reflection エージェント (readme_react_reflection.md)](./readme_react_reflection.md) | ReAct（Reasoning+Acting）ループ + Reflection 自己評価による自律型 RAG エージェントの設計と実装 |
-> | 5 | [自律型 Agent — GRACE (readme_autonomous_agent.md)](./readme_autonomous_agent.md) | GRACE（Plan→Execute→Confidence→Intervention→Replan）アーキテクチャの設計・IPO 詳細 |
+> | 1 | [セットアップ・インストール手順書 (docs/setup_and_install.md)](./docs/setup_and_install.md) | Python・Docker・uv・API キーの包括的セットアップ手順（はじめにこちら） |
+> | 2 | [環境構築手順書 (readme_make_env.md)](./readme_make_env.md) | Mac 向け詳細環境構築（Python / Docker / Celery / API キー設定） |
+> | 3 | [uv パッケージマネージャー (docs/uv_install.md)](./docs/uv_install.md) | pip → uv 移行・仮想環境管理手順 |
+> | 4 | [RAG データ取得ガイド (down_load_non_qa_rag_data_from_huggingface.md)](./down_load_non_qa_rag_data_from_huggingface.md) | RAG データを HuggingFace からダウンロード・前処理する手順 |
+> | 5 | [RAG ツール使用ガイド (readme_usage_tools.md)](./readme_usage_tools.md) | チャンク作成 → Q/A 生成・Qdrant 登録 → Agent 検索の操作手順 |
+> | 6 | [RAG Q/A 生成・検索システム (readme_rag.md)](./readme_rag.md) | RAG パイプライン全体の設計・クラス・関数 IPO 詳細（セマンティックチャンキング / Q&A 生成 / Qdrant 検索） |
+> | 7 | [Streamlit アプリ設計書 (docs/agent_rag.md)](./docs/agent_rag.md) | agent_rag.py のアーキテクチャ・ページ構成・Gemini 設定・モデル一覧 |
+> | 8 | [ReAct+Reflection エージェント (readme_react_reflection.md)](./readme_react_reflection.md) | ReAct（Reasoning+Acting）ループ + Reflection 自己評価による自律型 RAG エージェントの設計と実装 |
+> | 9 | [自律型 Agent — GRACE (readme_autonomous_agent.md)](./readme_autonomous_agent.md) | GRACE（Plan→Execute→Confidence→Intervention→Replan）アーキテクチャの設計・IPO 詳細 |
+>
+> **技術参考資料**
+>
+> | # | ドキュメント | 説明 |
+> | - | ----------- | ---- |
+> | R1 | [LLM API 3プロバイダー対比表 v2 (docs/llm_api_comparison_v2.md)](./docs/llm_api_comparison_v2.md) | Gemini / Anthropic / OpenAI の API・クライアント・Embedding 完全比較（最新版） |
+> | R2 | [移行計画 v2 (docs/plan_for_migration_v2.md)](./docs/plan_for_migration_v2.md) | Gemini プロジェクトの移行計画・実装方針 v2 |
+> | R3 | [移行計画 v1 (docs/plan_for_migration.md)](./docs/plan_for_migration.md) | 移行計画（v1・旧版参考） |
 
 ---
 
