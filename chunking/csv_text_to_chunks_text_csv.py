@@ -12,36 +12,30 @@ csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキ�
 テキストまたはCSVファイルを意味的なチャンクに分割するパイプライン。
 非同期・並列処理により高速化。CSV出力時に改行を削除してクリーンなCSVを作成。
 
-改修内容（v2.1）:
-- シンプルCSV保存機能を追加（Textカラムのみ）
-- save_chunks_as_csv()にsave_simple_csvパラメータを追加
-- デフォルトで2つのCSVファイルを出力:
-  1. メタデータ付きCSV（chunk_id, text, tokens, ...）
-  2. シンプルCSV（Text カラムのみ）
-- ファイル名の重複を回避（_simple サフィックスを使用）
+# ----------------------------------------------
+# Step1: テキストファイル → チャンク分割、CSV
+# ----------------------------------------------
+uv run python -m chunking.csv_text_to_chunks_text_csv \
+  --input-file OUTPUT/cc_news_2per_gemini.csv \
+  --output output_chunked \
+  --model claude-sonnet-4-6 \
+  --workers 8
 
-Usage:　chunking.csv_text_to_chunks_text_csv　はceleryを利用していない。
-　　　　次のmake_qa_register_qdrant.pyで、利用する。
+# ----------------------------------------------
+# tep2: Q/A生成 + Qdrant登録
+# ----------------------------------------------
 # Worker起動
 # ./start_celery.sh stop
 # ./start_celery.sh status
-# ./start_celery.sh restart -w 4 --flower
+# ./start_celery.sh restart -w 2 --flower
 
-# CSVファイル → チャンクCSV
-# 走行時にエラーが出た場合は：
-# Gemini は、limit制限が厳しいので、block-sizeとmax_output_tokens を調整してください。
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file OUTPUT/cc_news_1per.csv \
-  --output chunks_output \
-  --model gemini-3-flash-preview \
-  --workers 8 \
-  --block-size 500
+uv run python qa_qdrant/make_qa_register_qdrant.py \
+  --input-file output_chunked/cc_news_2per_gemini_chunks.csv \
+  --collection cc_news_2per_anthropic \
+  --model claude-sonnet-4-6 \
+  --concurrency 2 \
+  --recreate
 
-python -m chunking.csv_text_to_chunks_text_csv \
-  --input-file OUTPUT/wikipedia_ja_1per.csv \
-  --output chunks_output \
-  --model gemini-3-flash-preview \
-  --workers 8 \
 
 # 出力例:
 # chunks_output/wikipedia_ja_5per_chunks_20260207_123456.csv （メタデータ付き）
