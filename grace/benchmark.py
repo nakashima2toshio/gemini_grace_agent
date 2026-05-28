@@ -16,7 +16,8 @@ Intervention / Replan）の性能指標を計測・記録・CSV出力するモ�
         category="事実検索",
     )
 
-    # 全クエリセットを3回ずつ実行
+    # Qdrantコレクションを明示指定して全クエリセットを３回ずつ実行
+    runner = BenchmarkRunner(qdrant_collection="cc_news_2per_gemini")
     sessions = runner.run_query_set(runs_per_query=3)
 """
 
@@ -65,15 +66,15 @@ BENCHMARK_QUERIES: List[Dict[str, str]] = [
     {"id": "Q07", "level": "Easy",   "category": "手順説明",
      "text": "AIの倫理問題について、ニュースで報道された主な事例を時系列で教えてください"},
     {"id": "Q08", "level": "Medium", "category": "手順説明",
-     "text": "医療AI分野のここ〲2年のニュースをカテゴリ別に整理してください"},
+     "text": "医療AI分野のここ〒２年のニュースをカテゴリ別に整理してください"},
     {"id": "Q09", "level": "Easy",   "category": "曖昧",
      "text": "最近の重要なニュースを教えて"},
     {"id": "Q10", "level": "Easy",   "category": "曖昧",
      "text": "あの件について詳しく教えて"},
     {"id": "Q11", "level": "Hard",   "category": "推論・比較",
-     "text": "cc_newsに存在しないトピックを検索して、リプランが発生する過程を示してください"},
+     "text": "cc_newsに存在しないトピックを検索して、リプランが発生する遠程を示してください"},
     {"id": "Q12", "level": "Hard",   "category": "推論・比較",
-     "text": "5つ以上の異なるニュースソースの情報を統合して、2024年の総括レポートを作成してください"},
+     "text": "５つ以上の異なるニュースソースの情報を統合して、2024年の総括レポートを作成してください"},
 ]
 
 
@@ -250,12 +251,15 @@ class BenchmarkRunner:
         provider: Optional[str]   = None,
         config: Any               = None,
         csv_path: Optional[Path]  = None,
+        qdrant_collection: Optional[str] = None,
     ) -> None:
         from .config import get_config as _get_config
         self.config     = config or _get_config()
         self.model_name = model_name or self.config.llm.model
         self.provider   = provider   or self.config.llm.provider
         self.bm_logger  = BenchmarkLogger(csv_path=csv_path)
+        if qdrant_collection:
+            self.config.qdrant.collection_name = qdrant_collection
 
     def run(
         self,
