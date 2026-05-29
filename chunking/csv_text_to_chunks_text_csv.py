@@ -38,22 +38,22 @@ uv run python qa_qdrant/make_qa_register_qdrant.py \
 
 
 # 出力例:
-# chunks_output/wikipedia_ja_5per_chunks_20260207_123456.csv （メタデータ付き）
-# chunks_output/wikipedia_ja_5per_chunks_20260207_123456_simple.csv （シンプル版、Textのみ）
+# chunks_output/wikipedia_ja_5per_chunks.csv （メタデータ付き）
+# chunks_output/wikipedia_ja_5per_chunks_simple.csv （シンプル版、Textのみ）
 
 # ----------------------------------------------
 # テキストファイル → チャンクCSV
 python -m chunking.csv_text_to_chunks_text_csv.py \
   --input-file ./data/document.txt \
   --output chunks_output \
-  --model gemini-3-flash-preview \
+  --model gemini-3.5-flash \
   --workers 8
 
 # デフォルト出力ディレクトリ使用
 python -m chunking.csv_text_to_chunks_text_csv.py \
   --input-file ./data/document.txt
-  # → chunks_output/document_chunks_20250118_123456.csv が生成される
-  # → chunks_output/document_chunks_20250118_123456_simple.csv （シンプル版）も同時生成
+  # → chunks_output/document_chunks.csv が生成される
+  # → chunks_output/document_chunks_simple.csv （シンプル版）も同時生成
 """
 
 import asyncio
@@ -318,8 +318,8 @@ def save_chunks_as_csv(
         output_file: str,
         dataset_type: str = "custom",
         source_file: Optional[str] = None,
-        normalize_whitespace: bool = True,  # ✅ 新規パラメータ
-        save_simple_csv: bool = True  # ✅ 新規パラメータ
+        normalize_whitespace: bool = True,
+        save_simple_csv: bool = True
 ) -> str:
     """
     チャンクをCSV形式で保存（メタデータ付き + シンプルCSV）
@@ -341,8 +341,8 @@ def save_chunks_as_csv(
         2. {output_file_stem}_simple.csv: シンプルCSV（Text カラムのみ）
 
         例:
-        - wikipedia_ja_5per_chunks_20260207_123456.csv （メタデータ付き）
-        - wikipedia_ja_5per_chunks_20260207_123456_simple.csv （シンプル版）
+        - wikipedia_ja_5per_chunks.csv （メタデータ付き）
+        - wikipedia_ja_5per_chunks_simple.csv （シンプル版）
     """
     tokenizer = tiktoken.get_encoding("cl100k_base")
 
@@ -359,7 +359,7 @@ def save_chunks_as_csv(
 
         data.append({
             'chunk_id'      : f"{dataset_type}_chunk_{i}",
-            'text'          : chunk_text_cleaned,  # ✅ 正規化されたテキスト
+            'text'          : chunk_text_cleaned,
             'tokens'        : len(tokenizer.encode(chunk_text_cleaned)),
             'chunk_idx'     : i,
             'dataset_type'  : dataset_type,
@@ -382,19 +382,11 @@ def save_chunks_as_csv(
     logger.info(f"  改行正規化: {'有効' if normalize_whitespace else '無効'}")
     logger.info("=" * 60)
 
-    # ================================================================
-    # ✅ 新規追加: シンプルCSV（Textのみ）も保存
-    # ================================================================
     if save_simple_csv:
         output_path = Path(output_file)
-
-        # ファイル名生成: メタデータ付きCSVと同じ名前で "_simple" を追加
-        # 例: wikipedia_ja_5per_chunks_20260207_123456.csv
-        #  → wikipedia_ja_5per_chunks_20260207_123456_simple.csv
         simple_csv_name = output_path.stem + "_simple.csv"
         simple_csv_path = output_path.parent / simple_csv_name
 
-        # シンプルCSVを保存
         save_chunks_as_simple_csv(
             chunks=chunks,
             output_file=str(simple_csv_path),
@@ -415,7 +407,7 @@ def save_chunks_as_text(chunks: List[str], output_file: str) -> str:
 
 
 # ================================================================
-# ✅ 新規追加: 出力ファイル名自動生成機能
+# 出力ファイル名自動生成機能
 # ================================================================
 
 def generate_output_filename(
@@ -429,35 +421,27 @@ def generate_output_filename(
     Args:
         input_file: 入力ファイルパス
         output_dir: 出力ディレクトリ
-        dataset_type: データセット種別（ファイル名に使用）
+        dataset_type: データセット種別（未使用、互換性のため残存）
 
     Returns:
         出力ファイルの絶対パス
 
     Examples:
         generate_output_filename("data/input.txt", "chunks_output", "custom")
-        'chunks_output/input_chunks_20250118_123456.csv'
+        'chunks_output/input_chunks.csv'
 
         generate_output_filename("data/cc_news.csv", "chunks_output", "cc_news")
-        'chunks_output/cc_news_chunks_20250118_123456.csv'
+        'chunks_output/cc_news_chunks.csv'
     """
-    from datetime import datetime
     import os
 
-    # 入力ファイル名を取得
     input_path = Path(input_file)
     base_name = input_path.stem
 
-    # タイムスタンプを生成
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_filename = f"{base_name}_chunks.csv"
 
-    # 出力ファイル名を生成
-    output_filename = f"{base_name}_chunks_{timestamp}.csv"
-
-    # 出力ディレクトリを作成
     os.makedirs(output_dir, exist_ok=True)
 
-    # 絶対パスを返す
     output_path = os.path.join(output_dir, output_filename)
     return output_path
 
@@ -484,9 +468,9 @@ def _split_sentences_simple(text: str) -> List[str]:
 
 async def chunks_all_async(
         text: str,
-        model: str = "gemini-3-flash-preview",
+        model: str = "gemini-3.5-flash",
         max_workers: int = 8,
-        block_size: int = 1000,  # ✅ 2000→1000に変更（MAX_TOKENS対策）
+        block_size: int = 1000,
         checkpoint_manager: Optional[CheckpointManager] = None,
         output_file: Optional[str] = None,
         dataset_type: str = "custom",
@@ -503,7 +487,7 @@ async def chunks_all_async(
         api_key=api_key,
         max_workers=max_workers,
         max_retries=3,
-        max_output_tokens=16384  # ✅ 4096→8192に増加（MAX_TOKENS対策）
+        max_output_tokens=16384
     )
 
     if checkpoint_manager is None:
@@ -537,8 +521,8 @@ async def chunks_all_async(
                 output_file=output_file,
                 dataset_type=dataset_type,
                 source_file=source_file,
-                normalize_whitespace=True,  # ✅ 改行正規化を有効化
-                save_simple_csv=True  # ✅ シンプルCSVも保存
+                normalize_whitespace=True,
+                save_simple_csv=True
             )
         else:
             save_chunks_as_text(
@@ -587,7 +571,6 @@ async def _step1_hierarchical_split(
     logger.info("\n[Step 1/3] 階層構造化（段落分割）")
     logger.info(f"  入力: {format_size(len(text))}")
 
-    # 【改善】前処理: 長い1行を句読点で分割
     text = _preprocess_text(text)
 
     blocks = [text[i:i + block_size] for i in range(0, len(text), block_size)]
@@ -604,10 +587,9 @@ async def _step1_hierarchical_split(
         )
         tasks.append(task)
 
-    # results = await asyncio.gather(*tasks)
     results = await async_tqdm.gather(
         *tasks,
-        desc="Step1: 段落分割",  # 各ステップで説明を変更
+        desc="Step1: 段落分割",
         total=len(tasks)
     )
 
@@ -617,7 +599,6 @@ async def _step1_hierarchical_split(
             try:
                 result = StructuralResult.model_validate_json(result_json)
                 for para in result.paragraphs:
-                    # 【改善】後処理: 各段落を句読点で文ごとに改行区切り
                     para_text = _postprocess_paragraph(para.full_text)
                     paragraphs.append(para_text)
             except Exception as e:
@@ -676,10 +657,9 @@ async def _step2_semantic_chunking(
         )
         tasks.append(task)
 
-    # results = await asyncio.gather(*tasks)
     results = await async_tqdm.gather(
         *tasks,
-        desc="Step2: 意味的分割",  # 各ステップで説明を変更
+        desc="Step2: 意味的分割",
         total=len(tasks)
     )
 
@@ -754,14 +734,12 @@ async def _step3_continuity_check(
         )
         tasks.append(task)
 
-    # results = await asyncio.gather(*tasks)
     results = await async_tqdm.gather(
         *tasks,
-        desc="Step3: 連続性チェック",  # ✅ 修正: Step2 → Step3
+        desc="Step3: 連続性チェック",
         total=len(tasks)
     )
 
-    # マージ処理
     logger.debug("マージ処理...")
     final_chunks = [chunks[0]]
     for i, result_json in enumerate(results):
@@ -769,11 +747,9 @@ async def _step3_continuity_check(
             try:
                 result = ContinuityResult.model_validate_json(result_json)
                 if result.is_connected:
-                    # 結合: 空行（\n\n）で連結し、段落構造を保持
                     final_chunks[-1] += "\n\n" + chunks[i + 1]
                     logger.debug(f"  チャンク{i + 1} + チャンク{i + 2} → 結合")
                 else:
-                    # 分離: 新しいチャンクとして追加
                     final_chunks.append(chunks[i + 1])
                     logger.debug(f"  チャンク{i + 2} → 新規追加")
             except Exception as e:
@@ -797,9 +773,6 @@ async def main():
         description="LLMベースセマンティックチャンキング（統一版 - make_qa形式互換）"
     )
 
-    # ================================================================
-    # INPUT オプション（✅ 統一版）
-    # ================================================================
     parser.add_argument(
         "--input-file",
         type=str,
@@ -807,9 +780,6 @@ async def main():
         help="入力ファイル (.txt, .csv)"
     )
 
-    # ================================================================
-    # OUTPUT オプション（✅ 統一版）
-    # ================================================================
     parser.add_argument(
         "--output",
         type=str,
@@ -817,13 +787,10 @@ async def main():
         help="出力ディレクトリ（デフォルト: chunks_output）"
     )
 
-    # ================================================================
-    # モデル・処理パラメータ（✅ 短縮形削除）
-    # ================================================================
     parser.add_argument(
         "--model",
         type=str,
-        default="gemini-3-flash-preview",  # ✅ デフォルト値を統一
+        default="gemini-3.5-flash",
         help="使用するLLMモデル"
     )
     parser.add_argument(
@@ -835,7 +802,7 @@ async def main():
     parser.add_argument(
         "--block-size",
         type=int,
-        default=1000,  # ✅ 2000→1000に変更（MAX_TOKENS対策）
+        default=1000,
         help="ブロックサイズ（文字数）。大きすぎるとMAX_TOKENSエラーが発生"
     )
     parser.add_argument(
@@ -844,9 +811,6 @@ async def main():
         help="詳細ログ出力"
     )
 
-    # ================================================================
-    # その他のオプション（変更なし）
-    # ================================================================
     parser.add_argument(
         "--resume",
         type=str,
@@ -873,31 +837,26 @@ async def main():
 
     args = parser.parse_args()
 
-    # ロギング設定
     setup_logging(verbose=args.verbose)
 
-    # ================================================================
-    # 入力ファイル読み込み（✅ args.input → args.input_file）
-    # ================================================================
-    input_path = Path(args.input_file)  # ✅ 変更
+    input_path = Path(args.input_file)
     if not input_path.exists():
         logger.error(f"入力ファイルが見つかりません: {args.input_file}")
         return
 
     file_extension = input_path.suffix.lower()
 
-    # テキスト読み込み
-    text = ""  # ✅ 初期化（警告回避）
+    text = ""
 
     if file_extension == '.csv':
         text = load_text_from_csv(
-            csv_path=args.input_file,  # ✅ 変更
+            csv_path=args.input_file,
             text_column=args.text_column,
             max_rows=args.max_rows,
             combine_rows=args.combine_rows
         )
     else:
-        with open(args.input_file, 'r', encoding='utf-8') as f:  # ✅ 変更
+        with open(args.input_file, 'r', encoding='utf-8') as f:
             text = f.read()
 
     logger.info("")
@@ -910,9 +869,6 @@ async def main():
     logger.info(f"👥 並列ワーカー数: {args.workers}")
     logger.info("=" * 60)
 
-    # ================================================================
-    # 出力ファイル名の自動生成（✅ 新規機能）
-    # ================================================================
     dataset_type = input_path.stem
     output_file = generate_output_filename(
         args.input_file,
@@ -924,9 +880,6 @@ async def main():
     logger.info("=" * 60)
     logger.info("")
 
-    # ================================================================
-    # チャンク作成（既存処理）
-    # ================================================================
     checkpoint_manager = CheckpointManager(job_id=args.resume) if args.resume else CheckpointManager()
 
     final_chunks = await chunks_all_async(
@@ -935,14 +888,11 @@ async def main():
         max_workers=args.workers,
         block_size=args.block_size,
         checkpoint_manager=checkpoint_manager,
-        output_file=output_file,  # ✅ 自動生成されたファイル名
+        output_file=output_file,
         dataset_type=dataset_type,
         source_file=input_path.name
     )
 
-    # ================================================================
-    # 完了ログ
-    # ================================================================
     logger.info("")
     logger.info("=" * 60)
     logger.info("✅ チャンク作成完了")
