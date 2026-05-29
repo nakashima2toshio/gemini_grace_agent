@@ -18,7 +18,7 @@ csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキ�
 uv run python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/cc_news_2per_gemini.csv \
   --output output_chunked \
-  --model claude-sonnet-4-6 \
+  --model gemini-3.5-flash \
   --workers 8
 
 # ----------------------------------------------
@@ -32,7 +32,7 @@ uv run python -m chunking.csv_text_to_chunks_text_csv \
 uv run python qa_qdrant/make_qa_register_qdrant.py \
   --input-file output_chunked/cc_news_2per_gemini_chunks.csv \
   --collection cc_news_2per_anthropic \
-  --model claude-sonnet-4-6 \
+  --model gemini-3.5-flash \
   --concurrency 2 \
   --recreate
 
