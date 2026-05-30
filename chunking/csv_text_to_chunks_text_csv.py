@@ -19,7 +19,7 @@ uv run python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/cc_news_2per_gemini.csv \
   --output output_chunked \
   --model gemini-3.5-flash \
-  --workers 8
+  --workers 2
 
 # ----------------------------------------------
 # tep2: Q/A生成 + Qdrant登録
@@ -31,7 +31,7 @@ uv run python -m chunking.csv_text_to_chunks_text_csv \
 
 uv run python qa_qdrant/make_qa_register_qdrant.py \
   --input-file output_chunked/cc_news_2per_gemini_chunks.csv \
-  --collection cc_news_2per_anthropic \
+  --collection cc_news_2per_gemini \
   --model gemini-3.5-flash \
   --concurrency 2 \
   --recreate
