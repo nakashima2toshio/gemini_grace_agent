@@ -533,7 +533,7 @@ class LLMSelfEvaluator:
         Args:
             description: ステップの目的
             output: ツールの出力内容
-            factors: 統計적要因
+            factors: 統計的要因
         Returns:
             Dict: {"score": float, "reason": str}
         """
@@ -797,8 +797,17 @@ class QueryCoverageCalculator:
                 return 0.5
 
             text = response.text.strip()
+            logger.info(f"QueryCoverageCalculator raw response: '{text}'")
             coverage = float(text)
             result = min(1.0, max(0.0, coverage))
+
+            # 回答が存在するのに 0.0 は異常値（LLMの誤出力）→ floor 0.4 を適用
+            if result == 0.0 and answer and len(answer.strip()) > 20:
+                logger.warning(
+                    f"QueryCoverageCalculator: suspicious 0.0 for non-empty answer "
+                    f"(len={len(answer)}), applying floor 0.4"
+                )
+                result = 0.4
 
             logger.debug(f"Query coverage: {result}")
             return result
