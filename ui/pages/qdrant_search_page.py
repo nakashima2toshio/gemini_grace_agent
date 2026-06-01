@@ -28,6 +28,13 @@ from services.file_service import load_source_qa_data
 from qdrant_client_wrapper import search_collection, \
     embed_sparse_query_unified  # Import search_collection and embed_sparse_query_unified
 
+# FastEmbedが利用可能かチェック
+try:
+    from fastembed import SparseTextEmbedding as _SparseTextEmbedding
+    FASTEMBED_AVAILABLE = True
+except ImportError:
+    FASTEMBED_AVAILABLE = False
+
 
 def show_qdrant_search_page():
     """画面5: Qdrant検索"""
@@ -117,7 +124,11 @@ def show_qdrant_search_page():
         )
 
         # ハイブリッド検索の有効化トグル
-        use_hybrid_search = st.checkbox("⚙️ ハイブリッド検索を有効にする (Sparse + Dense)", value=True)
+        if FASTEMBED_AVAILABLE:
+            use_hybrid_search = st.checkbox("⚙️ ハイブリッド検索を有効にする (Sparse + Dense)", value=True)
+        else:
+            use_hybrid_search = False
+            st.warning("⚠️ ハイブリッド検索不可: fastembed 未インストール\n`pip install fastembed` で有効化")
 
         # スコア閾値
         score_threshold = st.slider(
