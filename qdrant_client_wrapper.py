@@ -1097,7 +1097,8 @@ def search_collection(
         query_vector: List[float],
         sparse_vector: Optional[models.SparseVector] = None,
         limit: int = 5,
-        hybrid_alpha: float = 0.5
+        hybrid_alpha: float = 0.5,
+        score_threshold: float = 0.0
 ) -> List[Dict[str, Any]]:
     """
     コレクションを検索（Dense または Hybrid）
@@ -1139,6 +1140,7 @@ def search_collection(
                         fusion=models.Fusion.RRF,
                     ),
                     limit=limit,
+                    score_threshold=score_threshold if score_threshold > 0.0 else None,
                 )
                 hits = response.points
                 logger.info(f"✅ 【Stage 1】Hybrid Search成功: {collection_name}")
@@ -1157,18 +1159,21 @@ def search_collection(
         if not sparse_vector:
             logger.debug(f"【Stage 2】Dense Vector only: '{collection_name}'")
             # 名前付きベクトルの場合は models.NamedVector または query(..., using=...) を使用
+            threshold_arg = score_threshold if score_threshold > 0.0 else None
             if is_named_vector:
                 response = client.query_points(
                     collection_name=collection_name,
                     query=query_vector,
                     using=dense_vector_name,
-                    limit=limit
+                    limit=limit,
+                    score_threshold=threshold_arg
                 )
             else:
                 response = client.query_points(
                     collection_name=collection_name,
                     query=query_vector,
-                    limit=limit
+                    limit=limit,
+                    score_threshold=threshold_arg
                 )
             hits = response.points
 

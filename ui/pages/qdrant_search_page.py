@@ -117,7 +117,14 @@ def show_qdrant_search_page():
         )
 
         # ハイブリッド検索の有効化トグル
-        use_hybrid_search = st.checkbox("⚙️ ハイブリッド検索を有効にする (Sparse + Dense)", value=False)
+        use_hybrid_search = st.checkbox("⚙️ ハイブリッド検索を有効にする (Sparse + Dense)", value=True)
+
+        # スコア閾値
+        score_threshold = st.slider(
+            "スコア閾値（これ以下を除外）",
+            min_value=0.0, max_value=1.0, value=0.5, step=0.05,
+            help="この値より低いスコアの結果を除外します"
+        )
 
         # デバッグモード
         debug_mode = st.checkbox("🐛 デバッグモード", value=False)
@@ -238,8 +245,9 @@ def show_qdrant_search_page():
                     client=client,
                     collection_name=collection,
                     query_vector=qvec,
-                    sparse_vector=sparse_vector if use_hybrid_search else None,  # ハイブリッド検索が有効な場合のみSparseベクトルを渡す
-                    limit=topk
+                    sparse_vector=sparse_vector if use_hybrid_search else None,
+                    limit=topk,
+                    score_threshold=score_threshold
                 )
 
             # search_collectionの戻り値はDictのリストなので、QdrantのPointStructに変換 (UI表示のため)
