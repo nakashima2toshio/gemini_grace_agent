@@ -232,8 +232,39 @@ def show_grace_chat_page():
             return
 
     # チャット履歴の表示
+    # Plan/Execute の詳細（plan_data, execution_logs）が保存されていれば折りたたんで再表示する
     for message in st.session_state.grace_chat_history:
         with st.chat_message(message["role"]):
+            if message["role"] == "assistant" and "plan_data" in message:
+                plan_data = message["plan_data"]
+                with st.expander("📋 計画策定 (Plan)", expanded=False):
+                    st.markdown(f"**目標**: {plan_data.get('original_query', '')}")
+                    steps = plan_data.get("steps", [])
+                    col_p1, col_p2 = st.columns(2)
+                    with col_p1:
+                        st.metric("ステップ数", len(steps))
+                    with col_p2:
+                        st.metric("複雑度", f"{plan_data.get('complexity', 0):.1f}")
+                    for step in steps:
+                        action_icon = {
+                            "rag_search": "🔍", "web_search": "🌐", "reasoning": "🧠",
+                            "ask_user": "💬", "code_execute": "💻", "run_legacy_agent": "🤖",
+                        }.get(step.get("action", ""), "▶️")
+                        dep_ids = step.get("depends_on", [])
+                        deps = f"  ← 依存: Step {dep_ids}" if dep_ids else ""
+                        st.markdown(
+                            f"**{action_icon} Step {step['step_id']}: [{step['action']}]** "
+                            f"{step['description']}{deps}"
+                        )
+                    with st.expander("🔧 Plan JSON (raw)", expanded=False):
+                        st.json(plan_data)
+
+                logs = message.get("execution_logs", [])
+                if logs:
+                    with st.expander("⚡ 実行ログ (Execute)", expanded=False):
+                        for log in logs:
+                            st.markdown(log)
+
             st.markdown(message["content"])
 
     # --- STEP 2-3: ユーザー入力処理 + イベントループ変更 ---
@@ -398,9 +429,14 @@ def show_grace_chat_page():
 
                 if final_response_content:
                     st.markdown(final_response_content)
-                    st.session_state.grace_chat_history.append(
-                        {"role": "assistant", "content": final_response_content}
-                    )
+                    # Plan/Execute の詳細も履歴に保存して再表示できるようにする
+                    history_entry: Dict[str, Any] = {
+                        "role": "assistant",
+                        "content": final_response_content,
+                        "plan_data": plan.model_dump(mode="json", exclude={"created_at"}),
+                        "execution_logs": thought_log,
+                    }
+                    st.session_state.grace_chat_history.append(history_entry)
                 else:
                     st.warning("エージェントからの応答がありませんでした。")
 
