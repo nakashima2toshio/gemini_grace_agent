@@ -86,9 +86,9 @@ def show_agent_chat_page():
                         # データフレーム表示（スクロール可能）
                         st.dataframe(
                             df_preview,
-                            width='stretch',
+                            use_container_width=True,
                             hide_index=True,
-                            height=600,  # スクロール可能な高さ
+                            height=600,
                             column_config={
                                 "ID"      : st.column_config.NumberColumn("ID", width="small"),
                                 "Question": st.column_config.TextColumn("質問 (Question)", width="medium"),
@@ -126,11 +126,11 @@ def show_agent_chat_page():
         selected_collections = st.multiselect(
             "検索対象コレクション (Target Collections)",
             options=all_collections,
-            default=all_collections if all_collections != ["(None)"] else [],  # デフォルトは全て選択
+            default=all_collections if all_collections != ["(None)"] else [],
             help="エージェントが検索ツールを使用する際に、候補として提示されるコレクションです。"
         )
 
-        # ★追加: ハイブリッド検索（Sparse + Dense）の有効化チェックボックス
+        # ハイブリッド検索（Sparse + Dense）の有効化チェックボックス
         use_hybrid_search = st.checkbox(
             "⚡ ハイブリッド検索 (Sparse + Dense)",
             value=True,
@@ -140,13 +140,10 @@ def show_agent_chat_page():
         if st.button("🗑️ 会話履歴をクリア"):
             st.session_state.chat_history = []
             st.session_state.chat_session = None
-            # current_collections もクリアして再初期化を強制
             if "current_collections" in st.session_state:
                 del st.session_state["current_collections"]
-            # current_model もクリア
             if "current_model" in st.session_state:
                 del st.session_state["current_model"]
-            # ★追加: current_hybrid_search もクリア
             if "current_hybrid_search" in st.session_state:
                 del st.session_state["current_hybrid_search"]
             st.rerun()
@@ -184,28 +181,23 @@ def show_agent_chat_page():
         st.session_state.agent_session_id = str(uuid.uuid4())
         logger.info(f"New agent session ID created: {st.session_state.agent_session_id}")
 
-    # 前回のコレクション選択状態・モデルと比較
     current_collections_key = "current_collections"
     current_model_key = "current_model"
-    current_hybrid_key = "current_hybrid_search"  # ★追加
+    current_hybrid_key = "current_hybrid_search"
     should_reinitialize = False
 
-    # selected_collections はリストなのでソートして比較
     if current_collections_key not in st.session_state:
         should_reinitialize = True
     elif sorted(st.session_state[current_collections_key]) != sorted(selected_collections):
         should_reinitialize = True
-        # 設定が変わったので履歴クリアするか確認（今回はしないが、メッセージ出すなどあり）
         st.toast("検索対象コレクションが変更されたため、エージェントを再設定します。")
 
-    # モデルの変更チェック
     if current_model_key not in st.session_state:
         should_reinitialize = True
     elif st.session_state[current_model_key] != selected_model:
         should_reinitialize = True
         st.toast(f"モデルが変更されました: {selected_model}")
 
-    # ★追加: ハイブリッド検索設定の変更チェック
     if current_hybrid_key not in st.session_state:
         should_reinitialize = True
     elif st.session_state[current_hybrid_key] != use_hybrid_search:
@@ -214,16 +206,15 @@ def show_agent_chat_page():
 
     if should_reinitialize or "agent" not in st.session_state or st.session_state.agent is None:
         try:
-            # ★変更: use_hybrid_search パラメータを追加
             st.session_state.agent = ReActAgent(
                 selected_collections,
                 selected_model,
                 session_id=st.session_state.agent_session_id,
-                use_hybrid_search=use_hybrid_search  # ★追加
+                use_hybrid_search=use_hybrid_search
             )
             st.session_state[current_collections_key] = selected_collections
             st.session_state[current_model_key] = selected_model
-            st.session_state[current_hybrid_key] = use_hybrid_search  # ★追加
+            st.session_state[current_hybrid_key] = use_hybrid_search
             st.toast("エージェントの準備が完了しました（キャッシュ+並列検索）。")
         except Exception as e:
             st.error(f"エージェントの初期化に失敗しました: {e}")
@@ -240,17 +231,15 @@ def show_agent_chat_page():
         st.session_state.chat_history.append({"role": "user", "content": prompt})
 
         with st.chat_message("assistant"):
-            st_expander_placeholder = st.empty()  # Placeholder for the expander
+            st_expander_placeholder = st.empty()
 
-            # Use a list to accumulate thought log for the expander
             current_thought_log_content: List[str] = []
 
-            response_text_placeholder = st.empty()  # Placeholder for the final response
+            response_text_placeholder = st.empty()
 
             final_response_content = ""
 
             try:
-                # Iterate through events yielded by the agent
                 for event in st.session_state.agent.execute_turn(prompt):
                     if event["type"] == "log":
                         current_thought_log_content.append(event["content"])
@@ -274,7 +263,7 @@ def show_agent_chat_page():
                                 st.divider()
                     elif event["type"] == "final_answer":
                         final_response_content = event["content"]
-                        response_text_placeholder.markdown(final_response_content)  # Display final answer
+                        response_text_placeholder.markdown(final_response_content)
 
                 if final_response_content:
                     st.session_state.chat_history.append({"role": "assistant", "content": final_response_content})
@@ -284,4 +273,3 @@ def show_agent_chat_page():
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
                 logger.error(f"Chat Error: {e}", exc_info=True)
-
