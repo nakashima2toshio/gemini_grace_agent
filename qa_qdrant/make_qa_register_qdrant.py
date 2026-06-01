@@ -244,10 +244,12 @@ def run_registration(
         logger.error(f"ファイル読み込みエラー: {e}")
         return False
 
-    # ベクトル化対象テキストの準備 (question + answer)
+    # ベクトル化対象テキストの準備 (question のみ)
+    # 検索時も question のみをベクトル化するため、対称性を保つ。
+    # question+answer の結合は類似度スコアを下げる原因になる。
     if 'question' in df.columns and 'answer' in df.columns:
-        texts = (df['question'].astype(str) + "\n" + df['answer'].astype(str)).tolist()
-        logger.info("📝 ベクトル化対象: 'question' と 'answer' を結合")
+        texts = df['question'].astype(str).tolist()
+        logger.info("📝 ベクトル化対象: 'question' のみ（検索クエリとの対称性を保つ）")
     else:
         logger.error("Q/Aカラムが見つかりません。")
         return False
@@ -735,4 +737,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
