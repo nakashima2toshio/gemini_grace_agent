@@ -814,7 +814,7 @@ class Executor:
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.0,
-                    max_output_tokens=5,
+                    max_output_tokens=256,  # 枠が小さいと thinking/推論系モデルで本文が空になる
                     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                 )
             )
@@ -822,6 +822,10 @@ class Executor:
             elapsed = _time.time() - t0
             answer = (response.text or "").strip().upper() if response else ""
 
+            if not answer:
+                # 空応答は判定不能とみなし、例外時と同じく既存動作（スコアのみで判定＝適合扱い）を維持
+                logger.warning("RAG relevance check returned empty answer, defaulting to True")
+                return True
             is_relevant = "YES" in answer
             logger.info(
                 f"RAG relevance check: '{answer}' -> {is_relevant} ({elapsed:.1f}s)"
