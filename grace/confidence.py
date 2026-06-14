@@ -380,7 +380,7 @@ class LLMSelfEvaluator:
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.0,
-                    max_output_tokens=10,
+                    max_output_tokens=512,  # 出力枠が小さいと thinking/推論系モデルで本文が空になる（anthropic基準=512）
                     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                 )
             )
@@ -466,7 +466,7 @@ class LLMSelfEvaluator:
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.0,
-                    max_output_tokens=200,
+                    max_output_tokens=1024,  # 構造化出力に十分な枠を確保（anthropic基準=1024）
                     # response_mime_type="application/json" のみ指定する
                     # response_schema=EvaluationResult を使うと gemini-3.5-flash が
                     # "Here is the JSON requested:" のみを返し JSON 本体を出力しないため除去
@@ -618,7 +618,7 @@ class QueryCoverageCalculator:
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.0,
-                    max_output_tokens=10,
+                    max_output_tokens=512,  # 出力枠が小さいと thinking/推論系モデルで本文が空になる（anthropic基準=512）
                     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                 )
             )
