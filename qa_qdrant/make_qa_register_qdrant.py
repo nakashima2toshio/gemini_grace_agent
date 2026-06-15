@@ -441,20 +441,6 @@ def main():
         default=3,
         help="1回のAPIで処理するチャンク数（デフォルト: 3）"
     )
-    # スマート生成オプション（デフォルト: True）
-    group_gen.add_argument(
-        "--use-smart-generation",
-        action="store_true",
-        default=True,
-        help="スマートQ/A生成を使用（LLMによる動的Q/A数決定、デフォルト有効）"
-    )
-    group_gen.add_argument(
-        "--no-smart-generation",
-        dest="use_smart_generation",
-        action="store_false",
-        help="従来方式のQ/A生成を使用（トークン数ベース）"
-    )
-
     # ================================================================
     # Qdrant登録パラメータ
     # ================================================================
@@ -523,19 +509,13 @@ def main():
         logger.error("GOOGLE_API_KEYが設定されていません")
         sys.exit(1)
 
-    # スマート生成モードのログ表示
+    # Q/A生成モードのログ表示
     logger.info("")
     logger.info("=" * 60)
-    if args.use_smart_generation:
-        logger.info("🆕 Q/A生成モード: スマート生成（デフォルト）")
-        logger.info("   - LLMによる動的Q/A数決定（0-5個）")
-        logger.info("   - 内容の重要度・複雑さを考慮")
-        logger.info("   - 主要トピックを明示的にカバー")
-        logger.info("   ※ 従来方式に戻す場合: --no-smart-generation")
-    else:
-        logger.info("🔧 Q/A生成モード: 従来方式（トークン数ベース）")
-        logger.info("   - 固定的なQ/A数決定（2-8個）")
-        logger.info("   ※ スマート生成に切り替える場合: --use-smart-generation")
+    logger.info("🆕 Q/A生成モード: スマート生成（構造化出力1回）")
+    logger.info("   - LLMによる動的Q/A数決定（0-5個）")
+    logger.info("   - 内容の重要度・複雑さを考慮")
+    logger.info("   - 主要トピックを明示的にカバー")
     logger.info("=" * 60)
 
     # ✅ 改修: 並列設定のログ表示
@@ -590,8 +570,7 @@ def main():
                     celery_workers=args.celery_workers,
                     concurrency=args.concurrency,
                     batch_chunks=args.batch_chunks,
-                    analyze_coverage=True,
-                    use_smart_generation=args.use_smart_generation
+                    analyze_coverage=True
                 )
 
                 generated_csv = result['saved_files'].get('qa_csv')
@@ -653,8 +632,7 @@ def main():
                         celery_workers=args.celery_workers,
                         concurrency=args.concurrency,
                         batch_chunks=args.batch_chunks,
-                        analyze_coverage=True,
-                        use_smart_generation=args.use_smart_generation
+                        analyze_coverage=True
                     )
 
                     generated_csv = result['saved_files'].get('qa_csv')
@@ -692,8 +670,7 @@ def main():
                 celery_workers=args.celery_workers,
                 concurrency=args.concurrency,
                 batch_chunks=args.batch_chunks,
-                analyze_coverage=True,
-                use_smart_generation=args.use_smart_generation
+                analyze_coverage=True
             )
 
             generated_csv = result['saved_files'].get('qa_csv')

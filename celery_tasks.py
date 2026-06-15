@@ -47,7 +47,6 @@ def submit_unified_qa_generation(
         config: Dict,
         model: str,
         provider: str = "gemini",  # 互換性のために残すが使用しない
-        use_smart_generation: bool = True
 ) -> List:
     """
     チャンクのQ/A生成タスクを並列実行
@@ -55,21 +54,19 @@ def submit_unified_qa_generation(
     Args:
         chunks: チャンクのリスト
         config: データセット設定
-        model: 使用するモデル（例: "gemini-2.0-flash"）
+        model: 使用するモデル（例: "gemini-2.5-flash"）
         provider: 互換性のために残すが使用しない
-        use_smart_generation: スマート生成を使用するか（デフォルト: True）
 
     Returns:
         Celeryタスクのリスト（AsyncResultオブジェクト）
     """
     logger.info(f"Celeryタスクを投入: {len(chunks)}チャンク")
     logger.info(f"モデル: {model}")
-    logger.info(f"生成モード: {'スマート生成' if use_smart_generation else '従来方式'}")
 
     task_list = []
     for chunk in chunks:
         task = generate_qa_for_chunk_task.apply_async(
-            args=(chunk, config, model, use_smart_generation)
+            args=(chunk, config, model)
         )
         task_list.append(task)
 
@@ -91,17 +88,15 @@ def generate_qa_for_chunk_task(
         chunk: Dict,
         config: Dict,
         model: str,
-        use_smart_generation: bool = True
 ) -> List[Dict]:
     """
-    単一チャンクのQ/A生成タスク（SmartQAGenerator使用版）
+    単一チャンクのQ/A生成タスク（SmartQAGenerator使用版・構造化出力1回）
 
     Args:
         self: Celeryタスクインスタンス
         chunk: チャンク
         config: データセット設定
         model: 使用するモデル
-        use_smart_generation: スマート生成を使用するか（常にTrue推奨）
 
     Returns:
         Q/Aペアのリスト
@@ -115,7 +110,6 @@ def generate_qa_for_chunk_task(
     logger.info("=" * 60)
     logger.info(f"  chunk_id: {chunk_id}")
     logger.info(f"  model: {model}")
-    logger.info(f"  use_smart_generation: {use_smart_generation}")
     logger.info(f"  text_length: {len(chunk_text)} 文字")
 
     try:
@@ -533,7 +527,7 @@ if __name__ == "__main__":
 
         # クラスメソッド確認
         print(f"クラス: {SmartQAGenerator}")
-        print(f"メソッド: __init__, analyze_chunk, generate_qa_pairs, process_chunk")
+        print(f"メソッド: __init__, analyze_and_generate, process_chunk")
 
     except ImportError as e:
         print(f"❌ インポート失敗: {e}")

@@ -21,13 +21,12 @@ qa_generation/pipeline.py - Q/A生成パイプライン制御モジュール（v
   # チャンク済みCSVからQ/A生成
   pipeline = QAPipeline(
       input_file="output_chunked/data_chunks.csv",
-      model="gemini-2.0-flash",
+      model="gemini-2.5-flash",
       output_dir="qa_output/pipeline"
   )
   result = pipeline.run(
       use_celery=True,
-      concurrency=8,
-      use_smart_generation=True
+      concurrency=8
   )
 """
 
@@ -217,8 +216,7 @@ class QAPipeline:
                     use_celery: bool = False,
                     celery_workers: int = 1,
                     concurrency: int = 8,
-                    batch_chunks: int = 3,
-                    use_smart_generation: bool = True) -> List[Dict]:
+                    batch_chunks: int = 3) -> List[Dict]:
         """Q/Aペアを生成する
 
         Args:
@@ -227,27 +225,21 @@ class QAPipeline:
             celery_workers: Celeryワーカープロセス数チェック用（デフォルト: 1）
             concurrency: 並列タスク数（デフォルト: 8）
             batch_chunks: 1回のAPIで処理するチャンク数
-            use_smart_generation: スマートQ/A生成を使用するか（常にTrue推奨）
         """
         logger.info("\n[3/3] Q/Aペア生成...")
-
-        # スマート生成モードのログ出力
-        mode_name = "スマート生成" if use_smart_generation else "従来方式"
-        logger.info(f"  生成モード: {mode_name}")
         logger.info(f"  処理チャンク数: {len(chunks)}")
 
         if use_celery:
             return self._generate_with_celery(
-                chunks, celery_workers, concurrency, batch_chunks, use_smart_generation
+                chunks, celery_workers, concurrency, batch_chunks
             )
         else:
-            return self._generate_sync(chunks, batch_chunks, use_smart_generation)
+            return self._generate_sync(chunks, batch_chunks)
 
     def _generate_with_celery(self, chunks: List[Dict],
                               workers: int,
                               concurrency: int,
-                              batch_size: int,
-                              use_smart_generation: bool) -> List[Dict]:
+                              batch_size: int) -> List[Dict]:
         """Celeryを使用した非同期生成
 
         Args:
@@ -255,7 +247,6 @@ class QAPipeline:
             workers: ワーカープロセス数チェック用
             concurrency: 並列タスク数
             batch_size: バッチサイズ
-            use_smart_generation: スマートQ/A生成を使用するか
         """
         logger.info(f"  Celery並列処理モード:")
         logger.info(f"    - ワーカープロセス数チェック: {workers}")
@@ -265,24 +256,20 @@ class QAPipeline:
         if not check_celery_workers(workers):
             raise RuntimeError("Celery workers are not running")
 
-        # use_smart_generationをCeleryタスクに渡す
         tasks = submit_unified_qa_generation(
-            chunks, self.config, self.model, provider="gemini",
-            use_smart_generation=use_smart_generation
+            chunks, self.config, self.model, provider="gemini"
         )
 
         timeout_seconds = min(max(len(tasks) * 10, 600), 1800)
         logger.info(f"  結果収集タイムアウト: {timeout_seconds}秒（{len(tasks)}タスク）")
         return collect_results(tasks, timeout=timeout_seconds)
 
-    def _generate_sync(self, chunks: List[Dict], batch_size: int,
-                       use_smart_generation: bool) -> List[Dict]:
+    def _generate_sync(self, chunks: List[Dict], batch_size: int) -> List[Dict]:
         """同期生成（SmartQAGenerator使用）
 
         Args:
             chunks: チャンクのリスト
             batch_size: バッチサイズ（現在は未使用、将来の拡張用）
-            use_smart_generation: スマートQ/A生成を使用するか（常にTrue推奨）
 
         Returns:
             Q/Aペアのリスト
@@ -348,8 +335,7 @@ class QAPipeline:
             concurrency: int = 8,
             batch_chunks: int = 3,
             analyze_coverage: bool = True,
-            coverage_threshold: Optional[float] = None,
-            use_smart_generation: bool = True):
+            coverage_threshold: Optional[float] = None):
         """
         パイプライン実行
 
@@ -360,7 +346,6 @@ class QAPipeline:
             batch_chunks: 1回のAPIで処理するチャンク数
             analyze_coverage: カバレージ分析を実行するか
             coverage_threshold: カバレージ判定の類似度閾値
-            use_smart_generation: スマートQ/A生成を使用するか（デフォルト: True）
 
         Returns:
             Dict: 実行結果
@@ -398,8 +383,7 @@ class QAPipeline:
                 use_celery,
                 celery_workers,
                 concurrency,
-                batch_chunks,
-                use_smart_generation
+                batch_chunks
             )
 
             if not qa_pairs:
