@@ -68,7 +68,25 @@ class SmartQAGenerator:
             self.client = genai.Client(api_key=api_key)
         else:
             self.client = genai.Client()
+        # 直近の analyze_and_generate 呼び出しのトークン使用量。
+        # process_chunk → Celery worker → collect_results(usage_out) へ伝播し、
+        # トークン集計サマリーを実値化する（#67 の usage 配管を gemini で有効化）。
+        self.last_usage: Dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
         logger.info(f"google.genai APIを使用 (model={self.model})")
+
+    @staticmethod
+    def _extract_usage(response) -> Dict[str, int]:
+        """genai レスポンスの usage_metadata からトークン数を取り出す。
+
+        SDK/モデルにより属性が欠ける場合があるため getattr で安全に読む。
+        """
+        um = getattr(response, "usage_metadata", None)
+        if um is None:
+            return {"input_tokens": 0, "output_tokens": 0}
+        return {
+            "input_tokens": int(getattr(um, "prompt_token_count", 0) or 0),
+            "output_tokens": int(getattr(um, "candidates_token_count", 0) or 0),
+        }
 
     COMBINED_PROMPT = """
 以下のテキストチャンクを分析し、適切な数のQ/Aペアを生成してください。
@@ -119,6 +137,8 @@ class SmartQAGenerator:
         )
         if response is None or not response.text:
             raise ValueError("analyze_and_generate returned empty response")
+        # トークン使用量を捕捉（process_chunk が戻り値に同梱する）
+        self.last_usage = self._extract_usage(response)
         return SmartQAResult.model_validate_json(response.text)
 
     def process_chunk(self, chunk_text: str) -> Dict:
@@ -133,6 +153,7 @@ class SmartQAGenerator:
             dict: {
                 'analysis': Dict,        # 分析結果
                 'qa_pairs': List[Dict],  # 生成されたQ/A
+                'usage': Dict[str, int], # トークン使用量 {input_tokens, output_tokens}
                 'success': bool          # 成功フラグ
             }
         """
@@ -157,6 +178,7 @@ class SmartQAGenerator:
             return {
                 'analysis': analysis,
                 'qa_pairs': qa_pairs,
+                'usage'   : dict(self.last_usage),
                 'success' : True
             }
 
@@ -165,6 +187,7 @@ class SmartQAGenerator:
             return {
                 'analysis': {},
                 'qa_pairs': [],
+                'usage'   : {"input_tokens": 0, "output_tokens": 0},
                 'success' : False
             }
 

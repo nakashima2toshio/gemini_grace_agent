@@ -10,10 +10,23 @@ import os
 from grace.planner import Planner
 from grace.schemas import ExecutionPlan
 
+
+def _has_real_gemini_key() -> bool:
+    """実在の Gemini APIキーがあるか判定。
+
+    tests/grace/conftest.py が GOOGLE_API_KEY をプレースホルダ "test-api-key" で
+    setdefault するため、単純な存在チェックでは CI でも True になり、実LLM呼び出しが
+    走ってしまう（auth 失敗→fallback で緑だが遅く不安定）。プレースホルダは
+    実環境ではないとみなし、CI では確実にスキップする。
+    """
+    key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    return bool(key) and key != "test-api-key"
+
+
 # APIキーがない環境（CIなど）で実行されないようにスキップ条件をつける
 @pytest.mark.skipif(
-    not os.environ.get("GOOGLE_API_KEY"),
-    reason="GOOGLE_API_KEY not set in environment"
+    not _has_real_gemini_key(),
+    reason="real GOOGLE_API_KEY/GEMINI_API_KEY required for integration test",
 )
 class TestPlannerIntegration:
     """実際のLLMを使用した統合テスト"""
