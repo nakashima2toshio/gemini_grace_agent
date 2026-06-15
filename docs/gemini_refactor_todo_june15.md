@@ -177,7 +177,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 - [x] #59 実行ループ統合（execute_plan を generator ドレインの薄いラッパー化）✅ grace/executor.py（二重ループ解消）
 
 ### Phase B — 登録・Q/A・パイプライン
-- [ ] #55 make_qa_register_qdrant 死にフラグ＋--combine-rows 撤去
+- [x] #55 make_qa_register_qdrant 死にフラグ＋--combine-rows 撤去 ✅ combine_rows_to_chunks 関数・argparse(--combine-rows/--block-size)・分岐ロジック・docstring/使用例を一掃。チャンキングは chunking/csv_text_to_chunks_text_csv.py へ一本化
 - [x] #54 make_qa.py スマート生成フラグ撤去 ✅ qa_qdrant/make_qa.py
 - [x] #52 単段化（SmartQAResult/SmartQAPair・構造化出力 1 回）＋use_smart_generation 撤去 ✅ smart_qa_generator.py/pipeline.py/celery_tasks.py/make_qa_register_qdrant.py
 - [ ] #51 内容ハッシュ ID ＋重複除去＋先読み並列化（3 部）
