@@ -1,38 +1,34 @@
 import pytest
-from qa_generation.structure import merge_small_chunks
+from helper.helper_text import merge_small_chunks
+
 
 def test_merge_small_chunks_logic():
-    # Mocking tiktoken behavior implicitly by relying on text length roughly, 
-    # but tokens are recalculated inside. 
-    # Assuming standard encoding, "Short" is very few tokens.
-    
+    # 現行の merge_small_chunks は各チャンクが事前計算済みの
+    # tokens / doc_id / chunk_idx を持つことを前提にしている。
+    # current["tokens"] < min_tokens かつ統合後 <= max_tokens のとき
+    # 同一 doc_id のチャンクを貪欲に統合する。
     chunks = [
-        {"id": "1", "text": "Short text.", "doc_id": "d1"},
-        {"id": "2", "text": "Another short text.", "doc_id": "d1"},
-        {"id": "3", "text": "A very long text " * 50, "doc_id": "d1"},
+        {"id": "1", "text": "Short text.", "doc_id": "d1", "chunk_idx": 0, "tokens": 10},
+        {"id": "2", "text": "Another short text.", "doc_id": "d1", "chunk_idx": 1, "tokens": 45},
+        {"id": "3", "text": "A very long text", "doc_id": "d1", "chunk_idx": 2, "tokens": 200},
     ]
-    
-    # We rely on the internal tokenizer of merge_small_chunks.
-    # We expect 1 and 2 to merge if min_tokens is high enough.
-    
+
     merged = merge_small_chunks(chunks, min_tokens=50, max_tokens=500)
-    
-    # Depending on token counts:
-    # "Short text." is ~3 tokens.
-    # "A very long text " * 50 is ~200 tokens.
-    # So 1 and 2 should merge. 3 is large enough.
-    
+
+    # 1 + 2 を統合すると tokens=55 (>= min_tokens=50) になるため
+    # 以降の 3 とは統合されず、結果は 2 チャンクになる。
     assert len(merged) == 2
-    assert merged[0]["merged"] is True
     assert "Short text." in merged[0]["text"]
     assert "Another short text." in merged[0]["text"]
+    assert merged[0]["tokens"] == 55
     assert merged[1]["id"] == "3"
+
 
 def test_merge_different_docs():
     chunks = [
-        {"id": "1", "text": "Short.", "doc_id": "d1"},
-        {"id": "2", "text": "Short.", "doc_id": "d2"},
+        {"id": "1", "text": "Short.", "doc_id": "d1", "chunk_idx": 0, "tokens": 5},
+        {"id": "2", "text": "Short.", "doc_id": "d2", "chunk_idx": 0, "tokens": 5},
     ]
-    # Should not merge different docs
+    # doc_id が異なるため統合されない
     merged = merge_small_chunks(chunks, min_tokens=50, max_tokens=500)
     assert len(merged) == 2

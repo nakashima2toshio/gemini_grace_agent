@@ -19,7 +19,7 @@ import os
 import sys
 import logging
 from pathlib import Path
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union, Callable
 
 # ================================================================
 # 重要: プロジェクトルートをsys.pathに追加
@@ -39,6 +39,25 @@ logger = logging.getLogger(__name__)
 
 
 # ================================================================
+# 生成器のプロセス内キャッシュ
+# ================================================================
+# 旧実装はタスク（チャンク）ごとに生成器＝LLMクライアントを新規生成しており、
+# 数千チャンクの処理で無駄な初期化コストが発生していた。prefork プールでは
+# 子プロセスごとにモジュール状態が独立するため、プロセス内キャッシュで安全。
+_GENERATOR_CACHE: Dict[str, object] = {}
+
+
+def _get_generator(model: str):
+    """モデル名ごとに SmartQAGenerator をプロセス内キャッシュから取得する"""
+    generator = _GENERATOR_CACHE.get(model)
+    if generator is None:
+        from qa_generation.smart_qa_generator import SmartQAGenerator
+        generator = SmartQAGenerator(model=model)
+        _GENERATOR_CACHE[model] = generator
+    return generator
+
+
+# ================================================================
 # Q/A生成タスク
 # ================================================================
 
@@ -47,7 +66,6 @@ def submit_unified_qa_generation(
         config: Dict,
         model: str,
         provider: str = "gemini",  # 互換性のために残すが使用しない
-        use_smart_generation: bool = True
 ) -> List:
     """
     チャンクのQ/A生成タスクを並列実行
@@ -55,21 +73,19 @@ def submit_unified_qa_generation(
     Args:
         chunks: チャンクのリスト
         config: データセット設定
-        model: 使用するモデル（例: "gemini-2.0-flash"）
+        model: 使用するモデル（例: "gemini-2.5-flash"）
         provider: 互換性のために残すが使用しない
-        use_smart_generation: スマート生成を使用するか（デフォルト: True）
 
     Returns:
         Celeryタスクのリスト（AsyncResultオブジェクト）
     """
     logger.info(f"Celeryタスクを投入: {len(chunks)}チャンク")
     logger.info(f"モデル: {model}")
-    logger.info(f"生成モード: {'スマート生成' if use_smart_generation else '従来方式'}")
 
     task_list = []
     for chunk in chunks:
         task = generate_qa_for_chunk_task.apply_async(
-            args=(chunk, config, model, use_smart_generation)
+            args=(chunk, config, model)
         )
         task_list.append(task)
 
@@ -91,17 +107,15 @@ def generate_qa_for_chunk_task(
         chunk: Dict,
         config: Dict,
         model: str,
-        use_smart_generation: bool = True
 ) -> List[Dict]:
     """
-    単一チャンクのQ/A生成タスク（SmartQAGenerator使用版）
+    単一チャンクのQ/A生成タスク（SmartQAGenerator使用版・構造化出力1回）
 
     Args:
         self: Celeryタスクインスタンス
         chunk: チャンク
         config: データセット設定
         model: 使用するモデル
-        use_smart_generation: スマート生成を使用するか（常にTrue推奨）
 
     Returns:
         Q/Aペアのリスト
@@ -115,24 +129,18 @@ def generate_qa_for_chunk_task(
     logger.info("=" * 60)
     logger.info(f"  chunk_id: {chunk_id}")
     logger.info(f"  model: {model}")
-    logger.info(f"  use_smart_generation: {use_smart_generation}")
     logger.info(f"  text_length: {len(chunk_text)} 文字")
 
     try:
-        # ✅ 修正: SmartQAGeneratorをインポート（generation.py不要）
-        logger.info(f"[ワーカー] SmartQAGeneratorをインポート中...")
-        from qa_generation.smart_qa_generator import SmartQAGenerator
-        logger.info(f"[ワーカー] ✅ インポート成功")
-
         # 空テキストチェック
         if not chunk_text.strip():
             logger.warning(f"[ワーカー] ⚠️ 空のチャンク: {chunk_id}")
-            return []
+            return {"qa_pairs": [], "usage": {"input_tokens": 0, "output_tokens": 0}}
 
-        # ✅ 修正: SmartQAGeneratorでQ/A生成
         logger.info(f"[ワーカー] Q/A生成開始: chunk={chunk_id}")
 
-        generator = SmartQAGenerator(model=model)
+        # 生成器はプロセス内キャッシュから再利用（タスクごとの再初期化を回避）
+        generator = _get_generator(model)
         result = generator.process_chunk(chunk_text)
 
         qa_pairs = []
@@ -148,7 +156,10 @@ def generate_qa_for_chunk_task(
 
         logger.info(f"[ワーカー] ✅ タスク完了: chunk={chunk_id}, Q/A数={len(qa_pairs)}")
         logger.info("=" * 60)
-        return qa_pairs
+        # 戻り値はワーカーのトークン使用量を同梱した dict 形式。
+        # collect_results() が新旧両形式（dict / 旧list）を吸収する。
+        # 注: gemini はトークンカウンタ未配線のため usage は 0（plumbing のみ用意）。
+        return {"qa_pairs": qa_pairs, "usage": {"input_tokens": 0, "output_tokens": 0}}
 
     except ImportError as exc:
         logger.error("=" * 60)
@@ -186,11 +197,36 @@ def generate_qa_for_chunk_task(
 # 結果収集
 # ================================================================
 
-def collect_results(tasks: List, timeout: int = 600) -> List[Dict]:
+def collect_results(
+        tasks: List,
+        timeout: int = 600,
+        on_result: Optional[Callable[[int, List[Dict]], None]] = None,
+        usage_out: Optional[Dict[str, int]] = None,
+) -> List[Dict]:
     """
-    Celeryタスクの結果を収集
+    Celeryタスクの結果を完了順に収集する。
+
+    旧実装は投入順に task.get() でブロックしていたため、先頭の遅いタスクが
+    完了済みの後続タスクの回収・逐次永続化を全て塞いでいた（HOLブロッキング。
+    途中クラッシュ時に完了済み結果が残らない）。本実装は ready() を
+    ポーリングして完了したタスクから順に回収する。
+
+    Args:
+        tasks: AsyncResult のリスト
+        timeout: 全タスクの収集が完了するまでのグローバルなタイムアウト（秒）。
+            期限到達時点で未完了のタスクはタイムアウト扱いとなる
+        on_result: タスク成功ごとに呼ばれるコールバック
+            (タスクの投入時インデックス, Q/Aペアリスト) を受け取る。
+            逐次永続化（JSONL追記）などに使用する。完了順に呼ばれる
+        usage_out: 渡すとワーカー側のトークン使用量を集約して書き込む
+            （input_tokens / output_tokens を加算）
+
+    Returns:
+        Q/Aペアのリスト（完了順。チャンクとの対応は各ペアの chunk_id で保持）
     """
-    logger.info(f"結果収集中: {len(tasks)}タスク, timeout={timeout}秒")
+    import time as _time
+
+    logger.info(f"結果収集中: {len(tasks)}タスク, timeout={timeout}秒（完了順回収）")
 
     all_qa_pairs = []
     success_count = 0
@@ -198,31 +234,86 @@ def collect_results(tasks: List, timeout: int = 600) -> List[Dict]:
     timeout_count = 0
     error_details = []
 
-    for i, task in enumerate(tasks, 1):
-        try:
-            result = task.get(timeout=timeout)
+    total = len(tasks)
+    report_interval = max(1, total // 20)  # 5%刻みで進捗表示
+    deadline = _time.monotonic() + timeout
+    poll_interval = 0.5
 
-            if result:
-                all_qa_pairs.extend(result)
-                success_count += 1
-                logger.debug(f"タスク {i}/{len(tasks)}: ✅ 成功（Q/A数={len(result)}）")
-            else:
+    pending: Dict[int, object] = dict(enumerate(tasks))
+
+    def _report(done: int) -> None:
+        pct = done / total * 100 if total else 100.0
+        logger.info(
+            f"進捗: {done}/{total} ({pct:.0f}%) | Q/A累計: {len(all_qa_pairs)} "
+            f"| 完了: {success_count} | 失敗: {failed_count}"
+        )
+
+    while pending and _time.monotonic() < deadline:
+        completed_now = []
+        for idx, task in pending.items():
+            try:
+                if not task.ready():
+                    continue
+            except Exception as e:
+                # ブローカー接続断等。当該タスクは失敗扱い
+                completed_now.append(idx)
                 failed_count += 1
-                logger.warning(f"タスク {i}/{len(tasks)}: ⚠️ 結果が空")
+                error_details.append(f"タスク{idx + 1}: 状態取得エラー {str(e)[:80]}")
+                continue
 
-        except Exception as e:
-            error_msg = str(e)
+            completed_now.append(idx)
+            try:
+                # ready() 済みのため即時に取得できる
+                result = task.get(timeout=10)
 
-            if "timeout" in error_msg.lower():
-                timeout_count += 1
-                logger.error(f"タスク {i}/{len(tasks)}: ⏱️ タイムアウト")
-                error_details.append(f"タスク{i}: タイムアウト")
-            else:
-                logger.error(f"タスク {i}/{len(tasks)}: ❌ エラー: {error_msg}")
-                error_details.append(f"タスク{i}: {error_msg[:100]}")
+                # 新形式（dict: qa_pairs + usage）と旧形式（list）の両方を吸収
+                if isinstance(result, dict):
+                    qa_pairs = result.get("qa_pairs") or []
+                    usage = result.get("usage") or {}
+                    if usage_out is not None:
+                        usage_out["input_tokens"] = usage_out.get("input_tokens", 0) \
+                            + (usage.get("input_tokens", 0) or 0)
+                        usage_out["output_tokens"] = usage_out.get("output_tokens", 0) \
+                            + (usage.get("output_tokens", 0) or 0)
+                else:
+                    qa_pairs = result or []
 
-            failed_count += 1
-            continue
+                if qa_pairs:
+                    all_qa_pairs.extend(qa_pairs)
+                # qa_count=0（LLMがQ/A不要と判断）も正常終了
+                success_count += 1
+
+                # 逐次永続化フック（qa_count=0 も「処理済み」として通知する）
+                if on_result is not None:
+                    try:
+                        on_result(idx, qa_pairs)
+                    except Exception as cb_err:
+                        logger.warning(f"on_result コールバックでエラー: {cb_err}")
+
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"タスク {idx + 1}/{total}: ❌ エラー: {error_msg}")
+                error_details.append(f"タスク{idx + 1}: {error_msg[:100]}")
+                failed_count += 1
+
+            done = success_count + failed_count
+            if done % report_interval == 0 or done == total:
+                _report(done)
+
+        for idx in completed_now:
+            pending.pop(idx, None)
+
+        if pending and not completed_now:
+            _time.sleep(poll_interval)
+
+    # 期限到達時点で未完了のタスクはタイムアウト扱い
+    if pending:
+        timeout_count = len(pending)
+        failed_count += timeout_count
+        logger.error(f"⏱️ タイムアウト: {timeout_count} タスクが期限内に完了しませんでした")
+        for idx in sorted(pending):
+            error_details.append(f"タスク{idx + 1}: タイムアウト")
+        _report(success_count + failed_count)
 
     # サマリー
     logger.info("=" * 60)
@@ -232,6 +323,11 @@ def collect_results(tasks: List, timeout: int = 600) -> List[Dict]:
     logger.info(f"  失敗: {failed_count}/{len(tasks)}")
     logger.info(f"  タイムアウト: {timeout_count}/{len(tasks)}")
     logger.info(f"  Q/A総数: {len(all_qa_pairs)}")
+    if usage_out is not None and (usage_out.get("input_tokens") or usage_out.get("output_tokens")):
+        logger.info(
+            f"  トークン（ワーカー集計）: 入力={usage_out.get('input_tokens', 0):,}, "
+            f"出力={usage_out.get('output_tokens', 0):,}"
+        )
 
     if error_details:
         logger.error("\n⚠️ エラー詳細:")
@@ -533,7 +629,7 @@ if __name__ == "__main__":
 
         # クラスメソッド確認
         print(f"クラス: {SmartQAGenerator}")
-        print(f"メソッド: __init__, analyze_chunk, generate_qa_pairs, process_chunk")
+        print(f"メソッド: __init__, analyze_and_generate, process_chunk")
 
     except ImportError as e:
         print(f"❌ インポート失敗: {e}")

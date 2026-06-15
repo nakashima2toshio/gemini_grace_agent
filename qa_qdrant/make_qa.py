@@ -146,19 +146,6 @@ def main():
         choices=[1, 2, 3, 4, 5],
         help="1回のAPIで処理するチャンク数（デフォルト: 3）"
     )
-    parser.add_argument(
-        "--use-smart-generation",
-        action="store_true",
-        default=True,
-        help="スマートQ/A生成を使用（LLMによる動的Q/A数決定、デフォルト有効）"
-    )
-    parser.add_argument(
-        "--no-smart-generation",
-        dest="use_smart_generation",
-        action="store_false",
-        help="従来方式のQ/A生成を使用（トークン数ベース）"
-    )
-
     # ================================================================
     # Celery並列処理
     # ================================================================
@@ -220,10 +207,7 @@ def main():
     logger.info(f"モデル: {args.model}")
     logger.info(f"出力ディレクトリ: {args.output}")
 
-    if args.use_smart_generation:
-        logger.info("Q/A生成モード: スマート生成（LLMによる動的Q/A数決定）")
-    else:
-        logger.info("Q/A生成モード: 従来方式（トークン数ベース）")
+    logger.info("Q/A生成モード: スマート生成（LLMによる動的Q/A数決定・構造化出力1回）")
 
     if args.use_celery:
         logger.info(f"並列処理: Celery（並列タスク数: {args.concurrency}）")
@@ -253,8 +237,7 @@ def main():
             concurrency=args.concurrency,
             batch_chunks=args.batch_chunks,
             analyze_coverage=args.analyze_coverage,
-            coverage_threshold=args.coverage_threshold,
-            use_smart_generation=args.use_smart_generation
+            coverage_threshold=args.coverage_threshold
         )
 
         # ================================================================

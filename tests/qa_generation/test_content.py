@@ -1,5 +1,5 @@
 import pytest
-from qa_generation.content import KeywordExtractor, analyze_chunk_complexity
+from regex_mecab import KeywordExtractor
 
 def test_keyword_extractor_init():
     extractor = KeywordExtractor()
@@ -14,8 +14,6 @@ def test_keyword_extractor_extract():
     if keywords:
         assert isinstance(keywords[0], str)
 
+@pytest.mark.skip(reason="analyze_chunk_complexity was removed in the gemini refactor")
 def test_analyze_chunk_complexity():
-    text = "簡単な文章です。"
-    result = analyze_chunk_complexity(text, lang="ja")
-    assert "complexity_level" in result
-    assert "concept_density" in result
+    pass

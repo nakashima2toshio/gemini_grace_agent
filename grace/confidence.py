@@ -12,7 +12,7 @@ from enum import Enum
 
 from google import genai
 from google.genai import types
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from .config import get_config, GraceConfig
 
 logger = logging.getLogger(__name__)
@@ -316,8 +316,32 @@ class ConfidenceCalculator:
 # LLM Self Evaluator
 # =============================================================================
 
+class FinalEvaluationResult(BaseModel):
+    """最終回答の統合評価スキーマ（自己評価＋クエリ網羅度を1回の呼び出しで取得）"""
+    self_eval_score: float = Field(..., ge=0.0, le=1.0, description="回答の確信度（正確性・適切性・スタイル）")
+    coverage_score: float = Field(..., ge=0.0, le=1.0, description="質問要素に対する回答の網羅度")
+    reason: str = Field("", description="評価理由の要約")
+
+
 class LLMSelfEvaluator:
     """LLMによる自己評価"""
+
+    FINAL_EVAL_PROMPT = """以下の【質問】に対する【回答】を2つの観点で評価し、JSON形式で出力してください。
+
+【観点1: 確信度 (self_eval_score)】
+- 正確性: 回答は提供された情報源に基づいているか？捏造はないか？
+- 適切性: 質問に直接的かつ明確に答えているか？
+- スタイル: 丁寧で読みやすい日本語（です・ます調）か？
+スコア目安: 1.0=完全に正確・適切 / 0.6=やや確信あり / 0.4=不確実 / 0.0=不適切
+
+【観点2: 網羅度 (coverage_score)】
+- 質問のすべての要素をカバーしているか？
+スコア目安: 1.0=すべての要素に回答 / 0.6=主要な要素に回答 / 0.2=ほとんど回答できていない
+
+質問: {query}
+回答: {answer}
+使用した情報源: {sources}
+"""
 
     EVAL_PROMPT = """以下の基準に基づいて、回答の確信度を0.0から1.0の数値で評価してください。
 
@@ -405,6 +429,55 @@ class LLMSelfEvaluator:
         except Exception as e:
             logger.error(f"LLM self-evaluation error: {e}")
             return 0.5
+
+    def evaluate_final(
+            self,
+            query: str,
+            answer: str,
+            sources: Optional[List[str]] = None
+    ) -> FinalEvaluationResult:
+        """
+        最終回答の統合評価（自己評価＋クエリ網羅度）を1回のLLM呼び出しで実行
+
+        旧実装では evaluate()（確信度）と QueryCoverageCalculator.calculate()
+        （網羅度）の2回のLLM呼び出しが必要だったものを統合。
+
+        Args:
+            query: 元の質問
+            answer: 生成された回答
+            sources: 使用した情報源のリスト
+        Returns:
+            FinalEvaluationResult: 統合評価結果
+        Raises:
+            Exception: LLM呼び出し失敗時（呼び出し元でフォールバック処理）
+        """
+        sources_str = ", ".join(sources) if sources else "なし"
+        prompt = self.FINAL_EVAL_PROMPT.format(query=query, answer=answer, sources=sources_str)
+
+        import time as _time
+        t0 = _time.time()
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=FinalEvaluationResult,
+                temperature=0.0,
+                max_output_tokens=1024,  # 出力枠が小さいと thinking/推論系モデルで本文が空になる（anthropic基準=1024）
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
+            )
+        )
+        elapsed = _time.time() - t0
+
+        if response is None or not response.text:
+            raise ValueError("evaluate_final returned empty response")
+
+        result = FinalEvaluationResult.model_validate_json(response.text)
+        logger.info(
+            f"[API時間] LLMSelfEvaluator.evaluate_final: {elapsed:.1f}秒 "
+            f"(self_eval={result.self_eval_score:.2f}, coverage={result.coverage_score:.2f})"
+        )
+        return result
 
     def evaluate_with_factors(
             self,

@@ -3,7 +3,8 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
-from qa_generation.keyword_extraction import (
+
+from helper.helper_rag_qa import (
     BestKeywordSelector,
     SmartKeywordSelector,
     get_best_keywords,
@@ -20,7 +21,7 @@ MOCK_KEYWORDS_SCORES = {
 
 @pytest.fixture
 def mock_extractor():
-    with patch('qa_generation.keyword_extraction.KeywordExtractor') as MockClass:
+    with patch('helper.helper_rag_qa.KeywordExtractor') as MockClass:
         instance = MockClass.return_value
         # extract_with_details returns a dict of method -> list of (keyword, score)
         instance.extract_with_details.return_value = MOCK_KEYWORDS_SCORES

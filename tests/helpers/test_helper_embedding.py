@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch, MagicMock
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from helper_embedding import (
+from helper.helper_embedding import (
     EmbeddingClient,
     OpenAIEmbedding,
     GeminiEmbedding,
@@ -28,14 +28,14 @@ class TestCreateEmbeddingClient:
     def test_create_gemini_client(self):
         """Geminiクライアント生成"""
         with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}):
-            with patch("helper_embedding.genai") as mock_genai:
+            with patch("helper.helper_embedding.genai") as mock_genai:
                 client = create_embedding_client("gemini")
                 assert isinstance(client, GeminiEmbedding)
 
     def test_create_openai_client(self):
         """OpenAIクライアント生成"""
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            with patch("helper_embedding.OpenAI") as mock_openai:
+            with patch("helper.helper_embedding.OpenAI") as mock_openai:
                 client = create_embedding_client("openai")
                 assert isinstance(client, OpenAIEmbedding)
 
@@ -51,7 +51,7 @@ class TestOpenAIEmbedding:
     @pytest.fixture
     def mock_openai_client(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            with patch("helper_embedding.OpenAI") as mock_class:
+            with patch("helper.helper_embedding.OpenAI") as mock_class:
                 mock_instance = Mock()
                 mock_class.return_value = mock_instance
                 client = OpenAIEmbedding()
@@ -108,7 +108,7 @@ class TestGeminiEmbedding:
     @pytest.fixture
     def mock_gemini_client(self):
         with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}):
-            with patch("helper_embedding.genai") as mock_genai:
+            with patch("helper.helper_embedding.genai") as mock_genai:
                 mock_instance = Mock()
                 mock_genai.Client.return_value = mock_instance
                 client = GeminiEmbedding()

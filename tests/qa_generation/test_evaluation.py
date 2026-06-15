@@ -3,8 +3,16 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from qa_generation.evaluation import analyze_coverage
 
+@patch("qa_generation.evaluation.tiktoken")
 @patch("qa_generation.evaluation.SemanticCoverage")
-def test_analyze_coverage(mock_semantic_coverage_cls):
+def test_analyze_coverage(mock_semantic_coverage_cls, mock_tiktoken):
+    # tiktoken.get_encoding("cl100k_base") はエンコーディングをネットワークから
+    # 取得しようとし、オフライン環境では 403 になる。トークナイザをモックして
+    # 1 文字 = 1 トークンの単純実装に置き換える。
+    mock_tokenizer = MagicMock()
+    mock_tokenizer.encode.side_effect = lambda text: list(range(len(text)))
+    mock_tiktoken.get_encoding.return_value = mock_tokenizer
+
     # Setup mock analyzer
     mock_analyzer = mock_semantic_coverage_cls.return_value
     

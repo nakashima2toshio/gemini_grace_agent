@@ -124,8 +124,8 @@ class ConfigManager:
         """デフォルト設定"""
         return {
             "models": {
-                "default": "gemini-2.0-flash",
-                "available": ["gemini-2.0-flash", "gemini-2.0-pro", "gpt-4o-mini", "gpt-4o"]
+                "default": "gemini-2.5-flash",
+                "available": ["gemini-2.5-flash", "gemini-2.5-flash-preview", "gemini-2.5-pro-preview", "gemini-2.0-flash"]
             },
             "api": {
                 "timeout": 30,

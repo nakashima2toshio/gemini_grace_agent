@@ -432,7 +432,7 @@ def show_qdrant_search_page():
                         llm_client = create_llm_client(provider="gemini")
                         generated_answer = llm_client.generate_content(
                             prompt=qa_prompt,
-                            model="gemini-2.0-flash"
+                            model="gemini-2.5-flash"
                         )
 
                     if generated_answer and generated_answer.strip():

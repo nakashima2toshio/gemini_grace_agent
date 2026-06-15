@@ -70,8 +70,7 @@ python qa_qdrant/make_qa_register_qdrant.py \
 
 入力CSV処理（--input-file が CSV の場合）:
 --text-column       テキストカラム名（デフォルト: text）
---combine-rows      複数行を結合してチャンク化
---block-size        結合する行数（デフォルト: 400）
+                    ※ チャンキングは専用ツール chunking/csv_text_to_chunks_text_csv.py に一本化
 
 Qdrant登録:
 --collection        Qdrantコレクション名（必須）
@@ -141,69 +140,6 @@ def normalize_source_filename(filename: str) -> str:
     """
     normalized = re.sub(r'_\d{8}_\d{6}', '', filename)
     return normalized
-
-
-def combine_rows_to_chunks(
-        df: pd.DataFrame,
-        text_column: str,
-        block_size: int,
-        output_dir: str
-) -> str:
-    """
-    CSVの複数行を結合してチャンクCSVを作成する。
-
-    Args:
-        df: 入力DataFrame
-        text_column: テキストカラム名
-        block_size: 結合する行数
-        output_dir: 出力ディレクトリ
-
-    Returns:
-        str: 作成されたチャンクCSVのパス
-    """
-    logger.info(f"📦 行結合処理を開始")
-    logger.info(f"   - テキストカラム: {text_column}")
-    logger.info(f"   - ブロックサイズ: {block_size} 行")
-    logger.info(f"   - 入力行数: {len(df)}")
-
-    if text_column not in df.columns:
-        raise ValueError(f"カラム '{text_column}' が見つかりません。利用可能: {list(df.columns)}")
-
-    chunks = []
-    total_rows = len(df)
-
-    for i in range(0, total_rows, block_size):
-        end_idx = min(i + block_size, total_rows)
-        block_texts = df[text_column].iloc[i:end_idx].astype(str).tolist()
-
-        # 空行をフィルタリング
-        block_texts = [t for t in block_texts if t.strip()]
-
-        if block_texts:
-            combined_text = "\n\n".join(block_texts)
-            chunks.append({
-                "chunk_id" : len(chunks),
-                "text"     : combined_text,
-                "start_row": i,
-                "end_row"  : end_idx - 1,
-                "row_count": end_idx - i
-            })
-
-    logger.info(f"   - 生成チャンク数: {len(chunks)}")
-
-    # チャンクCSVを出力
-    os.makedirs(output_dir, exist_ok=True)
-    chunk_df = pd.DataFrame(chunks)
-
-    # 一時ファイル名を生成
-    from datetime import datetime
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = os.path.join(output_dir, f"combined_chunks_{timestamp}.csv")
-
-    chunk_df.to_csv(output_path, index=False, encoding='utf-8')
-    logger.info(f"   - 出力ファイル: {output_path}")
-
-    return output_path
 
 
 def run_registration(
@@ -334,19 +270,17 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用例:
-  # Celery使用（推奨）+ 行結合オプション
+  # Celery使用（推奨・チャンク済みCSVを入力）
   ./start_celery.sh restart -c 8 --flower
   python qa_qdrant/make_qa_register_qdrant.py \\
-    --input-file OUTPUT/cc_news_5per.csv \\
+    --input-file output_chunked/cc_news_5per_chunks.csv \\
     --collection cc_news_5per \\
     --use-celery \\
     --concurrency 4 \\
     --text-column text \\
-    --combine-rows \\
-    --block-size 400 \\
     --recreate
 
-  # 並列数を4に指定（行結合なし）
+  # 並列数を4に指定
   python qa_qdrant/make_qa_register_qdrant.py \\
     --input-file output_chunked/cc_news_5per_chunks.csv \\
     --collection cc_news_5per \\
@@ -388,18 +322,6 @@ def main():
         default="text",
         help="テキストカラム名（デフォルト: text）"
     )
-    group_csv.add_argument(
-        "--combine-rows",
-        action="store_true",
-        help="複数行を結合してチャンク化する"
-    )
-    group_csv.add_argument(
-        "--block-size",
-        type=int,
-        default=400,
-        help="結合する行数（デフォルト: 400）"
-    )
-
     # ================================================================
     # QA生成パラメータ
     # ================================================================
@@ -441,20 +363,6 @@ def main():
         default=3,
         help="1回のAPIで処理するチャンク数（デフォルト: 3）"
     )
-    # スマート生成オプション（デフォルト: True）
-    group_gen.add_argument(
-        "--use-smart-generation",
-        action="store_true",
-        default=True,
-        help="スマートQ/A生成を使用（LLMによる動的Q/A数決定、デフォルト有効）"
-    )
-    group_gen.add_argument(
-        "--no-smart-generation",
-        dest="use_smart_generation",
-        action="store_false",
-        help="従来方式のQ/A生成を使用（トークン数ベース）"
-    )
-
     # ================================================================
     # Qdrant登録パラメータ
     # ================================================================
@@ -523,19 +431,13 @@ def main():
         logger.error("GOOGLE_API_KEYが設定されていません")
         sys.exit(1)
 
-    # スマート生成モードのログ表示
+    # Q/A生成モードのログ表示
     logger.info("")
     logger.info("=" * 60)
-    if args.use_smart_generation:
-        logger.info("🆕 Q/A生成モード: スマート生成（デフォルト）")
-        logger.info("   - LLMによる動的Q/A数決定（0-5個）")
-        logger.info("   - 内容の重要度・複雑さを考慮")
-        logger.info("   - 主要トピックを明示的にカバー")
-        logger.info("   ※ 従来方式に戻す場合: --no-smart-generation")
-    else:
-        logger.info("🔧 Q/A生成モード: 従来方式（トークン数ベース）")
-        logger.info("   - 固定的なQ/A数決定（2-8個）")
-        logger.info("   ※ スマート生成に切り替える場合: --use-smart-generation")
+    logger.info("🆕 Q/A生成モード: スマート生成（構造化出力1回）")
+    logger.info("   - LLMによる動的Q/A数決定（0-5個）")
+    logger.info("   - 内容の重要度・複雑さを考慮")
+    logger.info("   - 主要トピックを明示的にカバー")
     logger.info("=" * 60)
 
     # ✅ 改修: 並列設定のログ表示
@@ -545,14 +447,6 @@ def main():
         logger.info(f"   - 並列タスク数 (concurrency): {args.concurrency}")
         logger.info(f"   - ワーカープロセス数チェック: {args.celery_workers}")
         logger.info("   ※ start_celery.sh -c と同じ値を推奨")
-        logger.info("=" * 60)
-
-    # 🆕 CSV処理オプションのログ表示
-    if args.combine_rows and args.input_file and args.input_file.endswith('.csv'):
-        logger.info("")
-        logger.info("📦 CSV行結合設定:")
-        logger.info(f"   - テキストカラム: {args.text_column}")
-        logger.info(f"   - ブロックサイズ: {args.block_size} 行")
         logger.info("=" * 60)
 
     try:
@@ -590,8 +484,7 @@ def main():
                     celery_workers=args.celery_workers,
                     concurrency=args.concurrency,
                     batch_chunks=args.batch_chunks,
-                    analyze_coverage=True,
-                    use_smart_generation=args.use_smart_generation
+                    analyze_coverage=True
                 )
 
                 generated_csv = result['saved_files'].get('qa_csv')
@@ -623,26 +516,14 @@ def main():
                     qa_count = len(df_check)
 
                 elif has_text_column or has_combined_text:
-                    # テキストカラムあり
+                    # テキストカラムあり（チャンク済みCSV前提。チャンキングは
+                    # 専用ツール chunking/csv_text_to_chunks_text_csv.py に一本化済み）
                     actual_text_column = args.text_column if has_text_column else 'Combined_Text'
-
-                    # 🆕 --combine-rows が指定された場合、行を結合してチャンク化
-                    if args.combine_rows:
-                        logger.info(f"📦 --combine-rows が指定されました - 行結合処理を実行")
-                        chunk_csv_path = combine_rows_to_chunks(
-                            df=df_check,
-                            text_column=actual_text_column,
-                            block_size=args.block_size,
-                            output_dir=args.output
-                        )
-                        input_for_pipeline = chunk_csv_path
-                    else:
-                        input_for_pipeline = args.input_file
 
                     logger.info(f"📝 テキストカラム '{actual_text_column}' 検出 - Q/A生成を実行します")
 
                     pipeline = QAPipeline(
-                        input_file=input_for_pipeline,
+                        input_file=args.input_file,
                         model=args.model,
                         output_dir=args.output,
                         max_docs=args.max_docs
@@ -653,8 +534,7 @@ def main():
                         celery_workers=args.celery_workers,
                         concurrency=args.concurrency,
                         batch_chunks=args.batch_chunks,
-                        analyze_coverage=True,
-                        use_smart_generation=args.use_smart_generation
+                        analyze_coverage=True
                     )
 
                     generated_csv = result['saved_files'].get('qa_csv')
@@ -692,8 +572,7 @@ def main():
                 celery_workers=args.celery_workers,
                 concurrency=args.concurrency,
                 batch_chunks=args.batch_chunks,
-                analyze_coverage=True,
-                use_smart_generation=args.use_smart_generation
+                analyze_coverage=True
             )
 
             generated_csv = result['saved_files'].get('qa_csv')

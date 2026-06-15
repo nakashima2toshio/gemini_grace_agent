@@ -86,6 +86,39 @@ from chunking.regex_string import chunk_text
 logger = logging.getLogger(__name__)
 
 
+# チャンクの最大トークン数（tiktoken cl100k_base 換算）。
+# 最終チャンク全件に強制分割の上限として使う。Embedding
+# （gemini-embedding-001）の入力上限 2048 トークンを超えると超過分が
+# 無言で切り捨てられるため、上限は必ずそれ未満にすること。
+MAX_CHUNK_TOKENS = 512
+
+# Embedding モデル（gemini-embedding-001）の入力トークン上限。
+EMBEDDING_INPUT_TOKEN_LIMIT = 2048
+
+_TOKENIZER = None
+_TOKENIZER_FAILED = False
+
+
+def _count_tokens(text: str) -> int:
+    """トークン数を数える。
+
+    tiktoken の BPE 取得に失敗する環境（オフライン等）では
+    文字数ベースの概算にフォールバックする。
+    """
+    global _TOKENIZER, _TOKENIZER_FAILED
+    if _TOKENIZER is None and not _TOKENIZER_FAILED:
+        try:
+            _TOKENIZER = tiktoken.get_encoding("cl100k_base")
+        except Exception as e:
+            _TOKENIZER_FAILED = True
+            logger.warning(f"tiktoken 初期化失敗、文字数ベースで概算します: {e}")
+    if _TOKENIZER is not None:
+        return len(_TOKENIZER.encode(text))
+    # 概算: ASCII は約4文字≈1トークン、非ASCII（日本語等）は約1文字≈1トークン
+    ascii_chars = sum(1 for ch in text if ord(ch) < 128)
+    return max(1, ascii_chars // 4 + (len(text) - ascii_chars))
+
+
 # ================================================================
 # ✅ 新規追加: テキスト正規化関数
 # ================================================================
@@ -462,6 +495,65 @@ def _split_sentences_simple(text: str) -> List[str]:
     return [s.strip() for s in sentences if s.strip()]
 
 
+def _split_oversized_text(text: str, max_tokens: int) -> List[str]:
+    """max_tokens を超えるテキストを文境界で複数ピースに分割する。
+
+    1文単独で max_tokens を超える場合はその文をそのまま1ピースとする
+    （文の途中では切らない。Embedding 側の切り捨ては警告で可視化）。
+    """
+    sentences = _split_sentences_simple(text)
+    if not sentences:
+        return [text]
+
+    pieces: List[str] = []
+    current: List[str] = []
+    current_tokens = 0
+    for sent in sentences:
+        sent_tokens = _count_tokens(sent)
+        if current and current_tokens + sent_tokens > max_tokens:
+            pieces.append(" ".join(current))
+            current, current_tokens = [], 0
+        current.append(sent)
+        current_tokens += sent_tokens
+    if current:
+        pieces.append(" ".join(current))
+    return pieces
+
+
+def _enforce_max_chunk_tokens(chunks: List[str], max_tokens: int) -> List[str]:
+    """全チャンクに最大トークン数を強制する（超過分は文境界で分割）。
+
+    Step3 は「結合時」のみ上限を見ており、Step2 が出力する単一チャンクや
+    フォールバックで保全されたブロックには上限がなかった。Embedding
+    （gemini-embedding-001, 入力上限 2048 トークン）の無言切り捨てを防ぐため、
+    最終チャンク全件に対して上限を強制する。
+    """
+    enforced: List[str] = []
+    split_count = 0
+    for chunk in chunks:
+        tokens = _count_tokens(chunk)
+        if tokens <= max_tokens:
+            enforced.append(chunk)
+            continue
+        pieces = _split_oversized_text(chunk, max_tokens)
+        if len(pieces) == 1:
+            logger.warning(
+                f"  1文で {tokens} トークン（上限 {max_tokens} 超）のチャンクは分割不可のため保持。"
+                f"Embedding 入力上限（{EMBEDDING_INPUT_TOKEN_LIMIT}）超過時は切り捨てに注意"
+            )
+            enforced.append(chunk)
+            continue
+        split_count += 1
+        enforced.extend(pieces)
+
+    if split_count:
+        logger.info(
+            f"  📏 上限強制分割: {split_count} チャンクが {max_tokens} トークン超のため"
+            f"文境界で分割（{len(chunks)} → {len(enforced)} チャンク）"
+        )
+    return enforced
+
+
 # ================================================================
 # chunks_all_async関数
 # ================================================================
@@ -511,6 +603,11 @@ async def chunks_all_async(
     final_chunks = await _step3_continuity_check(
         step2_chunks, client, model, checkpoint_manager
     )
+
+    # 最終チャンク全件に最大トークン上限を強制（Embedding の無言切り捨て防止）。
+    # Step3 は結合時のみ上限を見るため、Step2 の単一チャンクやフォールバック保全分は
+    # ここで初めて上限が掛かる。
+    final_chunks = _enforce_max_chunk_tokens(final_chunks, MAX_CHUNK_TOKENS)
 
     if output_file:
         output_path = Path(output_file)

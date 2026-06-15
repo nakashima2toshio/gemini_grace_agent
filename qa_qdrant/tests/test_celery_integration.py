@@ -157,9 +157,8 @@ def test_smart_generation_single_chunk():
         tasks = submit_unified_qa_generation(
             chunks=[test_chunk],
             config=config,
-            model="gemini-2.0-flash",
-            provider="gemini",
-            use_smart_generation=True  # ✨ スマート生成
+            model="gemini-2.5-flash",
+            provider="gemini"
         )
 
         # 結果収集（✅ タイムアウト短縮: 120秒 → 30秒）
@@ -236,9 +235,8 @@ def test_legacy_generation_single_chunk():
         tasks = submit_unified_qa_generation(
             chunks=[test_chunk],
             config=config,
-            model="gemini-2.0-flash",
-            provider="gemini",
-            use_smart_generation=False  # ✨ 従来方式
+            model="gemini-2.5-flash",
+            provider="gemini"
         )
 
         # 結果収集（✅ タイムアウト短縮）
@@ -305,9 +303,8 @@ def test_multiple_chunks():
         tasks = submit_unified_qa_generation(
             chunks=test_chunks,
             config=config,
-            model="gemini-2.0-flash",
-            provider="gemini",
-            use_smart_generation=True
+            model="gemini-2.5-flash",
+            provider="gemini"
         )
 
         # 結果収集（✅ タイムアウト短縮）
@@ -362,9 +359,8 @@ def test_error_handling():
         tasks = submit_unified_qa_generation(
             chunks=[bad_chunk],
             config=config,
-            model="gemini-2.0-flash",
-            provider="gemini",
-            use_smart_generation=True
+            model="gemini-2.5-flash",
+            provider="gemini"
         )
 
         # 結果収集（✅ タイムアウト短縮）

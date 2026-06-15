@@ -3,16 +3,46 @@ import pytest
 from unittest.mock import MagicMock, patch
 from services.agent_service import ReActAgent, SYSTEM_INSTRUCTION_TEMPLATE
 
-# Mock config
-@pytest.fixture
-def mock_config():
-    with patch("services.agent_service.AgentConfig") as mock:
-        yield mock
+
+# ---------------------------------------------------------------------------
+# 新しい google-genai SDK 用のレスポンスビルダー
+#
+# 新SDKでは chat.send_message(...) の戻り値は
+#   response.candidates[0].content.parts -> [Part, ...]
+# という構造を持つ。各 Part は .text または .function_call を持つ。
+# ---------------------------------------------------------------------------
+def make_part(text=None, function_call=None):
+    part = MagicMock()
+    part.text = text
+    part.function_call = function_call
+    return part
+
+
+def make_response(parts):
+    response = MagicMock()
+    candidate = MagicMock()
+    candidate.content.parts = parts
+    response.candidates = [candidate]
+    return response
+
+
+def make_function_call(name, args):
+    fc = MagicMock()
+    fc.name = name
+    fc.args = args
+    return fc
+
 
 @pytest.fixture
 def mock_genai():
+    """services.agent_service.genai 全体をモック。
+
+    新SDK: genai.Client(api_key=...) -> client、
+           client.chats.create(...) -> chat。
+    """
     with patch("services.agent_service.genai") as mock:
         yield mock
+
 
 @pytest.fixture
 def mock_agent_tools():
@@ -20,122 +50,122 @@ def mock_agent_tools():
          patch("services.agent_service.list_rag_collections") as mock_list:
         yield mock_search, mock_list
 
+
 class TestReActAgent:
 
-    def test_init(self, mock_genai, mock_config):
-        """Test initialization of ReActAgent"""
-        # Mock environment variables
+    def test_init(self, mock_genai):
+        """ReActAgent の初期化（新SDK: genai.Client）"""
         with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}):
             agent = ReActAgent(selected_collections=["coll1"], model_name="gemini-pro")
-            
+
             assert agent.selected_collections == ["coll1"]
             assert agent.model_name == "gemini-pro"
             assert agent.thought_log == []
-            
-            # Verify genai.configure called
-            mock_genai.configure.assert_called_with(api_key='test_key')
-            # Verify GenerativeModel created
-            mock_genai.GenerativeModel.assert_called()
+
+            # 新SDK: genai.Client(api_key=...) が呼ばれる
+            mock_genai.Client.assert_called_with(api_key='test_key')
+            # チャットセッションが作成される
+            mock_genai.Client.return_value.chats.create.assert_called()
+            # agent.chat が client.chats.create の戻り値
+            assert agent.chat is mock_genai.Client.return_value.chats.create.return_value
 
     def test_init_missing_key(self, mock_genai):
-        """Test initialization failure when API key is missing"""
+        """APIキー未設定時に ValueError"""
         with patch.dict('os.environ', {}, clear=True):
-            with pytest.raises(ValueError, match="API Key missing"):
-                ReActAgent(selected_collections=[], model_name="gemini-pro")
+            # config_service が google_api_key を返さないようにする
+            with patch("services.agent_service.get_config") as mock_get_config:
+                # api.google_api_key は None、その他はデフォルトを返す
+                def _side_effect(key, default=None):
+                    if key == "api.google_api_key":
+                        return None
+                    return default
+                mock_get_config.side_effect = _side_effect
+                with pytest.raises(ValueError, match="not set"):
+                    ReActAgent(selected_collections=[], model_name="gemini-pro")
 
     def test_execute_turn_simple_answer(self, mock_genai):
-        """Test execute_turn where model returns an answer directly"""
+        """モデルが直接回答を返すケース"""
         with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}):
             agent = ReActAgent(selected_collections=[], model_name="gemini-pro")
-            
-            # Mock chat session response
-            mock_chat = agent.chat_session
-            mock_response = MagicMock()
-            mock_part = MagicMock()
-            mock_part.text = "Thought: I know the answer.\nAnswer: The answer is 42."
-            mock_part.function_call = None
-            mock_response.parts = [mock_part]
-            mock_chat.send_message.return_value = mock_response
 
-            # Mock reflection response
-            mock_reflection_response = MagicMock()
-            mock_reflection_response.text = "Final Answer: The answer is 42."
-            mock_chat.send_message.side_effect = [mock_response, mock_reflection_response]
+            # ReAct ループ: テキストのみ（function_call なし）
+            react_response = make_response([
+                make_part(text="Thought: I know the answer.\nAnswer: The answer is 42.")
+            ])
+            # Reflection: Final Answer を含むテキスト
+            reflection_response = make_response([
+                make_part(text="Reflection complete.\nFinal Answer: The answer is 42.")
+            ])
+
+            agent.chat.send_message.side_effect = [react_response, reflection_response]
 
             events = list(agent.execute_turn("What is the meaning of life?"))
-            
-            # Check events
+
             event_types = [e["type"] for e in events]
             assert "log" in event_types
             assert "final_text" in event_types
             assert "final_answer" in event_types
-            
-            # Check final answer
+
             final_event = events[-1]
             assert final_event["type"] == "final_answer"
             assert final_event["content"] == "The answer is 42."
 
     def test_execute_turn_with_tool_call(self, mock_genai, mock_agent_tools):
-        """Test execute_turn with a tool call"""
+        """ツール呼び出しを伴う execute_turn"""
         mock_search, mock_list = mock_agent_tools
-        
-        # Patch TOOLS_MAP to use our mocks
+
         with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}), \
              patch.dict('services.agent_service.TOOLS_MAP', {
                  'search_rag_knowledge_base': mock_search,
                  'list_rag_collections': mock_list
              }):
-            
+
             agent = ReActAgent(selected_collections=["coll1"], model_name="gemini-pro")
-            mock_chat = agent.chat_session
 
-            # 1. First response: Thought + Tool Call
-            mock_response1 = MagicMock()
-            mock_part1_text = MagicMock()
-            mock_part1_text.text = "Thought: I need to search."
-            mock_part1_text.function_call = None
-            
-            mock_part1_tool = MagicMock()
-            mock_part1_tool.text = None
-            mock_part1_tool.function_call.name = "search_rag_knowledge_base"
-            mock_part1_tool.function_call.args = {"query": "test query", "collection_name": "coll1"}
-            
-            mock_response1.parts = [mock_part1_text, mock_part1_tool]
+            # 1. 最初の応答: Thought テキスト + Tool Call
+            response1 = make_response([
+                make_part(text="Thought: I need to search."),
+                make_part(function_call=make_function_call(
+                    "search_rag_knowledge_base",
+                    {"query": "test query", "collection_name": "coll1"},
+                )),
+            ])
 
-            # 2. Second response: Answer based on tool result
-            mock_response2 = MagicMock()
-            mock_part2 = MagicMock()
-            mock_part2.text = "Thought: I found it.\nAnswer: The result is X."
-            mock_part2.function_call = None
-            mock_response2.parts = [mock_part2]
+            # 2. ツール結果を受けた応答
+            response2 = make_response([
+                make_part(text="Thought: I found it.\nAnswer: The result is X.")
+            ])
 
-            # 3. Reflection response
-            mock_reflection = MagicMock()
-            mock_reflection.text = "Final Answer: The result is X."
+            # 3. Reflection 応答
+            reflection = make_response([
+                make_part(text="Final Answer: The result is X.")
+            ])
 
-            mock_chat.send_message.side_effect = [mock_response1, mock_response2, mock_reflection]
-            
-            # Mock tool execution
-            mock_search.return_value = "Search Result Content"
+            agent.chat.send_message.side_effect = [response1, response2, reflection]
 
-            events = list(agent.execute_turn("Search for test."))
-            
-            # Verify tool was called
-            mock_search.assert_called_with(query="test query", collection_name="coll1")
-            
-            # Verify events
+            # search_rag_knowledge_base は cached ラッパー経由で呼ばれるため、
+            # そちらをモックして戻り値を制御する
+            with patch("services.agent_service.search_rag_knowledge_base_cached",
+                       return_value="Search Result Content") as mock_search_cached:
+                events = list(agent.execute_turn("Search for test."))
+
+            # cached 検索が想定引数で呼ばれたか
+            mock_search_cached.assert_called_once()
+            _, kwargs = mock_search_cached.call_args
+            assert kwargs["query"] == "test query"
+            assert kwargs["collection_name"] == "coll1"
+
             types = [e["type"] for e in events]
             assert "tool_call" in types
             assert "tool_result" in types
             assert "final_answer" in types
-            
-            # Verify logs
+
             assert "Thought: I need to search." in agent.thought_log[0]
 
     def test_format_final_answer(self, mock_genai):
         with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}):
             agent = ReActAgent(selected_collections=[], model_name="gemini-pro")
-            
+
             assert agent._format_final_answer("Answer: Yes") == "Yes"
             assert agent._format_final_answer("Thought: Hmmm\nAnswer: Yes") == "Yes"
             assert agent._format_final_answer("Thought: Just a thought") == "Just a thought"

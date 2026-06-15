@@ -16,8 +16,8 @@ import sys
 # テスト対象のインポートパス解決
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-import helper_llm # Import the module to inspect
-from helper_llm import (
+import helper.helper_llm as helper_llm  # Import the module to inspect
+from helper.helper_llm import (
     LLMClient,
     OpenAIClient,
     GeminiClient,
@@ -43,19 +43,19 @@ class QAPairsResponse(BaseModel):
 class TestCreateLLMClient:
     def test_create_gemini_client(self):
         with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}):
-            with patch("helper_llm.genai"):
+            with patch("helper.helper_llm.genai"):
                 client = create_llm_client("gemini")
                 assert isinstance(client, GeminiClient)
 
     def test_create_openai_client(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            with patch("helper_llm.OpenAI"):
+            with patch("helper.helper_llm.OpenAI"):
                 client = create_llm_client("openai")
                 assert isinstance(client, OpenAIClient)
 
     def test_invalid_provider(self):
         with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}):
-             with patch("helper_llm.genai"):
+             with patch("helper.helper_llm.genai"):
                 client = create_llm_client("invalid_provider")
                 assert isinstance(client, GeminiClient)
 
@@ -67,7 +67,7 @@ class TestOpenAIClient:
     @pytest.fixture
     def mock_openai_client(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            with patch("helper_llm.OpenAI") as mock_class:
+            with patch("helper.helper_llm.OpenAI") as mock_class:
                 mock_instance = Mock()
                 mock_class.return_value = mock_instance
                 client = OpenAIClient()
@@ -110,7 +110,7 @@ class TestOpenAIClient:
 
     def test_count_tokens(self, mock_openai_client):
         client, _ = mock_openai_client
-        with patch("helper_llm.tiktoken") as mock_tiktoken:
+        with patch("helper.helper_llm.tiktoken") as mock_tiktoken:
             mock_encoding = Mock()
             mock_encoding.encode.return_value = [1, 2, 3, 4, 5]
             mock_tiktoken.encoding_for_model.return_value = mock_encoding
@@ -127,70 +127,71 @@ class TestGeminiClient:
 
     @pytest.fixture
     def mock_gemini_client(self):
+        # 新SDK (google-genai) では genai.Client(api_key=...) を生成し、
+        # client.models.generate_content / count_tokens を呼び出す。
         with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}):
-            # Patch google.generativeai directly
-            # Note: We must patch where it is defined/imported from if we want to affect all usages,
-            # but patching the library itself is safest if we can.
-            
-            with patch("google.generativeai.GenerativeModel") as mock_model_class, \
-                 patch("google.generativeai.configure"):
-                
-                # Mock GenerativeModel instance
-                mock_model_instance = Mock()
-                mock_model_class.return_value = mock_model_instance
-                
+            with patch("helper.helper_llm.genai") as mock_genai:
+                # genai.Client() が返すクライアントインスタンス
+                mock_client_instance = Mock()
+                mock_genai.Client.return_value = mock_client_instance
+
                 client = GeminiClient()
-                yield client, mock_model_instance
+                # テストからは client.models をモックとして触れるよう返す
+                yield client, mock_client_instance.models
 
     def test_generate_content(self, mock_gemini_client):
-        client, mock_model = mock_gemini_client
-        
+        client, mock_models = mock_gemini_client
+
         mock_response = Mock()
         mock_response.text = "こんにちは"
-        mock_model.generate_content.return_value = mock_response
+        mock_models.generate_content.return_value = mock_response
 
         result = client.generate_content("Hello")
         assert result == "こんにちは"
 
     def test_generate_content_with_kwargs(self, mock_gemini_client):
-        client, mock_model = mock_gemini_client
-        
+        client, mock_models = mock_gemini_client
+
         mock_response = Mock()
         mock_response.text = "Response"
-        mock_model.generate_content.return_value = mock_response
+        mock_models.generate_content.return_value = mock_response
 
-        client.generate_content("Question", thinking_level="high")
-        
-        args, kwargs = mock_model.generate_content.call_args
-        assert kwargs["thinking_level"] == "high"
+        # 新SDKでは temperature/max_output_tokens は config 経由で渡される
+        client.generate_content("Question", temperature=0.5, max_output_tokens=128)
+
+        args, kwargs = mock_models.generate_content.call_args
+        assert kwargs["contents"] == "Question"
+        # config は types.GenerateContentConfig インスタンス
+        assert kwargs["config"].temperature == 0.5
+        assert kwargs["config"].max_output_tokens == 128
 
     def test_generate_structured(self, mock_gemini_client):
-        client, mock_model = mock_gemini_client
-        
+        client, mock_models = mock_gemini_client
+
         mock_response = Mock()
         mock_response.text = '{"message": "test", "score": 100}'
-        mock_model.generate_content.return_value = mock_response
+        mock_models.generate_content.return_value = mock_response
 
         result = client.generate_structured("Generate", MockResponseSchema)
         assert result.message == "test"
         assert result.score == 100
 
     def test_generate_structured_invalid_json(self, mock_gemini_client):
-        client, mock_model = mock_gemini_client
-        
+        client, mock_models = mock_gemini_client
+
         mock_response = Mock()
         mock_response.text = "not valid json"
-        mock_model.generate_content.return_value = mock_response
+        mock_models.generate_content.return_value = mock_response
 
-        with pytest.raises(Exception): 
+        with pytest.raises(Exception):
             client.generate_structured("Generate", MockResponseSchema)
 
     def test_count_tokens(self, mock_gemini_client):
-        client, mock_model = mock_gemini_client
-        
+        client, mock_models = mock_gemini_client
+
         mock_response = Mock()
         mock_response.total_tokens = 10
-        mock_model.count_tokens.return_value = mock_response
+        mock_models.count_tokens.return_value = mock_response
 
         count = client.count_tokens("Hello world")
         assert count == 10
