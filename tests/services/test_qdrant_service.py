@@ -24,16 +24,17 @@ def mock_qdrant_client():
 class TestQdrantService:
 
     def test_map_collection_to_csv(self):
+        # 現行の map_collection_to_csv は「完全一致のみ」をサポートする。
+        # （命名規則依存の 'qa_' プレフィックス除去ロジックは廃止済み）
         with patch("os.path.exists") as mock_exists:
             # Case 1: Exact match
             mock_exists.return_value = True
             assert map_collection_to_csv("test") == "test.csv"
-            
-            # Case 2: Stripped match (qa_test -> test.csv)
-            # 1. qa_test.csv (False)
-            # 2. test.csv (True)
-            mock_exists.side_effect = [False, True]
-            assert map_collection_to_csv("qa_test") == "test.csv"
+
+            # Case 2: 完全一致するファイルが無ければ None を返す
+            #         （旧仕様の 'qa_test' -> 'test.csv' 変換は廃止された）
+            mock_exists.return_value = False
+            assert map_collection_to_csv("qa_test") is None
 
     def test_get_dynamic_collection_mapping(self, mock_qdrant_client):
         # Mock collections

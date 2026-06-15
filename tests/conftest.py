@@ -3,6 +3,17 @@ Pytest configuration and hooks for custom output formatting.
 """
 import pytest
 import sys
+import os
+
+# プロジェクトルートと helper/ ディレクトリを sys.path に追加する。
+# 一部の production モジュール（helper/helper_rag_qa.py 等）は helper/ が
+# sys.path 上にある前提で兄弟モジュールを bare import (例: `from helper_llm import ...`)
+# している。本番では celery_config.py 等が同様の挿入を行うため、テストでも踏襲する。
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_HELPER_DIR = os.path.join(_PROJECT_ROOT, "helper")
+for _p in (_PROJECT_ROOT, _HELPER_DIR):
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 # テストの総数と現在のカウントを追跡するためのグローバル変数
 _test_count = 0

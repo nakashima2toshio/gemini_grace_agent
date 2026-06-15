@@ -8,7 +8,7 @@ import os
 # プロジェクトルートをパスに追加
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from register_qdrant import build_points_for_qdrant
+from services.qdrant_service import build_points_for_qdrant
 from services.qdrant_service import get_collection_embedding_params
 
 class TestRegisterQdrantMetadata(unittest.TestCase):

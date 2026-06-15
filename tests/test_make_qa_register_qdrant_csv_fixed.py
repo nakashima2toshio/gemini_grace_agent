@@ -9,7 +9,7 @@ import sys
 # プロジェクトルートをパスに追加
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from make_qa_register_qdrant import run_registration
+from qa_qdrant.make_qa_register_qdrant import run_registration
 
 class TestMakeQaRegisterQdrantCSVFixed(unittest.TestCase):
     
@@ -29,10 +29,10 @@ class TestMakeQaRegisterQdrantCSVFixed(unittest.TestCase):
         if os.path.exists(test_out):
             os.remove(test_out)
 
-    @patch('make_qa_register_qdrant.create_qdrant_client')
-    @patch('make_qa_register_qdrant.create_or_recreate_collection_for_qdrant')
-    @patch('make_qa_register_qdrant.embed_texts_for_qdrant')
-    @patch('make_qa_register_qdrant.upsert_points_to_qdrant')
+    @patch('qa_qdrant.make_qa_register_qdrant.create_qdrant_client')
+    @patch('qa_qdrant.make_qa_register_qdrant.create_or_recreate_collection_for_qdrant')
+    @patch('qa_qdrant.make_qa_register_qdrant.embed_texts_for_qdrant')
+    @patch('qa_qdrant.make_qa_register_qdrant.upsert_points_to_qdrant')
     def test_run_registration_missing_columns(self, mock_upsert, mock_embed, mock_create_coll, mock_client):
         """カラム欠損時にエラーにならずスキップされるか"""
         

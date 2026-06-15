@@ -95,7 +95,9 @@ class TestPlanner:
         assert isinstance(plan, ExecutionPlan)
         assert len(plan.steps) == 2
         assert plan.steps[0].action == "rag_search"
-        assert plan.steps[0].collection == "wikipedia_ja"
+        # 現行のフォールバック計画は特定コレクションに固定せず collection=None
+        # （全コレクション横断検索のため。命名規則依存を廃止した結果）
+        assert plan.steps[0].collection is None
         assert plan.steps[1].action == "reasoning"
 
     @patch("grace.planner.genai.Client")
@@ -211,7 +213,8 @@ class TestCreatePlanner:
         planner = create_planner()
 
         assert isinstance(planner, Planner)
-        assert planner.model_name == "gemini-2.0-flash"
+        # デフォルトモデルは config/grace_config.yml の llm.model に追従する
+        assert planner.model_name == "gemini-3-flash-preview"
 
     @patch("grace.planner.genai.Client")
     def test_create_planner_custom_model(self, mock_client_class):

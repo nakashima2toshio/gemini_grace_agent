@@ -31,13 +31,30 @@ from agent_tools import (
 
 
 # モックGeminiレスポンス用のヘルパークラス
+#
+# 新しい google-genai SDK では応答は
+#   response.candidates[0].content.parts -> [Part, ...]
+# という構造を持つ。本テストの Response はその構造を再現する
+# （同時に旧テスト互換の .parts / .text 属性も維持する）。
 Part = namedtuple('Part', ['text', 'function_call'])
 FunctionCall = namedtuple('FunctionCall', ['name', 'args'])
 
-class Response:
-    """モックレスポンスクラス（.text属性を持つ）"""
+
+class _Content:
     def __init__(self, parts):
         self.parts = parts
+
+
+class _Candidate:
+    def __init__(self, parts):
+        self.content = _Content(parts)
+
+
+class Response:
+    """モックレスポンスクラス（新SDKの candidates 構造を持つ）"""
+    def __init__(self, parts):
+        self.parts = parts
+        self.candidates = [_Candidate(parts)]
         # partsから最初のテキストを.text属性として設定
         self.text = ""
         for part in parts:
@@ -79,31 +96,34 @@ class TestReActAgent:
 
     @pytest.fixture
     def agent(self, mock_genai, mock_env, mock_qdrant_client):
-        """テスト用エージェントインスタンス"""
-        # ChatSessionのモック
+        """テスト用エージェントインスタンス（新SDK構造）"""
+        # 新SDK: genai.Client(...).chats.create(...) -> chat
         mock_chat = MagicMock()
-        mock_model = MagicMock()
-        mock_model.start_chat.return_value = mock_chat
-        mock_genai.GenerativeModel.return_value = mock_model
+        mock_genai.Client.return_value.chats.create.return_value = mock_chat
 
         agent = ReActAgent(
             selected_collections=['wikipedia_ja'],
             model_name='gemini-pro'
         )
+        # 旧テスト互換のため chat_session も chat と同じ MagicMock を指すようにする
+        agent.chat = mock_chat
         agent.chat_session = mock_chat
         return agent
 
     def test_init_without_api_key(self):
         """APIキーなしの初期化エラーテスト"""
         with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError, match="API Key missing"):
-                ReActAgent(['wikipedia_ja'], 'gemini-pro')
+            with patch("services.agent_service.get_config") as mock_get_config:
+                def _side_effect(key, default=None):
+                    if key == "api.google_api_key":
+                        return None
+                    return default
+                mock_get_config.side_effect = _side_effect
+                with pytest.raises(ValueError, match="not set"):
+                    ReActAgent(['wikipedia_ja'], 'gemini-pro')
 
     def test_init_with_collections(self, mock_genai, mock_env):
         """コレクション付き初期化テスト"""
-        mock_model = MagicMock()
-        mock_genai.GenerativeModel.return_value = mock_model
-
         agent = ReActAgent(
             selected_collections=['wikipedia_ja', 'livedoor'],
             model_name='gemini-pro'
@@ -114,21 +134,18 @@ class TestReActAgent:
         assert agent.thought_log == []
 
     def test_setup_session(self, mock_genai, mock_env):
-        """セッションセットアップのテスト"""
-        mock_model = MagicMock()
-        mock_chat = MagicMock()
-        mock_model.start_chat.return_value = mock_chat
-        mock_genai.GenerativeModel.return_value = mock_model
-
+        """セッションセットアップのテスト（新SDK: client.chats.create）"""
         agent = ReActAgent(['wikipedia_ja'], 'gemini-pro')
 
-        # GenerativeModelの呼び出し確認
-        mock_genai.GenerativeModel.assert_called_once()
-        call_args = mock_genai.GenerativeModel.call_args
+        # 新SDK: genai.Client(api_key=...) と chats.create の呼び出し確認
+        mock_genai.Client.assert_called_once()
+        create_mock = mock_genai.Client.return_value.chats.create
+        create_mock.assert_called_once()
+        call_args = create_mock.call_args
 
-        assert call_args.kwargs['model_name'] == 'gemini-pro'
-        assert 'tools' in call_args.kwargs
-        assert 'system_instruction' in call_args.kwargs
+        assert call_args.kwargs['model'] == 'gemini-pro'
+        # config(GenerateContentConfig) に system_instruction と tools が含まれる
+        assert 'config' in call_args.kwargs
 
     def test_format_final_answer(self, agent):
         """最終回答フォーマットのテスト"""
@@ -286,13 +303,12 @@ class TestWikipediaSearchScenario:
         """統合テスト用エージェント"""
         with patch.dict(os.environ, {'GEMINI_API_KEY': 'test-key'}):
             with patch('services.agent_service.genai') as mock_genai:
-                # モックの設定
+                # 新SDK: client.chats.create -> chat
                 mock_chat = MagicMock()
-                mock_model = MagicMock()
-                mock_model.start_chat.return_value = mock_chat
-                mock_genai.GenerativeModel.return_value = mock_model
+                mock_genai.Client.return_value.chats.create.return_value = mock_chat
 
                 agent = ReActAgent(['wikipedia_ja'], 'gemini-pro')
+                agent.chat = mock_chat
                 agent.chat_session = mock_chat
 
                 return agent
@@ -349,11 +365,11 @@ class TestWikipediaSearchScenario:
 class TestHelperFunctions:
     """ヘルパー関数のテスト"""
 
-    @patch('services.agent_service.QdrantClient')
-    def test_get_available_collections_success(self, mock_client_class):
-        """コレクション取得成功のテスト"""
+    @patch('services.agent_service.get_qdrant_client')
+    def test_get_available_collections_success(self, mock_get_client):
+        """コレクション取得成功のテスト（新実装: get_qdrant_client シングルトン）"""
         mock_client = MagicMock()
-        mock_client_class.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         Collection = namedtuple('Collection', ['name'])
         mock_client.get_collections.return_value.collections = [
@@ -365,11 +381,11 @@ class TestHelperFunctions:
 
         assert result == ['wikipedia_ja', 'livedoor']
 
-    @patch('services.agent_service.QdrantClient')
-    def test_get_available_collections_error(self, mock_client_class):
+    @patch('services.agent_service.get_qdrant_client')
+    def test_get_available_collections_error(self, mock_get_client):
         """コレクション取得エラーのテスト"""
         mock_client = MagicMock()
-        mock_client_class.return_value = mock_client
+        mock_get_client.return_value = mock_client
         mock_client.get_collections.side_effect = Exception("Connection failed")
 
         result = get_available_collections_from_qdrant_helper()
@@ -386,11 +402,10 @@ class TestEdgeCases:
         with patch.dict(os.environ, {'GEMINI_API_KEY': 'test-key'}):
             with patch('services.agent_service.genai') as mock_genai:
                 mock_chat = MagicMock()
-                mock_model = MagicMock()
-                mock_model.start_chat.return_value = mock_chat
-                mock_genai.GenerativeModel.return_value = mock_model
+                mock_genai.Client.return_value.chats.create.return_value = mock_chat
 
                 agent = ReActAgent([], 'gemini-pro')  # 空のコレクション
+                agent.chat = mock_chat
                 agent.chat_session = mock_chat
                 return agent
 

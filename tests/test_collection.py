@@ -27,9 +27,30 @@ $ python test_collection_dynamic.py
 
 import sys
 import time
+import socket
 import logging
 from typing import List, Dict, Any
+
+import pytest
 from qdrant_client import QdrantClient
+
+
+def _qdrant_reachable(host: str = "localhost", port: int = 6333) -> bool:
+    """Qdrant が起動しているか TCP 接続で確認。"""
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+# このスイートはライブ Qdrant (localhost:6333) を必要とする統合テスト。
+# Qdrant が起動していないオフライン環境ではモジュールごとスキップする。
+if not _qdrant_reachable():
+    pytest.skip(
+        "live Qdrant server (localhost:6333) not reachable",
+        allow_module_level=True,
+    )
 
 # ロギング設定
 logging.basicConfig(
