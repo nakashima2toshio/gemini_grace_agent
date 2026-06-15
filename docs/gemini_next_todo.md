@@ -11,7 +11,7 @@ Phase A/B（#51–#67）・`_enforce_max_chunk_tokens` 移植・`tests/README.md
 ## A. 実環境 E2E 検証 ★最優先（要ユーザー環境）
 
 今セッションの実装はすべて `unittest.mock` での検証。実依存（API キー・Qdrant・Celery+Redis）での
-動作確認が最大の残課題。
+動作確認が最大の残課題。**実行手順書: [`docs/gemini_e2e_verification.md`](./gemini_e2e_verification.md)**（A-1〜A-5 のコマンド・受け入れ基準・記録テンプレート）。
 
 | # | 項目 | 検証内容 | 受け入れ基準 |
 |---|---|---|---|
