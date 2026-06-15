@@ -181,7 +181,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 - [x] #54 make_qa.py スマート生成フラグ撤去 ✅ qa_qdrant/make_qa.py
 - [x] #52 単段化（SmartQAResult/SmartQAPair・構造化出力 1 回）＋use_smart_generation 撤去 ✅ smart_qa_generator.py/pipeline.py/celery_tasks.py/make_qa_register_qdrant.py
 - [x] #51 内容ハッシュ ID ＋重複除去＋先読み並列化（3 部）✅ (a) qdrant_service.py に stable_point_id/_content_point_key/_normalize_for_id・provenance(chunk_id/topic/doc_id)・migrate path も決定的ID化、(b) register_to_qdrant.py に重複テキスト除去ブロック、(c) ThreadPoolExecutor 先読みパイプライン＋--embed-workers＋登録後検証。round-trip テスト 8 件追加（tests/services/test_qdrant_service.py::TestContentBasedPointId）
-- [ ] #67 collect_results 完了順＋on_result＋_GENERATOR_CACHE
+- [x] #67 collect_results 完了順＋on_result＋_GENERATOR_CACHE ✅ ready() ポーリングで完了順回収（HOL解消）・on_result/usage_out フック・ワーカー dict戻り値・_get_generator プロセス内キャッシュ。テスト 4件追加（tests/test_collect_results.py）。注: gemini はトークンカウンタ未配線のため usage は plumbing のみ（0集計）
 - [ ] #53 JSONL 逐次永続化＋クラッシュ再開
 - [x] #82 get_collection_embedding_params（DONE 相当）
 
