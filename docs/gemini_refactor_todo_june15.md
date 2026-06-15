@@ -172,7 +172,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 - [ ] #60 _prefetch_parallel_searches
 - [x] #61 二層計画（_create_rule_based_plan）✅ grace/planner.py（heuristic complexity<0.7＋非マーカーで LLM 省略）
 - [x] #64 _should_trigger_replan（検索ステップ限定）✅ grace/executor.py（両経路のゲート置換）
-- [ ] #65 evaluate_final（FinalEvaluationResult）
+- [x] #65 evaluate_final（FinalEvaluationResult）✅ confidence.py＋executor 配線（最終評価 2→1 LLM 呼び出し統合）
 - [x] #66 _build_confidence_factors 共通化 ✅ grace/executor.py（インライン構築をヘルパー抽出）
 - [ ] #59 実行ループ統合（execute_plan を yield from ラッパー化）
 
