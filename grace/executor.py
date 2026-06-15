@@ -122,6 +122,9 @@ from .replan import ReplanOrchestrator, create_replan_orchestrator
 class Executor:
     """計画実行エージェント（GRACEネイティブ実装）"""
 
+    # 並列プリフェッチ対象とする検索系アクション
+    _SEARCH_ACTIONS = ("rag_search", "web_search")
+
     def __init__(
             self,
             config: Optional[GraceConfig] = None,
@@ -171,6 +174,9 @@ class Executor:
         # ステップごとのConfidenceScoreを保持
         self.step_confidence_scores: Dict[int, ConfidenceScore] = {}
 
+        # 並列プリフェッチ結果のキャッシュ（step_id -> ToolResult or Exception）
+        self._prefetched_tool_results: Dict[int, Any] = {}
+
         replan_status = "enabled" if self.replan_orchestrator else "disabled"
         logger.info(
             f"Executor (GRACE Native) initialized: "
@@ -202,6 +208,8 @@ class Executor:
         if state is None:
             state = ExecutionState(plan=plan)
             state.start_time = time.time()
+            # 新規実行開始時はプリフェッチキャッシュをクリア
+            self._prefetched_tool_results.clear()
 
         try:
             # 各ステップを順次実行
@@ -241,6 +249,9 @@ class Executor:
                 state.step_statuses[step.step_id] = StepStatus.RUNNING
                 if self.on_step_start:
                     self.on_step_start(step)
+
+                # 依存関係のない後続検索ステップを並列プリフェッチ
+                self._prefetch_parallel_searches(step, steps_to_execute, state)
 
                 # ステップ実行
                 # _execute_step は StepResult または Generator[Any, None, StepResult] を返す可能性がある
@@ -495,6 +506,79 @@ class Executor:
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 
+    def _prefetch_parallel_searches(
+            self,
+            current_step: PlanStep,
+            steps_to_execute: List[PlanStep],
+            state: ExecutionState
+    ) -> None:
+        """現在のステップと依存関係のない後続検索ステップを並列に先行実行する。
+
+        現在のステップが検索系であり、後続にも依存関係のない検索ステップが
+        ある場合のみ並列化する（依存DAGの同一ウェーブ）。結果は
+        _prefetched_tool_results にキャッシュされ、各ステップの
+        _execute_step で消費される。例外もキャッシュされ、消費時に再送出
+        されるため fallback 処理は逐次実行と同じ経路を通る。
+        """
+        if not self.config.executor.parallel_search:
+            return
+        if current_step.action not in self._SEARCH_ACTIONS:
+            return
+        if current_step.step_id in self._prefetched_tool_results:
+            return  # 既にプリフェッチ済み
+
+        # 同一ウェーブの検索ステップを収集
+        batch = [current_step]
+        batch_ids = {current_step.step_id}
+        for s in steps_to_execute:
+            if s.step_id <= current_step.step_id or s.action not in self._SEARCH_ACTIONS:
+                continue
+            if s.step_id in self._prefetched_tool_results:
+                continue
+            if state.step_statuses.get(s.step_id) not in (StepStatus.PENDING, None):
+                continue
+            # バッチ内ステップ・未完了ステップへの依存があれば並列化不可
+            deps_ok = all(
+                dep not in batch_ids
+                and dep in state.step_results
+                and state.step_results[dep].status == "success"
+                for dep in s.depends_on
+            )
+            if not deps_ok:
+                continue
+            batch.append(s)
+            batch_ids.add(s.step_id)
+            if len(batch) >= self.config.executor.max_parallel_steps:
+                break
+
+        if len(batch) < 2:
+            return
+
+        logger.info(f"Parallel search execution: steps={[s.step_id for s in batch]}")
+
+        from concurrent.futures import ThreadPoolExecutor as _Pool
+
+        pool = _Pool(max_workers=len(batch), thread_name_prefix="grace-parallel")
+        try:
+            futures = {}
+            for s in batch:
+                tool = self.tool_registry.get(s.action)
+                if tool is None:
+                    continue
+                kwargs = self._prepare_tool_kwargs(s, state)
+                futures[s.step_id] = (s, pool.submit(tool.execute, **kwargs))
+
+            for sid, (s, future) in futures.items():
+                try:
+                    self._prefetched_tool_results[sid] = future.result(
+                        timeout=s.timeout_seconds or None
+                    )
+                except Exception as e:
+                    logger.warning(f"Parallel execution of step {sid} failed: {e}")
+                    self._prefetched_tool_results[sid] = e
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
     def _should_trigger_replan(
             self,
             step: PlanStep,
@@ -554,8 +638,15 @@ class Executor:
             # ツール実行引数を準備
             kwargs = self._prepare_tool_kwargs(step, state)
 
-            # 実行（timeout_seconds 指定時は制限付き実行）
-            tool_result: ToolResult = self._run_tool_with_timeout(tool, kwargs, step)
+            # 実行（並列プリフェッチ済みの結果があれば消費、
+            # なければ timeout_seconds 指定時は制限付き実行）
+            prefetched = self._prefetched_tool_results.pop(step.step_id, None)
+            if isinstance(prefetched, Exception):
+                raise prefetched
+            elif prefetched is not None:
+                tool_result: ToolResult = prefetched
+            else:
+                tool_result = self._run_tool_with_timeout(tool, kwargs, step)
 
             # --- UIへの中間結果通知 (思考プロセス表示用) ---
             if tool_result.success and tool_result.output:

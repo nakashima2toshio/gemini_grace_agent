@@ -169,7 +169,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 - [x] #56 eval 撤去 → ast.literal_eval（**セキュリティ最優先**）✅ executor.py（両経路を _handle_ask_user_response に統合・空スタブも解消）
 - [x] #58 PlannerConfig/ExecutorConfig（足場）✅ grace/config.py
 - [x] #57 _run_tool_with_timeout ✅ grace/executor.py（ThreadPoolExecutor で timeout_seconds 強制）
-- [ ] #60 _prefetch_parallel_searches
+- [x] #60 _prefetch_parallel_searches ✅ grace/executor.py（同一ウェーブ検索の並列先読み・ExecutorConfig.parallel_search 実利用）
 - [x] #61 二層計画（_create_rule_based_plan）✅ grace/planner.py（heuristic complexity<0.7＋非マーカーで LLM 省略）
 - [x] #64 _should_trigger_replan（検索ステップ限定）✅ grace/executor.py（両経路のゲート置換）
 - [x] #65 evaluate_final（FinalEvaluationResult）✅ confidence.py＋executor 配線（最終評価 2→1 LLM 呼び出し統合）
