@@ -342,9 +342,19 @@ class QAPipeline:
             chunk_id = chunks[task_index].get('id', f'chunk_{task_index}')
             self._append_progress(chunk_id, qa_pairs)
 
+        # ワーカー側のトークン使用量を集約（collect_results が合計をログ出力する）
+        usage_out: Dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
+
         timeout_seconds = min(max(len(tasks) * 10, 600), 1800)
         logger.info(f"  結果収集タイムアウト: {timeout_seconds}秒（{len(tasks)}タスク）")
-        return collect_results(tasks, timeout=timeout_seconds, on_result=_persist)
+        qa_pairs = collect_results(
+            tasks, timeout=timeout_seconds, on_result=_persist, usage_out=usage_out
+        )
+        logger.info(
+            f"  トークン使用量（合計）: 入力={usage_out['input_tokens']:,}, "
+            f"出力={usage_out['output_tokens']:,}"
+        )
+        return qa_pairs
 
     def _generate_sync(self, chunks: List[Dict], batch_size: int) -> List[Dict]:
         """同期生成（SmartQAGenerator使用）
@@ -360,6 +370,7 @@ class QAPipeline:
 
         all_qa_pairs = []
         total = len(chunks)
+        usage_total = {"input_tokens": 0, "output_tokens": 0}
 
         for i, chunk in enumerate(chunks, 1):
             chunk_text = chunk.get('text', '')
@@ -390,6 +401,11 @@ class QAPipeline:
                 else:
                     logger.warning(f"      → Q/A生成なし（qa_count=0 または失敗）")
 
+                # トークン使用量を集計（usage_metadata 由来）
+                usage = result.get('usage') or {}
+                usage_total["input_tokens"] += int(usage.get("input_tokens", 0) or 0)
+                usage_total["output_tokens"] += int(usage.get("output_tokens", 0) or 0)
+
                 # 逐次永続化（qa_count=0 も記録して再処理を防ぐ）
                 if result['success']:
                     self._append_progress(chunk_id, chunk_pairs)
@@ -399,6 +415,10 @@ class QAPipeline:
                 continue
 
         logger.info(f"  ✅ 同期生成完了: {len(all_qa_pairs)} Q/Aペア")
+        logger.info(
+            f"  トークン使用量（合計）: 入力={usage_total['input_tokens']:,}, "
+            f"出力={usage_total['output_tokens']:,}"
+        )
         return all_qa_pairs
 
     def evaluate_coverage(self, chunks: List[Dict], qa_pairs: List[Dict],

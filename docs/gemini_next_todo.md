@@ -29,7 +29,7 @@ Phase A/B（#51–#67）・`_enforce_max_chunk_tokens` 移植・`tests/README.md
 
 | # | 項目 | 内容 | 優先 |
 |---|---|---|---|
-| B-1 | **トークン使用量の配線** | #67 は `usage_out` の配管のみで gemini は `usage=0`。`smart_qa_generator` の `response.usage_metadata`（prompt/candidates token）を `process_chunk`→celery worker→`collect_results` の `usage_out` へ流し、コストサマリーを実値化 | ◎高 |
+| ~~B-1~~ ✅ | **トークン使用量の配線（完了）** | `smart_qa_generator` が `response.usage_metadata` を捕捉→`process_chunk['usage']`→celery worker 戻り値→`collect_results(usage_out)` / `_generate_sync` 集計→ログ出力。テスト 3件（`test_smart_qa_usage.py`）。実 API での実数確認は A-1 に含む | 完了 |
 | B-2 | スキップ4件の整理 | `test_generation.py`・`test_content.py::test_analyze_chunk_complexity`（削除機能）はファイル削除 or 残置を判断。metadata 2件（`get_collection_embedding_params` 仕様変更）は新仕様向けに書き直す or 削除 | ○中 |
 | B-3 | 旧モデル名の残り | `tests/agents/test_agent_service_paris_income.py` の `GEMINI_MODEL_NAME` 既定 `gemini-2.0-flash-exp` を安定版（`gemini-2.5-flash`）へ | △低 |
 
@@ -39,7 +39,7 @@ Phase A/B（#51–#67）・`_enforce_max_chunk_tokens` 移植・`tests/README.md
 
 | # | 項目 | 内容 | 優先 |
 |---|---|---|---|
-| C-1 | **CI ワークフロー追加** | `uv sync --extra dev && uv run pytest tests/` を回す GitHub Actions。モックテストのみで API/Qdrant 不要。実 API キー混入のような環境依存リグレッションを PR 時点で自動検知 | ◎高（着手中） |
+| ~~C-1~~ ✅ | **CI ワークフロー追加（完了）** | `.github/workflows/ci.yml`。push(master)/PR で `uv sync --extra dev && pytest tests/` を Python 3.11/3.12 で実行。ruff は非ブロッキング。GitHub Actions 上で pytest 3.11/3.12 success を確認済み | 完了 |
 | C-2 | 環境依存テストのガード強化 | `config_service`/`.env` を読むテストは `get_config` モック or `clear=True` を徹底。integration テストの skipif を placeholder 除外（`_has_real_gemini_key` 方式）に統一し CI を確定的に | ○中 |
 
 ---

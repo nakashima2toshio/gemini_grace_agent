@@ -154,12 +154,17 @@ def generate_qa_for_chunk_task(
                     'dataset_type': dataset_type
                 })
 
-        logger.info(f"[ワーカー] ✅ タスク完了: chunk={chunk_id}, Q/A数={len(qa_pairs)}")
+        # SmartQAGenerator が捕捉した実トークン使用量（usage_metadata 由来）
+        usage = result.get('usage') or {"input_tokens": 0, "output_tokens": 0}
+
+        logger.info(
+            f"[ワーカー] ✅ タスク完了: chunk={chunk_id}, Q/A数={len(qa_pairs)}, "
+            f"tokens(in/out)={usage.get('input_tokens', 0)}/{usage.get('output_tokens', 0)}"
+        )
         logger.info("=" * 60)
         # 戻り値はワーカーのトークン使用量を同梱した dict 形式。
-        # collect_results() が新旧両形式（dict / 旧list）を吸収する。
-        # 注: gemini はトークンカウンタ未配線のため usage は 0（plumbing のみ用意）。
-        return {"qa_pairs": qa_pairs, "usage": {"input_tokens": 0, "output_tokens": 0}}
+        # collect_results() が新旧両形式（dict / 旧list）を吸収し usage_out へ集約する。
+        return {"qa_pairs": qa_pairs, "usage": usage}
 
     except ImportError as exc:
         logger.error("=" * 60)
