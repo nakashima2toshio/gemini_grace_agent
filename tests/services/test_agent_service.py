@@ -55,7 +55,15 @@ class TestReActAgent:
 
     def test_init(self, mock_genai):
         """ReActAgent の初期化（新SDK: genai.Client）"""
-        with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}):
+        # config_service が .env の実 google_api_key を返すと env パッチが無効化され、
+        # 実APIキーが genai.Client へ渡って assert が落ちる（環境依存）。
+        # get_config をモックして api.google_api_key を None にし、env フォールバックを
+        # 確定的に通す。
+        with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}, clear=True), \
+             patch("services.agent_service.get_config") as mock_get_config:
+            mock_get_config.side_effect = (
+                lambda key, default=None: None if key == "api.google_api_key" else default
+            )
             agent = ReActAgent(selected_collections=["coll1"], model_name="gemini-pro")
 
             assert agent.selected_collections == ["coll1"]

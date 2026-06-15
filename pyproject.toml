@@ -146,6 +146,11 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # google-genai SDK にテスト用 MagicMock を渡した際、enum 型フィールド走査で
+    # 大量に出る無害な UserWarning（"... is not a valid <EnumType>"）を抑止する。
+    "ignore:.*is not a valid.*:UserWarning:google.genai._common",
+]
 
 [build-system]
 requires = ["hatchling>=1.25.0"]

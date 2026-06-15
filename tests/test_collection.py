@@ -67,6 +67,10 @@ logger = logging.getLogger(__name__)
 class TestResult:
     """テスト結果を保持するクラス"""
 
+    # pytest はこのヘルパークラスを収集しない（Test* 命名 + __init__ による
+    # PytestCollectionWarning を抑止する）
+    __test__ = False
+
     def __init__(self, name: str):
         self.name = name
         self.passed = False
@@ -80,6 +84,9 @@ class TestResult:
 
 class TestRunner:
     """テストランナー"""
+
+    # pytest はこのヘルパークラスを収集しない（同上）
+    __test__ = False
 
     def __init__(self):
         self.results: List[TestResult] = []
