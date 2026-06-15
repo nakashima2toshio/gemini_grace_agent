@@ -1,3 +1,108 @@
+# テスト実行結果の分析・評価（警告・スキップ・失敗の原因と対策）
+
+`uv run pytest tests/ -v` をローカル（macOS / Python 3.12）で実行した結果
+**1 failed / 437 passed / 4 skipped / 20 warnings** に対する原因特定と対策。
+
+## 0. 全体像
+
+| 区分 | 件数 | 性質 | 対応要否 |
+|---|---|---|---|
+| FAILED | 1 | **テスト分離不備**（ローカルの実APIキー混入）。CI/サンドボックスでは緑 | 要修正（小） |
+| SKIPPED | 4 | すべて**意図的スキップ**（削除済み機能・仕様変更の記録） | 不要（任意で整理） |
+| WARNINGS | 20 | 2件=命名衝突、18件=モックとSDKの相性（無害） | 任意（ノイズ低減） |
+
+> **重要**: この FAILED は**開発マシン環境固有**。`.env` の実 `GOOGLE_API_KEY`（`AIzaSy…`）が
+> 原因で、CI や実キー無しのサンドボックスでは 1 件も落ちず緑になる。
+
+## 1. FAILED（1件）— `tests/services/test_agent_service.py::TestReActAgent::test_init`
+
+**原因（根本）**: 本番コード `services/agent_service.py:_setup_client()` はキーを次の順で解決する。
+
+```python
+api_key = get_config("api.google_api_key")          # ← ①最優先（config_service が .env を読む）
+if not api_key:
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")  # ②フォールバック
+```
+
+テストは `os.environ['GEMINI_API_KEY']='test_key'` だけをパッチし、**①の `get_config` を
+無効化していない**。開発マシンでは `.env` の実キーが `config_service` 経由で①に入るため、
+`test_key` が使われず `AIzaSy…` が `genai.Client` に渡り、
+`assert_called_with(api_key='test_key')` が失敗する。
+
+**対策**: 同ファイルの `test_init_missing_key` が既に行っている手法（`get_config` をモックして
+`api.google_api_key` を `None` にする）を `test_init` にも適用し、②のフォールバック経路を
+確定的に通す。
+
+```python
+def test_init(self, mock_genai):
+    with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}, clear=True), \
+         patch("services.agent_service.get_config") as mock_get_config:
+        mock_get_config.side_effect = lambda key, default=None: None if key == "api.google_api_key" else default
+        agent = ReActAgent(selected_collections=["coll1"], model_name="gemini-pro")
+        ...
+        mock_genai.Client.assert_called_with(api_key='test_key')
+```
+
+→ `.env` の有無に依らず決定的に通る（テストの環境依存を解消）。
+
+## 2. SKIPPED（4件）— すべて意図的・正常
+
+| # | テスト | スキップ機構 | 原因 | 対策 |
+|---|---|---|---|---|
+| 1 | `qa_generation/test_generation.py`（モジュール全体・収集時の「1 skipped」） | `pytest.skip(allow_module_level)` | `QAGenerator` API は削除され `SmartQAGenerator` に統合 | 不要。完全に不要なら将来ファイル削除 |
+| 2 | `qa_generation/test_content.py::test_analyze_chunk_complexity` | `@pytest.mark.skip` | `analyze_chunk_complexity` は gemini リファクタで削除 | 不要（削除の記録） |
+| 3 | `test_metadata_and_full_process.py::test_get_params_prioritizes_payload` | `@unittest.skip` | `get_collection_embedding_params` が payload より**ベクトル次元優先**に仕様変更 | 不要（仕様変更の記録）。整理するなら新仕様向けに書き直し |
+| 4 | `test_qdrant_service_metadata.py::test_get_collection_embedding_params_with_payload` | `@unittest.skip` | 同上 | 同上 |
+
+→ いずれも**失敗ではなく設計どおり**。放置して問題なし。気になる場合のみ stale テストを削除/書き換え。
+
+## 3. WARNINGS（20件）— 2種類
+
+### 3-A. 命名衝突（2件）— `tests/test_collection.py:67, :81`
+
+```
+PytestCollectionWarning: cannot collect test class 'TestResult'/'TestRunner'
+because it has a __init__ constructor
+```
+
+**原因**: `TestResult` / `TestRunner` は**ヘルパークラス**だが、名前が `Test…` で始まるため
+pytest がテストクラスとして収集しようとし、`__init__` を持つため収集不可の警告。
+
+**対策（どちらか）**:
+- 各クラスに `__test__ = False` を付与（最小・推奨）
+- もしくは `ResultRecord` / `CollectionRunner` 等へリネーム
+
+### 3-B. MagicMock と google-genai SDK の相性（18件）— `test_execute_turn_with_tool_call`
+
+```
+UserWarning: <MagicMock ...> is not a valid ApiSpec / HttpElementLocation / AuthType / ...
+（google/genai/_common.py:651）
+```
+
+**原因**: ツール定義（function declaration）に `MagicMock` を渡しているため、SDK が tool 仕様の
+enum 型フィールドを走査するたびに、MagicMock の自動生成属性が enum 値として不正で
+**1フィールド=1警告**を出す（9種 × 2ツール ≒ 18件）。**テスト自体は PASS** で、機能には無害。
+
+**対策（いずれか）**:
+1. ノイズ抑制のみでよい → `pyproject.toml` の pytest 設定でフィルタ:
+   ```toml
+   [tool.pytest.ini_options]
+   filterwarnings = ["ignore:.*is not a valid.*:UserWarning:google.genai._common"]
+   ```
+2. 根本対処 → ツール spec を実体（`types.FunctionDeclaration` 等）か `MagicMock(spec=...)` に
+   する、または SDK がモックを内省しない上位境界でモックする（手間大）。
+
+## 4. 推奨対応順（コスト/効果）
+
+| 優先 | 項目 | 対応 | 効果 |
+|---|---|---|---|
+| ★高 | FAILED `test_init` | `get_config` をモック（§1） | 環境依存の失敗を解消し常時緑 |
+| 中 | 警告2件（命名衝突） | `__test__ = False`（§3-A） | 警告 -2、収集の混乱解消 |
+| 低 | 警告18件（genai） | `filterwarnings` で抑制（§3-B） | ログのノイズ大幅減 |
+| 任意 | SKIP 4件 | 放置 or stale 削除 | 整理目的のみ |
+
+---
+
 # テストスイート索引（gemini_grace_agent）
 
 日本語 RAG Q&A システムの pytest テスト群。LLM は **Gemini**（デフォルト
