@@ -132,7 +132,89 @@ class Planner:
 
         logger.info(f"Planner initialized with model: {self.model_name}")
 
+    # LLM計画生成を強制するクエリマーカー（明示的なWeb検索指示など）
+    _LLM_PLAN_MARKERS = (
+        "最新ニュース", "ニュースを検索", "web検索", "ウェブ検索", "webで検索",
+    )
+
     def create_plan(self, query: str) -> ExecutionPlan:
+        """
+        質問から実行計画を生成（二層方式）
+
+        - 通常のクエリ: ルールベースの2ステップ計画を即時生成（LLM呼び出しなし）
+        - 複雑なクエリ / 明示的なWeb検索指示: LLMによる計画生成
+
+        Args:
+            query: ユーザーの質問
+        Returns:
+            ExecutionPlan: 実行計画
+        """
+        logger.info(f"Creating execution plan for: {query[:50]}...")
+
+        # ヒューリスティック（非LLM）複雑度で二層判定
+        heuristic_complexity = self.estimate_complexity(query)
+
+        if not self._should_use_llm_plan(query, heuristic_complexity):
+            logger.info(
+                f"Using rule-based plan (complexity={heuristic_complexity:.2f} < "
+                f"{self.config.planner.llm_plan_complexity_threshold})"
+            )
+            return self._create_rule_based_plan(query, heuristic_complexity)
+
+        return self._create_llm_plan(query)
+
+    def _should_use_llm_plan(self, query: str, heuristic_complexity: float) -> bool:
+        """LLM計画生成を使用すべきか判定する"""
+        if self.config.planner.force_llm_plan:
+            return True
+
+        query_lower = query.lower()
+        if any(marker in query_lower for marker in self._LLM_PLAN_MARKERS):
+            return True
+
+        return heuristic_complexity >= self.config.planner.llm_plan_complexity_threshold
+
+    def _create_rule_based_plan(self, query: str, complexity: float) -> ExecutionPlan:
+        """
+        ルールベースの標準2ステップ計画を生成（LLM呼び出しなし）
+
+        rag_search（全コレクション網羅・fallback=web_search）→ reasoning の
+        標準構成。LLM計画生成と同じ計画構造のため、Executor 側の
+        動的フォールバック連鎖（web_search / ask_user）もそのまま機能する。
+        """
+        return ExecutionPlan(
+            original_query=query,
+            complexity=complexity,
+            estimated_steps=2,
+            requires_confirmation=False,
+            steps=[
+                PlanStep(
+                    step_id=1,
+                    action="rag_search",
+                    description="全コレクションから関連情報を検索",
+                    query=query,
+                    collection=None,
+                    expected_output="関連するドキュメントや情報",
+                    fallback="web_search",
+                    timeout_seconds=30
+                ),
+                PlanStep(
+                    step_id=2,
+                    action="reasoning",
+                    description="取得した情報を元に回答を生成",
+                    query=None,
+                    collection=None,
+                    depends_on=[1],
+                    expected_output="ユーザーへの回答",
+                    fallback=None,
+                    timeout_seconds=30
+                )
+            ],
+            success_criteria="ユーザーの質問に適切に回答できている",
+            plan_id=create_plan_id()
+        )
+
+    def _create_llm_plan(self, query: str) -> ExecutionPlan:
         """
         質問から実行計画を生成（LLM使用版 - 本来のロジック）
         Args:
@@ -140,7 +222,7 @@ class Planner:
         Returns:
             ExecutionPlan: LLMが生成した実行計画
         """
-        logger.info(f"Creating execution plan for: {query[:50]}...")
+        logger.info(f"Creating LLM execution plan for: {query[:50]}...")
 
         # --- Legacy Agentと同一の入力加工 ---
         # augmented_query = query

@@ -170,7 +170,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 - [x] #58 PlannerConfig/ExecutorConfig（足場）✅ grace/config.py
 - [x] #57 _run_tool_with_timeout ✅ grace/executor.py（ThreadPoolExecutor で timeout_seconds 強制）
 - [ ] #60 _prefetch_parallel_searches
-- [ ] #61 二層計画（_create_rule_based_plan）※estimate_complexity は流用
+- [x] #61 二層計画（_create_rule_based_plan）✅ grace/planner.py（heuristic complexity<0.7＋非マーカーで LLM 省略）
 - [ ] #64 _should_trigger_replan（検索ステップ限定）
 - [ ] #65 evaluate_final（FinalEvaluationResult）
 - [ ] #66 _build_confidence_factors 共通化
