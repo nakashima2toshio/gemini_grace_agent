@@ -42,7 +42,7 @@ anthropic を正にするのは**ロジックのみ**。下表の値は gemini �
 
 | # | 種別 | 状態 | 作業 |
 |---|---|---|---|
-| **#56** | fix(security) | ❌ MISSING | `executor.py:472` の `eval(result.output)` を撤去。anthropic の `_handle_ask_user_response()`（`ast.literal_eval`）を移植。`import ast` は既存（`executor.py:746` の dep 解析用は安全で対象外）。**最優先（セキュリティ）** |
+| **#56** | fix(security) | ✅ DONE | `executor.py` の `eval(result.output)` を撤去し、anthropic の `_handle_ask_user_response()`（`ast.literal_eval`）を移植。ブロッキング経路＋空スタブだったジェネレータ経路の両方を本メソッドへ統合。top-level `import ast` 追加 |
 | **#58** | feat | ❌ MISSING | `grace/config.py` に `PlannerConfig`（`llm_plan_complexity_threshold` 等）/`ExecutorConfig`（`parallel_search`/`fallback_chain` 等）を追加。**他機能の足場（次の最優先）** |
 | **#57** | feat | ❌ MISSING | `executor.py` に `_run_tool_with_timeout()`（ThreadPoolExecutor）を追加し、`timeout_seconds`（既存の `executor.py:867/990` 参照）を実際に強制 |
 | **#60** | feat | ❌ MISSING | `_prefetch_parallel_searches()`（依存なし検索ステップの並列プリフェッチ）を追加し実行ループへ配線。`ExecutorConfig.parallel_search` を実利用化 |
@@ -166,7 +166,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 ## 進捗チェックリスト
 
 ### Phase A — grace/（中核未移植・最優先）
-- [ ] #56 eval 撤去 → ast.literal_eval（**セキュリティ最優先**）
+- [x] #56 eval 撤去 → ast.literal_eval（**セキュリティ最優先**）✅ executor.py（両経路を _handle_ask_user_response に統合・空スタブも解消）
 - [ ] #58 PlannerConfig/ExecutorConfig（足場）
 - [ ] #57 _run_tool_with_timeout
 - [ ] #60 _prefetch_parallel_searches
