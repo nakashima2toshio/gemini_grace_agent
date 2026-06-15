@@ -6,7 +6,7 @@
 |---|---|---|
 | `anthropic_grace_agent` | Anthropic `claude-sonnet-4-6` | Gemini `gemini-embedding-001` |
 | `openai_grace_agent` | OpenAI `gpt-4o` / `gpt-4o-mini` | OpenAI `text-embedding-3-small` |
-| `gemini_grace_agent` | Gemini `gemini-3-flash-preview` ← **修正** | Gemini `gemini-embedding-001` |
+| `gemini_grace_agent` | Gemini `gemini-2.5-flash` ← **修正** | Gemini `gemini-embedding-001` |
 
 **参照実装**: `helper/helper_llm.py`（`GeminiClient` / `OpenAIClient`）、`grace/planner.py`、`grace/confidence.py`、`helper/helper_embedding.py`  
 **作成日**: 2026-05-10  
@@ -18,13 +18,13 @@
 
 | 節 | 修正内容 | 修正理由（実コード根拠） |
 |:---|:---|:---|
-| 表頭 | LLM モデル `gemini-2.5-flash` → `gemini-3-flash-preview` | `grace/config.py` `LLMConfig.model` デフォルト値 |
+| 表頭 | LLM モデル `gemini-2.5-flash` → `gemini-2.5-flash` | `grace/config.py` `LLMConfig.model` デフォルト値 |
 | 1節 | `GeminiClient` デフォルト `gemini-2.0-flash` に廃止警告追加 | `helper_llm.py` L85。2026-06-01 廃止予定 |
 | 4節 | Gemini Structured Output: `response_schema=ExecutionPlan.model_json_schema()` を2方式に整理 | `grace/planner.py` は Pydantic 直渡し。`helper_llm.py` は `.model_json_schema()` 使用。混在あり |
 | 4節 | Gemini の AFC 無効化コード追加 | `grace/planner.py`・`grace/confidence.py` で必須 |
 | 8節 | Embedding 設定形式を修正: `EmbedContentConfig` → dict 形式、`task_type` を小文字に修正、`output_dimensionality` パラメータ追加 | `helper/helper_embedding.py` 実装 |
 | 8節 | OpenAI Embedding デフォルトモデル `text-embedding-3-large` → `text-embedding-3-small` に修正 | `helper/helper_embedding.py` `OpenAIEmbedding` デフォルト値 |
-| 9節 | `gemini-2.0-flash` に廃止警告追加。`gemini-3-flash-preview` を追加 | 2026-06-01 シャットダウン予定 |
+| 9節 | `gemini-2.0-flash` に廃止警告追加。`gemini-2.5-flash` を追加 | 2026-06-01 シャットダウン予定 |
 | 10節 | `gemini_grace_agent` の `grace/confidence.py` は OpenAI ではなく Gemini を使用と注記 | `confidence.py` 全クラスが `genai.Client()` を使用 |
 
 ---
@@ -38,7 +38,7 @@
 | クライアント生成 | `anthropic.Anthropic(api_key=...)` | `OpenAI(api_key=...)` | `genai.Client(api_key=...)` |
 | API キー環境変数 | `ANTHROPIC_API_KEY` | `OPENAI_API_KEY` | `GOOGLE_API_KEY` |
 | チャットセッション | **なし**（ステートレス設計） | **なし**（ステートレス設計） | `client.chats.create(model, config)` |
-| デフォルトモデル（`grace/`） | `claude-sonnet-4-6` | `gpt-4o-mini` | **`gemini-3-flash-preview`** |
+| デフォルトモデル（`grace/`） | `claude-sonnet-4-6` | `gpt-4o-mini` | **`gemini-2.5-flash`** |
 | デフォルトモデル（`helper_llm.py`） | — | `gpt-4o-mini` | ~~`gemini-2.0-flash`~~ **⚠️ 廃止予定→要変更** |
 
 ```python
@@ -58,7 +58,7 @@ client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
 > **⚠️ helper_llm.py の GeminiClient デフォルトモデル**  
 > `helper_llm.py` の `GeminiClient.__init__` は `default_model="gemini-2.0-flash"` だが、
-> このモデルは **2026-06-01 に廃止**。`"gemini-3-flash-preview"` または `"gemini-2.5-flash"` に変更が必要。
+> このモデルは **2026-06-01 に廃止**。`"gemini-2.5-flash"` または `"gemini-2.5-flash"` に変更が必要。
 
 ---
 
@@ -102,7 +102,7 @@ from google import genai
 from google.genai import types
 
 response = client.models.generate_content(
-    model="gemini-3-flash-preview",
+    model="gemini-2.5-flash",
     contents=prompt,
     config=types.GenerateContentConfig(
         system_instruction="あなたは...",
@@ -196,7 +196,7 @@ plan = response.choices[0].message.parsed  # ExecutionPlan インスタンスが
 # Gemini — 方式A: Pydantic クラス直渡し（grace/planner.py の実装）← 推奨
 # ─────────────────────────────────────────────────────────────────
 response = client.models.generate_content(
-    model="gemini-3-flash-preview",
+    model="gemini-2.5-flash",
     contents=prompt,
     config=types.GenerateContentConfig(
         response_mime_type="application/json",
@@ -348,7 +348,7 @@ except KeyError:
 count = len(encoding.encode(text))
 
 # Gemini（helper_llm.py の GeminiClient.count_tokens() 実装）
-response = client.models.count_tokens(model="gemini-3-flash-preview", contents=text)
+response = client.models.count_tokens(model="gemini-2.5-flash", contents=text)
 count = response.total_tokens
 ```
 
@@ -431,7 +431,7 @@ vector = response.data[0].embedding  # list[float]、1536次元
 | 用途目安 | Anthropic | OpenAI | Gemini |
 |---|---|---|---|
 | 最高性能 | `claude-opus-4-7` | `gpt-4o` | `gemini-3-pro-preview` |
-| **推奨デフォルト** | **`claude-sonnet-4-6`** | **`gpt-4o-mini`** | **`gemini-3-flash-preview`** ← 修正 |
+| **推奨デフォルト** | **`claude-sonnet-4-6`** | **`gpt-4o-mini`** | **`gemini-2.5-flash`** ← 修正 |
 | 高速・低コスト | `claude-haiku-4-5-20251001` | `gpt-4o-mini` | `gemini-2.5-flash-lite` |
 | ~~廃止予定~~ | — | — | ~~`gemini-2.0-flash`~~ **⚠️ 2026-06-01 廃止** |
 
@@ -444,7 +444,7 @@ vector = response.data[0].embedding  # list[float]、1536次元
 | `claude-haiku-4-5-20251001` | $0.0008 | $0.004 | |
 | `gpt-4o` | $0.005 | $0.015 | |
 | `gpt-4o-mini` | $0.00015 | $0.0006 | |
-| `gemini-3-flash-preview` | $0.0005 | $0.003 | ← 追加 |
+| `gemini-2.5-flash` | $0.0005 | $0.003 | ← 追加 |
 | `gemini-2.5-flash` | $0.0001 | $0.0004 | `helper_llm.py` 定義値 |
 | `gemini-3-pro-preview` | $0.00125 | $0.010 | |
 | ~~`gemini-2.0-flash`~~ | ~~$0.0001~~ | ~~$0.0004~~ | **⚠️ 2026-06-01 廃止** |
@@ -580,7 +580,7 @@ emb = create_embedding_client("fastembed") # → FastEmbedEmbedding（384次元�
 
 | 項目 | 状況 | 対策 |
 |---|---|---|
-| `helper_llm.py` の `GeminiClient` デフォルトモデルが `gemini-2.0-flash`（廃止予定） | **要緊急修正** | `"gemini-3-flash-preview"` に変更 |
+| `helper_llm.py` の `GeminiClient` デフォルトモデルが `gemini-2.0-flash`（廃止予定） | **要緊急修正** | `"gemini-2.5-flash"` に変更 |
 | `grace/confidence.py` の LLMSelfEvaluator で AFC 無効化が適用済みか | `evaluate()` / `evaluate_with_factors()` で `AutomaticFunctionCallingConfig(disable=True)` あり ✅ 確認済み | — |
 | `openai_grace_agent` の `grace/confidence.py` 実装（`create_llm_client("openai")` コメント） | `gemini_grace_agent` では Gemini 使用。`anthropic_grace_agent` の実装詳細は要別途確認 | anthropic_grace_agent のコード確認 |
 | `chunking/async_api_client.py` の Gemini 版実装 | 現行は Anthropic 実装。Gemini 版への切り替えスクリプトは未確認 | gemini_grace_agent の chunking/ を確認 |

@@ -93,7 +93,7 @@ def grace_config():
     """テスト用の GraceConfig（Qdrant設定はダミー）"""
     return GraceConfig(
         llm=LLMConfig(
-            model="gemini-3-flash-preview",
+            model="gemini-2.5-flash",
             temperature=0.7,
             max_tokens=4096,
         ),

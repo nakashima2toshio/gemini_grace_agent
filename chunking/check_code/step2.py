@@ -54,7 +54,7 @@ def step2_semantic_chunking(paragraphs: list[str], api_key: str) -> list[str]:
         # gemini-2.5-flash: 最新の安定版、高いレート制限
         # # URL: https://ai.google.dev/gemini-api/docs/text-generation?lang=python
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",

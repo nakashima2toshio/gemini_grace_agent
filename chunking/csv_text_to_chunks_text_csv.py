@@ -18,7 +18,7 @@ csv_text_to_chunks_text_csv.py - LLMベースセマンティックチャンキ�
 uv run python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/cc_news_2per_gemini.csv \
   --output output_chunked \
-  --model gemini-3.5-flash \
+  --model gemini-2.5-flash \
   --workers 2
 
 # ----------------------------------------------
@@ -32,7 +32,7 @@ uv run python -m chunking.csv_text_to_chunks_text_csv \
 uv run python qa_qdrant/make_qa_register_qdrant.py \
   --input-file output_chunked/cc_news_2per_gemini_chunks.csv \
   --collection cc_news_2per_gemini \
-  --model gemini-3.5-flash \
+  --model gemini-2.5-flash \
   --concurrency 2 \
   --recreate
 
@@ -46,7 +46,7 @@ uv run python qa_qdrant/make_qa_register_qdrant.py \
 python -m chunking.csv_text_to_chunks_text_csv.py \
   --input-file ./data/document.txt \
   --output chunks_output \
-  --model gemini-3.5-flash \
+  --model gemini-2.5-flash \
   --workers 8
 
 # デフォルト出力ディレクトリ使用
@@ -560,7 +560,7 @@ def _enforce_max_chunk_tokens(chunks: List[str], max_tokens: int) -> List[str]:
 
 async def chunks_all_async(
         text: str,
-        model: str = "gemini-3.5-flash",
+        model: str = "gemini-2.5-flash",
         max_workers: int = 8,
         block_size: int = 1000,
         checkpoint_manager: Optional[CheckpointManager] = None,
@@ -887,7 +887,7 @@ async def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="gemini-3.5-flash",
+        default="gemini-2.5-flash",
         help="使用するLLMモデル"
     )
     parser.add_argument(

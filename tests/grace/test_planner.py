@@ -214,7 +214,7 @@ class TestCreatePlanner:
 
         assert isinstance(planner, Planner)
         # デフォルトモデルは config/grace_config.yml の llm.model に追従する
-        assert planner.model_name == "gemini-3-flash-preview"
+        assert planner.model_name == "gemini-2.5-flash"
 
     @patch("grace.planner.genai.Client")
     def test_create_planner_custom_model(self, mock_client_class):

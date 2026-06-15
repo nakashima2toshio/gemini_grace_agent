@@ -105,8 +105,8 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="gemini-3.0-flash",
-        help="使用するGeminiモデル（デフォルト: gemini-2.0-flash）"
+        default="gemini-2.5-flash",
+        help="使用するGeminiモデル（デフォルト: gemini-2.5-flash）"
     )
     parser.add_argument(
         "--output",

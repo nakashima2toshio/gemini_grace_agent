@@ -14,7 +14,7 @@
 |:---|:---|:---|
 | 0章（新設） | **Gemini API 最新情報まとめ** | 2026-05 時点の最新モデル・SDK・APIパターンを一元整理 |
 | 2.1節 | **GeminiAdapter の実装パターン更新** | 新SDK `google-genai==1.52.0` への移行完了を反映 |
-| 6章 | **コスト試算更新** | 2026年5月時点の最新料金に修正。`gemini-3-flash-preview` を基準モデルに変更 |
+| 6章 | **コスト試算更新** | 2026年5月時点の最新料金に修正。`gemini-2.5-flash` を基準モデルに変更 |
 | 7章 | **リスク表に廃止モデル警告を追加** | `gemini-2.0-flash` が **2026-06-01廃止**（残り23日） |
 | 全体 | モデル名・SDKバージョン・APIパターンを現行コードベースと一致させる | `config.py` / `planner.py` / 移行手順書 v2.1 の実コード調査結果を反映 |
 
@@ -25,8 +25,8 @@
 > **`gemini-2.0-flash` は 2026年6月1日をもってサービス停止。残り23日。**
 >
 > - 対象コード: `config.py` `AVAILABLE_MODELS` リスト内の `"gemini-2.0-flash"` エントリ
-> - 移行先推奨: `gemini-2.5-flash`（同等性能・低コスト）または `gemini-3-flash-preview`（最新・高性能）
-> - `grace/config.py` の `LLMConfig.model` デフォルト値は既に `"gemini-3-flash-preview"` のため影響なし
+> - 移行先推奨: `gemini-2.5-flash`（同等性能・低コスト）または `gemini-2.5-flash`（最新・高性能）
+> - `grace/config.py` の `LLMConfig.model` デフォルト値は既に `"gemini-2.5-flash"` のため影響なし
 > - `config.yml` に `model: gemini-2.0-flash` の記載が残っていれば **即時変更が必要**
 
 ---
@@ -48,7 +48,7 @@
 
 | モデルID | 区分 | コンテキスト | 最大出力 | 備考 |
 |---|---|---|---|---|
-| `gemini-3-flash-preview` | **デフォルト推奨** | 1M tokens | 8,192 | 高速・高性能・Agentic向け |
+| `gemini-2.5-flash` | **デフォルト推奨** | 1M tokens | 8,192 | 高速・高性能・Agentic向け |
 | `gemini-3-pro-preview` | 最高性能 | 1M tokens | 64,000 | 思考モード対応 |
 | `gemini-2.5-flash` | 安定版高速 | 1M tokens | 64,000 | 推論・コード・長文対応 |
 | `gemini-2.5-flash-lite` | 最低コスト | 1M tokens | — | バッチ処理向け |
@@ -78,7 +78,7 @@ from google.genai import types
 client = genai.Client()  # GOOGLE_API_KEY 環境変数から自動取得
 
 response = client.models.generate_content(
-    model="gemini-3-flash-preview",
+    model="gemini-2.5-flash",
     contents=prompt,                        # 文字列またはリスト
     config=types.GenerateContentConfig(
         system_instruction=system_prompt,   # システムプロンプト（Gemini固有）
@@ -97,7 +97,7 @@ text = response.candidates[0].content.parts[0].text  # 防御的アクセス
 ```python
 # Pydantic モデルを response_schema に直接渡せる（新SDK固有機能）
 response = client.models.generate_content(
-    model="gemini-3-flash-preview",
+    model="gemini-2.5-flash",
     contents=prompt,
     config=types.GenerateContentConfig(
         response_mime_type="application/json",
@@ -114,7 +114,7 @@ plan = ExecutionPlan.model_validate_json(response.text)
 
 ```python
 chat = client.chats.create(
-    model="gemini-3-flash-preview",
+    model="gemini-2.5-flash",
     config=types.GenerateContentConfig(
         system_instruction=system_prompt,
         tools=[tool_definition],
@@ -376,7 +376,7 @@ from google.genai import types
 class GeminiAdapter(LLMProviderAdapter):
     def __init__(self, config):
         self.client = genai.Client()  # GOOGLE_API_KEY 環境変数から自動取得
-        self.model = config.llm.model          # "gemini-3-flash-preview"
+        self.model = config.llm.model          # "gemini-2.5-flash"
         self.embed_model = config.embedding.model  # "gemini-embedding-001"
 
     def generate_content(self, prompt, system="", temperature=0.7):
@@ -595,7 +595,7 @@ google-genai>=1.52.0   # Embedding 用に残す（gemini-embedding-001）
 
 | プロバイダー | モデル | 入力単価/1M tok | 出力単価/1M tok | 20問の推定コスト |
 |---|---|---|---|---|
-| Gemini | `gemini-3-flash-preview` | $0.50 | $3.00 | ~$0.05 |
+| Gemini | `gemini-2.5-flash` | $0.50 | $3.00 | ~$0.05 |
 | Gemini | `gemini-2.5-flash`（代替） | $0.30 | $2.50 | ~$0.04 |
 | Gemini | `gemini-2.5-flash-lite`（最安） | $0.10 | $0.40 | ~$0.01 |
 | OpenAI | `gpt-4o` | $2.50 | $10.00 | ~$1.50 |
@@ -612,7 +612,7 @@ google-genai>=1.52.0   # Embedding 用に残す（gemini-embedding-001）
 
 | リスク | 影響度 | 発生確率 | 対策 |
 |---|---|---|---|
-| **`gemini-2.0-flash` 廃止（2026-06-01）** | **高** | **確実** | **即時対応必要。`config.yml` を `gemini-3-flash-preview` または `gemini-2.5-flash` に更新** |
+| **`gemini-2.0-flash` 廃止（2026-06-01）** | **高** | **確実** | **即時対応必要。`config.yml` を `gemini-2.5-flash` または `gemini-2.5-flash` に更新** |
 | OpenAI スキーマ変換で ExecutionPlan の複雑な型（nested Optional, List）が正しく変換されない | 高 | 中 | 変換ユーティリティに単体テストを先行実装。Pydantic v2 の `model_json_schema()` 出力を逐一検証 |
 | Anthropic `messages.parse()` がベータ版のため挙動が不安定 | 中 | 低 | フォールバックとして `messages.create()` + JSON パース手動実装を用意 |
 | Qdrant 次元数不一致（OpenAI Embedding 1536次元 vs 既存 3072次元） | 高 | 確実 | OpenAI 用に別名コレクション作成。既存データの再インデックスが必要 |

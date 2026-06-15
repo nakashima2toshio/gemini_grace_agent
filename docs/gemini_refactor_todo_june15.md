@@ -111,7 +111,7 @@ anthropic の pipeline 改修 × gemini 現状の照合。provider 値差は除�
 | **E3** doc_id トレーシング | ❌ MISSING | `chunks_all_async(text: str) -> List[str]` 単一文字列ベース。`doc_id`/`documents: Dict`/`List[Dict]` 無し | チャンクに doc_id を付与し Step1→2→3 で伝播。※下流 Q/A・登録への影響範囲を要確認 |
 | **E4** トークン使用量集計 | ❌ MISSING | `async_api_client.py` は `_total_requests` 等のみ。`_accumulate_usage`/`usage_metadata` 集計無し | provider 中立部分の input/output トークン集計を追加（コスト計算と連携） |
 | **timestamp 固定ファイル名** | ❌ MISSING | `--timestamp` 未実装（CLAUDE.md §8.3 想定と不一致）。`generate_output_filename` のみ | `--timestamp` を追加し、既定は固定ファイル名／指定時のみ日時サフィックス |
-| **チャンキング既定モデル** | ⚠️ 要修正 | `chunks_all_async`/CLI 既定が `gemini-3.5-flash`（実在しない名称） | `gemini-2.5-flash` へ統一（G3 と連動・要確認） |
+| **チャンキング既定モデル** | ✅ DONE | `chunks_all_async`/CLI 既定が旧 `gemini-3.5-flash`（実在しない名称）だった | 全 CLI（chunking/make_qa/make_qa_register_qdrant）の `--model` 既定を `gemini-2.5-flash` に統一済み |
 
 > **除外（偽陽性）**: prompt caching（`cache_control`）は Anthropic 固有 API のため移植対象外。
 
@@ -133,7 +133,7 @@ anthropic の pipeline 改修 × gemini 現状の照合。provider 値差は除�
 |---|---|---|---|
 | **G1** `qdrant_delete_collection.py` | ❌ MISSING（低優先） | コレクション削除 CLI 無し（`qdrant_client_wrapper`/`services` 内部の `delete_collection` のみ）。gemini は `a35_qdrant_truncate.py` も無い | 削除 CLI を移植（コレクション名は `*_gemini`） |
 | **G2** `ui/pages/benchmark_page.py` | ❌ MISSING | `ui/pages/`（9 ページ）にベンチマークページ無し。`grace/benchmark.py`＋`run_benchmark.sh` の CLI のみ | ベンチマーク UI ページを移植（provider 固有コード無し・config 自動ロード） |
-| **G3** モデル名統一 | ⚠️ 要ユーザー確認 | **既定名が不整合**: `config.py:40` = `gemini-3-flash-preview`、`config.py:429` = `gemini-3.5-flash`（実在せず）、`GeminiClient` 既定 = `gemini-3-flash-preview`、UI ハードコード（`qdrant_search_page.py:435` 等）/`token_service.py`/`helper_rag_qa.py` に `gemini-2.0-flash` 残存。一方 `grace/config.py:58`/`qa_service.py:92`/`config_service.py:127` は `gemini-2.5-flash` で正 | 残存箇所を **`gemini-2.5-flash` に統一**＋`GEMINI_API_KEY` フォールバック追加。※モデル名変更のため**着手前にユーザー確認**（CLAUDE.md モデル名規約に配慮） |
+| **G3** モデル名統一 | ⚠️ 要ユーザー確認 | **既定名が不整合**: `config.py:40` = `gemini-2.5-flash`、`config.py:429` = `gemini-2.5-flash`（実在せず）、`GeminiClient` 既定 = `gemini-2.5-flash`、UI ハードコード（`qdrant_search_page.py:435` 等）/`token_service.py`/`helper_rag_qa.py` に `gemini-2.0-flash` 残存。一方 `grace/config.py:58`/`qa_service.py:92`/`config_service.py:127` は `gemini-2.5-flash` で正 | 残存箇所を **`gemini-2.5-flash` に統一**＋`GEMINI_API_KEY` フォールバック追加。※モデル名変更のため**着手前にユーザー確認**（CLAUDE.md モデル名規約に配慮） |
 | **G4** 未使用 import 整理 | ⚪ 低優先 | ruff `F401` 208 件＋`F541` 90 件（自動修正可 293/300） | `ruff check . --fix --select F401,F541` で整理 |
 
 > **除外（偽陽性）**: `services/agent_service.py` のメッセージ再構築は provider 形状差で gap ではない。
@@ -204,7 +204,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 - [ ] E3 doc_id トレーシング
 - [ ] E4 async_api_client トークン使用量集計
 - [ ] timestamp 固定ファイル名（--timestamp）
-- [ ] チャンキング既定モデル gemini-3.5-flash → gemini-2.5-flash（G3 連動）
+- [ ] チャンキング既定モデル gemini-2.5-flash → gemini-2.5-flash（G3 連動）
 
 ### Phase F — ヘルパー・横断
 - [ ] F1 トークンアキュムレータ（reset/get_token_counter＋executor/celery/pipeline 配線）
@@ -214,7 +214,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 ### Phase G — 不足ファイル・整合性整理
 - [ ] G1 qdrant_delete_collection.py 移植
 - [ ] G2 ui/pages/benchmark_page.py 移植
-- [x] G3 モデル名統一（実在しない gemini-3-flash-preview/gemini-3.5-flash 既定を撤去・旧既定 gemini-2.0-flash → gemini-2.5-flash）＋GEMINI_API_KEY フォールバック ✅ config.py/helper_llm.py/helper_embedding.py/helper_rag_qa.py/services/ui（実在する catalog 項目は保持）
+- [x] G3 モデル名統一（実在しない gemini-2.5-flash/gemini-2.5-flash 既定を撤去・旧既定 gemini-2.0-flash → gemini-2.5-flash）＋GEMINI_API_KEY フォールバック ✅ config.py/helper_llm.py/helper_embedding.py/helper_rag_qa.py/services/ui（実在する catalog 項目は保持）
 - [ ] G4 未使用 import 整理（ruff F401 208・F541 90）
 
 ### Phase H — 推論/出力枠是正（適用済・作業なし）
@@ -232,7 +232,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 | Phase B パイプライン | 実装済 | **未移植**（2 段生成・blocking Celery・逐次登録のまま） |
 | Phase C テスト | ほぼゼロから移植 | **既に整備済**（追従・整理が中心） |
 | Phase H 出力枠 | PR #25 で対応 | **既に適用済**（作業なし） |
-| モデル名整合 | gpt-5-mini へ統一 | `gemini-3-flash-preview`/`gemini-3.5-flash`/`gemini-2.0-flash` が混在し**より深刻** |
+| モデル名整合 | gpt-5-mini へ統一 | `gemini-2.5-flash`/`gemini-2.5-flash`/`gemini-2.0-flash` が混在し**より深刻** |
 | CLAUDE.md 規約 | §7/§8/§9 整備済 | **未整備（汎用テンプレートのまま）** |
 
 **進捗**: Phase A（GRACE エージェント本体）は **2026-06-15 に全9項目（#56/#57/#58/#59/#61/

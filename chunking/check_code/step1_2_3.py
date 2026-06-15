@@ -58,7 +58,7 @@ def step1_hierarchical_split(text: str, client: genai.Client, block_size: int = 
     paragraphs = []
     for block in blocks:
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-2.5-flash",
             contents=f"{PARAGRAPH_SEPARATION_PROMPT}\n\n【入力テキスト】\n{block}",
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -80,7 +80,7 @@ def step2_semantic_chunking(paragraphs: list[str], client: genai.Client) -> list
     chunks = []
     for para in paragraphs:
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-2.5-flash",
             contents=f"{SEMANTIC_CHUNKING_PROMPT}\n\n【入力テキスト】\n{para}",
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -105,7 +105,7 @@ def step3_continuity_check(chunks: list[str], client: genai.Client) -> list[str]
     for i in range(len(chunks) - 1):
         prompt = f"{CONTINUITY_CHECK_PROMPT}\n\n【前のテキスト】\n{chunks[i]}\n\n【次のテキスト】\n{chunks[i + 1]}"
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",

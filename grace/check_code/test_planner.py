@@ -597,7 +597,7 @@ class TestPlannerInit:
 
             from grace.planner import create_planner
             planner = create_planner()
-            assert planner.model_name == "gemini-3-flash-preview"
+            assert planner.model_name == "gemini-2.5-flash"
 
 
 # =============================================================================

@@ -128,7 +128,7 @@ flowchart TB
     end
 
     subgraph EXTERNAL["外部サービス層"]
-        GEMINI["Google Gemini API<br/>gemini-3-flash-preview"]
+        GEMINI["Google Gemini API<br/>gemini-2.5-flash"]
     end
 
     CLI --> MAIN
@@ -388,7 +388,7 @@ def step1_hierarchical_split(text: str, api_key: str, block_size: int = 2000) ->
 
         # ⑥ Gemini API 呼び出し（同期）
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",  # v1.1で更新
+            model="gemini-2.5-flash",  # v1.1で更新
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -458,7 +458,7 @@ if __name__ == "__main__":
 | 設定 | デフォルト値 | 説明 |
 |-----|-------------|------|
 | `block_size` | 2000 | ブロックサイズ（文字数） |
-| `model` | "gemini-3-flash-preview" | 使用するGeminiモデル |
+| `model` | "gemini-2.5-flash" | 使用するGeminiモデル |
 
 ### 5.2 ブロックサイズの選定
 
@@ -472,7 +472,7 @@ if __name__ == "__main__":
 
 | モデル | Input (1M tokens) | Output (1M tokens) | 特性 |
 |--------|-------------------|--------------------|----|
-| **gemini-3-flash-preview** | **$0.075** | **$0.30** | 【最新】高性能・大量処理に最適 |
+| **gemini-2.5-flash** | **$0.075** | **$0.30** | 【最新】高性能・大量処理に最適 |
 | gemini-3-flash | $0.15 | $0.60 | 【バランス】複雑な判断向け |
 | gemini-3-pro | $2.00 | $12.00 | 【高性能】最終推論向け |
 
@@ -561,7 +561,7 @@ from chunking import chunks_all_async
 | バージョン | 変更内容 |
 |-----------|---------|
 | 1.0 | 初版作成（Step1単体確認用プログラム） |
-| 1.1 | 前処理・後処理関数追加（`preprocess_text()`, `postprocess_paragraph()`）、デフォルトモデルを`gemini-3-flash-preview`に変更、`chunk_text`を使用した日本語・英語対応の文分割 |
+| 1.1 | 前処理・後処理関数追加（`preprocess_text()`, `postprocess_paragraph()`）、デフォルトモデルを`gemini-2.5-flash`に変更、`chunk_text`を使用した日本語・英語対応の文分割 |
 
 ---
 
@@ -747,12 +747,12 @@ class StructuralResult(BaseModel):
 
 ### B.6 API呼び出しの詳細
 
-利用するモデルのデフォルトはコスパから"gemini-3-flash-preview"としていますが、
+利用するモデルのデフォルトはコスパから"gemini-2.5-flash"としていますが、
 最新モデルも利用し、結果を比較してみましょう。（段落分けではあまりない。）
 
 ```python
 response = client.models.generate_content(
-    model="gemini-3-flash-preview",           # モデル名（v1.1で更新）
+    model="gemini-2.5-flash",           # モデル名（v1.1で更新）
     contents=prompt,                     # プロンプト
     config=types.GenerateContentConfig(
         response_mime_type="application/json",  # JSON形式を指定
@@ -763,7 +763,7 @@ response = client.models.generate_content(
 
 | パラメータ | 値 | 説明 |
 |------------|-----|------|
-| `model` | `"gemini-3-flash-preview"` | 最新の安定版、高いレート制限とパフォーマンス |
+| `model` | `"gemini-2.5-flash"` | 最新の安定版、高いレート制限とパフォーマンス |
 | `response_mime_type` | `"application/json"` | JSON形式のレスポンスを要求 |
 | `response_schema` | `StructuralResult` | Pydanticモデルでスキーマを指定 |
 

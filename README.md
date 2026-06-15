@@ -340,7 +340,7 @@ selected_model = st.selectbox(
 
 | モデル名                     | 説明                             |
 | ---------------------------- | -------------------------------- |
-| `gemini-3-flash-preview`     | Gemini 3 Flash（**デフォルト**） |
+| `gemini-2.5-flash`     | Gemini 3 Flash（**デフォルト**） |
 | `gemini-2.5-flash`           | 高速・思考対応モデル             |
 | `gemini-3-pro-preview`       | Gemini 3 Pro（思考モード対応）   |
 | `gemini-3-pro-image-preview` | Gemini 3 Pro 画像対応版          |
@@ -1123,7 +1123,7 @@ YAML ファイル（`grace_config.yaml`）と環境変数から設定を読み�
 | `ReplanConfig`       | リプラン制御設定（max_replans 等）                |
 | `QdrantConfig`       | Qdrant接続・検索設定（search_priority, top_k 等） |
 
-**デフォルトモデル**: `gemini-3-flash-preview`（`LLMConfig.model`）
+**デフォルトモデル**: `gemini-2.5-flash`（`LLMConfig.model`）
 
 #### 7.5.2 grace/tools.py — ToolRegistry
 
@@ -1487,7 +1487,7 @@ except Exception as e:
 ### 10.1 基本的な使用方法
 
 1. ページにアクセス
-2. サイドバーで必要に応じてモデルを変更（デフォルト: `gemini-3-flash-preview`）
+2. サイドバーで必要に応じてモデルを変更（デフォルト: `gemini-2.5-flash`）
 3. （オプション）コレクションデータのプレビュー — エキスパンダーを開いてコレクションを選択し、登録されているQ&Aデータを確認
 4. チャット入力欄に質問を入力して Enter
 5. **📋 計画策定 (Plan)** を確認 — 複雑度、ステップ数、各ステップの詳細
@@ -1640,7 +1640,7 @@ python agent_main.py
 
 | 設定項目              | デフォルト値               | 説明             |
 | --------------------- | -------------------------- | ---------------- |
-| `DEFAULT_MODEL`       | `"gemini-3-flash-preview"` | デフォルトモデル |
+| `DEFAULT_MODEL`       | `"gemini-2.5-flash"` | デフォルトモデル |
 | `EMBEDDING_MODEL`     | `"gemini-embedding-001"`   | 埋め込みモデル   |
 | `EMBEDDING_DIMS`      | 3072                       | 埋め込み次元数   |
 | `DEFAULT_TEMPERATURE` | 1.0                        | 温度パラメータ   |
@@ -1655,7 +1655,7 @@ GraceConfig は `config/grace_config.yml` から読み込まれ、環境変数�
 | 設定項目      | デフォルト値               | 説明                  |
 | ------------- | -------------------------- | --------------------- |
 | `provider`    | `"gemini"`                 | LLMプロバイダー       |
-| `model`       | `"gemini-3-flash-preview"` | 使用モデル            |
+| `model`       | `"gemini-2.5-flash"` | 使用モデル            |
 | `temperature` | 0.7                        | 温度パラメータ        |
 | `max_tokens`  | 4096                       | 最大トークン数        |
 | `timeout`     | 30                         | APIタイムアウト（秒） |
