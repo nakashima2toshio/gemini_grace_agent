@@ -182,7 +182,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 - [x] #52 単段化（SmartQAResult/SmartQAPair・構造化出力 1 回）＋use_smart_generation 撤去 ✅ smart_qa_generator.py/pipeline.py/celery_tasks.py/make_qa_register_qdrant.py
 - [x] #51 内容ハッシュ ID ＋重複除去＋先読み並列化（3 部）✅ (a) qdrant_service.py に stable_point_id/_content_point_key/_normalize_for_id・provenance(chunk_id/topic/doc_id)・migrate path も決定的ID化、(b) register_to_qdrant.py に重複テキスト除去ブロック、(c) ThreadPoolExecutor 先読みパイプライン＋--embed-workers＋登録後検証。round-trip テスト 8 件追加（tests/services/test_qdrant_service.py::TestContentBasedPointId）
 - [x] #67 collect_results 完了順＋on_result＋_GENERATOR_CACHE ✅ ready() ポーリングで完了順回収（HOL解消）・on_result/usage_out フック・ワーカー dict戻り値・_get_generator プロセス内キャッシュ。テスト 4件追加（tests/test_collect_results.py）。注: gemini はトークンカウンタ未配線のため usage は plumbing のみ（0集計）
-- [ ] #53 JSONL 逐次永続化＋クラッシュ再開
+- [x] #53 JSONL 逐次永続化＋クラッシュ再開 ✅ pipeline に _progress_path/_load_progress/_append_progress/_clear_progress。generate_qa で再開（done_ids skip＋復元）、_generate_sync で逐次追記、_generate_with_celery で #67 on_result=_persist 配線、run() 成功後に _clear_progress。テスト 4件。注: _enforce_max_chunk_tokens は chunking 未移植のため別タスク
 - [x] #82 get_collection_embedding_params（DONE 相当）
 
 ### Phase C — テスト（整備済・追従中心）

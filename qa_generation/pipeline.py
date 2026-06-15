@@ -31,6 +31,7 @@ qa_generation/pipeline.py - Q/A生成パイプライン制御モジュール（v
 """
 
 import sys
+import json
 import logging
 from typing import List, Dict, Optional, Any
 import pandas as pd
@@ -212,12 +213,67 @@ class QAPipeline:
         logger.info(f"  ✅ チャンク変換完了: {len(chunks)} チャンク")
         return chunks
 
+    # ================================================================
+    # 逐次永続化（クラッシュ時の全損防止・再開用）
+    # ================================================================
+
+    def _progress_path(self) -> Path:
+        """チャンク単位の処理結果を逐次追記する JSONL のパス"""
+        dataset_type = self.config.get("type", "unknown")
+        return Path(self.output_dir) / f"qa_progress_{dataset_type}.jsonl"
+
+    def _load_progress(self) -> Dict[str, List[Dict]]:
+        """逐次保存ファイルから処理済みチャンクの結果を読み込む"""
+        path = self._progress_path()
+        if not path.exists():
+            return {}
+
+        progress: Dict[str, List[Dict]] = {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                        progress[str(record["chunk_id"])] = record.get("qa_pairs", [])
+                    except (json.JSONDecodeError, KeyError):
+                        # 途中クラッシュで壊れた行はスキップ（その行のチャンクは再処理される）
+                        continue
+        except OSError as e:
+            logger.warning(f"逐次保存ファイルの読み込みに失敗: {e}")
+            return {}
+
+        return progress
+
+    def _append_progress(self, chunk_id: Any, qa_pairs: List[Dict]) -> None:
+        """チャンク1件分の結果を JSONL に追記する（qa_count=0 も記録して再処理を防ぐ）"""
+        path = self._progress_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {"chunk_id": str(chunk_id), "qa_pairs": qa_pairs}
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def _clear_progress(self) -> None:
+        """最終保存の完了後に逐次保存ファイルを削除する"""
+        path = self._progress_path()
+        try:
+            if path.exists():
+                path.unlink()
+                logger.info(f"  逐次保存ファイルを削除: {path}")
+        except OSError as e:
+            logger.warning(f"逐次保存ファイルの削除に失敗: {e}")
+
     def generate_qa(self, chunks: List[Dict],
                     use_celery: bool = False,
                     celery_workers: int = 1,
                     concurrency: int = 8,
                     batch_chunks: int = 3) -> List[Dict]:
         """Q/Aペアを生成する
+
+        チャンクごとの結果は qa_progress_*.jsonl に逐次追記され、
+        プロセスが途中で落ちても再実行時に処理済みチャンクをスキップして再開できる。
 
         Args:
             chunks: チャンクのリスト
@@ -229,12 +285,33 @@ class QAPipeline:
         logger.info("\n[3/3] Q/Aペア生成...")
         logger.info(f"  処理チャンク数: {len(chunks)}")
 
+        # 逐次保存ファイルからの再開
+        progress = self._load_progress()
+        prior_pairs: List[Dict] = []
+        if progress:
+            done_ids = set(progress.keys())
+            pending = [c for c in chunks if str(c.get('id')) not in done_ids]
+            skipped = len(chunks) - len(pending)
+            if skipped:
+                prior_pairs = [qa for pairs in progress.values() for qa in pairs]
+                logger.info(
+                    f"  📂 逐次保存ファイルから再開: 処理済み {skipped} チャンクをスキップ "
+                    f"（復元Q/A: {len(prior_pairs)}件, 残り: {len(pending)}チャンク）"
+                )
+            chunks = pending
+
+        if not chunks:
+            logger.info("  全チャンク処理済み（逐次保存ファイルから復元）")
+            return prior_pairs
+
         if use_celery:
-            return self._generate_with_celery(
+            new_pairs = self._generate_with_celery(
                 chunks, celery_workers, concurrency, batch_chunks
             )
         else:
-            return self._generate_sync(chunks, batch_chunks)
+            new_pairs = self._generate_sync(chunks, batch_chunks)
+
+        return prior_pairs + new_pairs
 
     def _generate_with_celery(self, chunks: List[Dict],
                               workers: int,
@@ -260,9 +337,14 @@ class QAPipeline:
             chunks, self.config, self.model, provider="gemini"
         )
 
+        # 逐次永続化: タスク完了ごとにチャンク結果を JSONL へ追記
+        def _persist(task_index: int, qa_pairs: List[Dict]) -> None:
+            chunk_id = chunks[task_index].get('id', f'chunk_{task_index}')
+            self._append_progress(chunk_id, qa_pairs)
+
         timeout_seconds = min(max(len(tasks) * 10, 600), 1800)
         logger.info(f"  結果収集タイムアウト: {timeout_seconds}秒（{len(tasks)}タスク）")
-        return collect_results(tasks, timeout=timeout_seconds)
+        return collect_results(tasks, timeout=timeout_seconds, on_result=_persist)
 
     def _generate_sync(self, chunks: List[Dict], batch_size: int) -> List[Dict]:
         """同期生成（SmartQAGenerator使用）
@@ -293,18 +375,24 @@ class QAPipeline:
                 # SmartQAGeneratorでQ/A生成
                 result = self.smart_generator.process_chunk(chunk_text)
 
+                chunk_pairs = []
                 if result['success'] and result['qa_pairs']:
                     for qa in result['qa_pairs']:
-                        all_qa_pairs.append({
+                        chunk_pairs.append({
                             'question': qa['question'],
                             'answer': qa['answer'],
                             'chunk_id': chunk_id,
                             'topic': qa.get('topic', ''),
                             'dataset_type': chunk.get('dataset_type', 'unknown')
                         })
-                    logger.info(f"      → {len(result['qa_pairs'])} Q/A生成")
+                    all_qa_pairs.extend(chunk_pairs)
+                    logger.info(f"      → {len(chunk_pairs)} Q/A生成")
                 else:
                     logger.warning(f"      → Q/A生成なし（qa_count=0 または失敗）")
+
+                # 逐次永続化（qa_count=0 も記録して再処理を防ぐ）
+                if result['success']:
+                    self._append_progress(chunk_id, chunk_pairs)
 
             except Exception as e:
                 logger.error(f"      → エラー: {e}")
@@ -407,6 +495,9 @@ class QAPipeline:
             # 結果保存
             # ================================================================
             saved_files = self.save(qa_pairs, coverage_results)
+
+            # 最終保存が完了したため逐次保存ファイル（再開用）を削除
+            self._clear_progress()
 
             # ================================================================
             # 完了サマリー
