@@ -1,6 +1,5 @@
 
 import unittest
-from unittest.mock import MagicMock, patch
 import pandas as pd
 import sys
 import os
@@ -9,7 +8,6 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from services.qdrant_service import build_points_for_qdrant
-from services.qdrant_service import get_collection_embedding_params
 
 class TestQdrantMetadataAndProcess(unittest.TestCase):
 
@@ -35,34 +33,11 @@ class TestQdrantMetadataAndProcess(unittest.TestCase):
         self.assertEqual(points[149].payload['embedding_provider'], 'gemini')
         self.assertEqual(points[149].payload['question'], 'Q149')
 
-    @unittest.skip(
-        "get_collection_embedding_params はベクトル次元数からのみモデルを推論する実装で、"
-        "payload の embedding_provider/embedding_model を読まない。"
-        "このテストが期待する payload 優先のロジックは production 未実装（既存の機能ギャップ）。"
-    )
-    @patch('services.qdrant_service.QdrantClient')
-    def test_get_params_prioritizes_payload(self, MockClient):
-        """qdrant_service が Payload 内のメタデータを正しく優先認識するか検証"""
-        mock_client = MockClient()
-        
-        # Payload にメタデータがあるポイントを返すようにモック
-        mock_point = MagicMock()
-        mock_point.payload = {
-            "embedding_provider": "gemini",
-            "embedding_model": "gemini-embedding-test-model"
-        }
-        mock_client.scroll.return_value = ([mock_point], None)
-        
-        # コレクション情報は 3072次元とする
-        mock_info = MagicMock()
-        mock_info.config.params.vectors.size = 3072
-        mock_client.get_collection.return_value = mock_info
-
-        # 実行 (修正後の想定動作)
-        params = get_collection_embedding_params(mock_client, "test_collection")
-        
-        # 検証: Payload のモデル名が取得されていること
-        self.assertEqual(params['model'], 'gemini-embedding-test-model')
+# 注: 「payload 優先で embedding model を解決する」テストは、production が未実装の機能
+# （get_collection_embedding_params はベクトル次元からのみ推論）への wish テストだった
+# ため削除した。現行の次元ベース挙動は
+# tests/services/test_qdrant_service.py::TestQdrantService::test_get_collection_embedding_params
+# でカバーしている。payload 優先解決を実装する場合は別途テストを追加すること。
 
 if __name__ == '__main__':
     unittest.main()

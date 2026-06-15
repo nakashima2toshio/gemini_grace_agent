@@ -26,7 +26,7 @@ def test_paris_income_question():
     # 2. エージェントの初期化
     # wikipedia_ja コレクションのみを選択
     target_collection = "wikipedia_ja"
-    model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash-exp")
+    model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
     
     print(f"\n--- Initializing Agent with collection: [{target_collection}] ---")
     agent = ReActAgent(selected_collections=[target_collection], model_name=model_name)

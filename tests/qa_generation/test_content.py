@@ -1,4 +1,3 @@
-import pytest
 from regex_mecab import KeywordExtractor
 
 def test_keyword_extractor_init():
@@ -13,7 +12,3 @@ def test_keyword_extractor_extract():
     # Check that it returns something if text is sufficient
     if keywords:
         assert isinstance(keywords[0], str)
-
-@pytest.mark.skip(reason="analyze_chunk_complexity was removed in the gemini refactor")
-def test_analyze_chunk_complexity():
-    pass
