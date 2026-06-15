@@ -30,8 +30,8 @@ Phase A/B（#51–#67）・`_enforce_max_chunk_tokens` 移植・`tests/README.md
 | # | 項目 | 内容 | 優先 |
 |---|---|---|---|
 | ~~B-1~~ ✅ | **トークン使用量の配線（完了）** | `smart_qa_generator` が `response.usage_metadata` を捕捉→`process_chunk['usage']`→celery worker 戻り値→`collect_results(usage_out)` / `_generate_sync` 集計→ログ出力。テスト 3件（`test_smart_qa_usage.py`）。実 API での実数確認は A-1 に含む | 完了 |
-| B-2 | スキップ4件の整理 | `test_generation.py`・`test_content.py::test_analyze_chunk_complexity`（削除機能）はファイル削除 or 残置を判断。metadata 2件（`get_collection_embedding_params` 仕様変更）は新仕様向けに書き直す or 削除 | ○中 |
-| B-3 | 旧モデル名の残り | `tests/agents/test_agent_service_paris_income.py` の `GEMINI_MODEL_NAME` 既定 `gemini-2.0-flash-exp` を安定版（`gemini-2.5-flash`）へ | △低 |
+| ~~B-2~~ ✅ | スキップ4件の整理（完了） | `test_generation.py`（モジュール全体 dead）と `test_qdrant_service_metadata.py`（冗長 wish テスト）を削除。`test_content.py`・`test_metadata_and_full_process.py` の skip スタブ/メソッドを除去（未使用 import も整理）。スキップ 4件→0件 | 完了 |
+| ~~B-3~~ ✅ | 旧モデル名の置換（完了） | `test_agent_service_paris_income.py` の `GEMINI_MODEL_NAME` 既定を `gemini-2.0-flash-exp`→`gemini-2.5-flash` | 完了 |
 
 ---
 
