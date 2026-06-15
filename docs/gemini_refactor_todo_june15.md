@@ -174,7 +174,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 - [x] #64 _should_trigger_replan（検索ステップ限定）✅ grace/executor.py（両経路のゲート置換）
 - [x] #65 evaluate_final（FinalEvaluationResult）✅ confidence.py＋executor 配線（最終評価 2→1 LLM 呼び出し統合）
 - [x] #66 _build_confidence_factors 共通化 ✅ grace/executor.py（インライン構築をヘルパー抽出）
-- [ ] #59 実行ループ統合（execute_plan を yield from ラッパー化）
+- [x] #59 実行ループ統合（execute_plan を generator ドレインの薄いラッパー化）✅ grace/executor.py（二重ループ解消）
 
 ### Phase B — 登録・Q/A・パイプライン
 - [ ] #55 make_qa_register_qdrant 死にフラグ＋--combine-rows 撤去

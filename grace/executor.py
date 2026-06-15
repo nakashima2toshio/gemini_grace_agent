@@ -404,108 +404,28 @@ class Executor:
 
     def execute_plan(self, plan: ExecutionPlan) -> ExecutionResult:
         """
-        計画を実行（GRACEネイティブ実装）
+        計画を実行（ブロッキング版）
+
+        execute_plan_generator() をドレインする薄いラッパー。
+        動的 web_search・フォールバック連鎖・介入・SKIP 処理を含め、
+        ジェネレータ版と完全に同一のロジックで実行される（二重ループ解消）。
+
         Args:
             plan: 実行する計画
         Returns:
             ExecutionResult: 実行結果
         """
-        logger.info(f"Executing plan: {plan.plan_id}, steps={len(plan.steps)}")
+        logger.info(f"Executing plan (blocking): {plan.plan_id}, steps={len(plan.steps)}")
 
-        # 受け取ったプラン内容をログ出力
-        logger.info(f"Received Execution Plan in Executor (blocking):\n{plan.model_dump_json(indent=2)}")
-
-        # 実行状態を初期化
-        state = ExecutionState(plan=plan)
-        state.start_time = time.time()
-
+        gen = self.execute_plan_generator(plan)
         try:
-            # 各ステップを順次実行
-            for step in plan.steps:
-                # キャンセルチェック
-                if state.is_cancelled:
-                    logger.info("Execution cancelled")
-                    break
-
-                # 依存関係チェック
-                if not self._check_dependencies(step, state):
-                    logger.warning(f"Step {step.step_id}: Dependencies not met, skipping")
-                    state.step_statuses[step.step_id] = StepStatus.SKIPPED
-                    continue
-
-                # ステップ開始コールバック
-                state.step_statuses[step.step_id] = StepStatus.RUNNING
-                if self.on_step_start:
-                    self.on_step_start(step)
-
-                # ステップ実行
-                step_execution = self._execute_step(step, state)
-
-                result = None
-                if isinstance(step_execution, Generator):
-                    # ジェネレータの場合は最後まで回して最終結果を取得
-                    try:
-                        while True:
-                            # 中間イベント（ログなど）はブロッキング版では無視するかログ出力
-                            event = next(step_execution)
-                            if isinstance(event, dict) and event.get("type") == "log":
-                                logger.info(event.get("content"))
-                    except StopIteration as e:
-                        result = e.value
-                else:
-                    result = step_execution
-
-                # 結果を保存
-                state.step_results[step.step_id] = result
-                state.step_statuses[step.step_id] = (
-                    StepStatus.SUCCESS if result.status == "success" else StepStatus.FAILED
-                )
-
-                # ステップ完了コールバック
-                if self.on_step_complete:
-                    self.on_step_complete(result)
-
-                # ask_user の場合、介入が必要
-                if step.action == "ask_user" and result.status == "success":
-                    self._handle_ask_user_response(step, result, state)
-
-                # リプラン判定（失敗時は常に／低信頼度は検索ステップ限定）
-                if self._should_trigger_replan(step, result, state):
-                    replan_result = self.replan_orchestrator.handle_step_failure(
-                        step_result=result,
-                        current_plan=plan,
-                        completed_results=state.step_results,
-                        replan_count=state.replan_count
-                    )
-                    if replan_result and replan_result.success and replan_result.new_plan:
-                        logger.info(f"Replanning: {replan_result.reason}")
-                        state.replan_count += 1
-                        # 新しい計画で再実行（再帰）
-                        return self.execute_plan(replan_result.new_plan)
-
-            # 全体の信頼度を計算
-            state.overall_confidence = self._calculate_overall_confidence(state)
-            state.end_time = time.time()
-
-            # 実行結果を生成
-            return self._create_execution_result(state)
-
-        except Exception as e:
-            logger.error(f"Execution failed: {e}", exc_info=True)
-            state.end_time = time.time()
-
-            return ExecutionResult(
-                plan_id=plan.plan_id or create_plan_id(),
-                original_query=plan.original_query,
-                final_answer=f"実行エラー: {str(e)}",
-                step_results=list(state.step_results.values()),
-                overall_confidence=0.0,
-                overall_status="failed",
-                replan_count=state.replan_count,
-                total_execution_time_ms=state.get_execution_time_ms(),
-                total_token_usage=None,
-                total_cost_usd=None,
-            )
+            while True:
+                event = next(gen)
+                # 中間イベント（ログなど）はブロッキング版ではログ出力のみ
+                if isinstance(event, dict) and event.get("type") == "log":
+                    logger.info(event.get("content"))
+        except StopIteration as e:
+            return e.value
 
     def execute(self, plan: ExecutionPlan) -> ExecutionResult:
         """execute_plan() の統一エントリーポイント（benchmark.py 互換）"""
