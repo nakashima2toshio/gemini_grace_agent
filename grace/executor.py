@@ -357,8 +357,8 @@ class Executor:
                 if step.action == "ask_user" and result.status == "success":
                     self._handle_ask_user_response(step, result, state)
 
-                # 失敗時のリプラン
-                if result.status == "failed" and self.replan_orchestrator:
+                # リプラン判定（失敗時は常に／低信頼度は検索ステップ限定）
+                if self._should_trigger_replan(step, result, state):
                     replan_result = self.replan_orchestrator.handle_step_failure(
                         step_result=result,
                         current_plan=plan,
@@ -469,8 +469,8 @@ class Executor:
                 if step.action == "ask_user" and result.status == "success":
                     self._handle_ask_user_response(step, result, state)
 
-                # 失敗時のリプラン（Phase 4で有効化）
-                if result.status == "failed" and self.replan_orchestrator:
+                # リプラン判定（失敗時は常に／低信頼度は検索ステップ限定）
+                if self._should_trigger_replan(step, result, state):
                     replan_result = self.replan_orchestrator.handle_step_failure(
                         step_result=result,
                         current_plan=plan,
@@ -574,6 +574,28 @@ class Executor:
             )
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
+
+    def _should_trigger_replan(
+            self,
+            step: PlanStep,
+            result: StepResult,
+            state: ExecutionState
+    ) -> bool:
+        """リプランを発火すべきか判定する。
+
+        - ステップ失敗: 常にリプラン対象
+        - 低信頼度: 検索系ステップ（rag_search / web_search）のみ対象
+          （reasoning 等の低信頼度では再発火せず、カスケードを防ぐ）
+        - リプラン回数上限（config.replan.max_replans）超過時は発火しない
+        """
+        if not self.replan_orchestrator:
+            return False
+        if not state.can_replan():
+            return False
+        if result.status == "failed":
+            return True
+        is_search_step = step.action in ("rag_search", "web_search")
+        return is_search_step and result.confidence < self.config.replan.confidence_threshold
 
     def _check_dependencies(self, step: PlanStep, state: ExecutionState) -> bool:
         """依存ステップの完了確認"""
