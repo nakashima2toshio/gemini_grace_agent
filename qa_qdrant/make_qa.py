@@ -8,7 +8,7 @@ make_qa.py - Q/Aペア生成 CLIエントリーポイント（v3.0 - pipeline.py
 - --input-chunks 引数を削除（--input-file に統一）
 - チャンク関連引数を削除（--merge-chunks, --min-tokens, --max-tokens, --overlap-tokens, --use-similarity, --similarity-threshold）
 - -c, --concurrency 引数を追加
-- --use-smart-generation / --no-smart-generation 引数を追加
+- Q/A生成は SmartQAGenerator（構造化出力1回）に一本化（スマート生成フラグは廃止）
 
 前提条件:
 - 入力CSVは既にチャンク済み（csv_text_to_chunks_text_csv.py で処理済み）
@@ -19,7 +19,6 @@ make_qa.py - Q/Aペア生成 CLIエントリーポイント（v3.0 - pipeline.py
     --input-file output_chunked/data_chunks.csv \
     --use-celery \
     -c 8 \
-    --use-smart-generation \
     --analyze-coverage
 
   # 同期処理（Celery不使用）

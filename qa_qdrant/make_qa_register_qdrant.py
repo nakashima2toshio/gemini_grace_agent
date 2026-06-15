@@ -54,14 +54,6 @@ python qa_qdrant/make_qa_register_qdrant.py \
 --concurrency 8 \
 --recreate
 
-# 6. 従来方式のQ/A生成（スマート生成を無効化）
-python qa_qdrant/make_qa_register_qdrant.py \
---input-file output_chunked/cc_news_5per_chunks.csv \
---collection cc_news_5per \
---use-celery \
---no-smart-generation \
---recreate
-
 【オプション一覧】
 
 入力ソース（いずれか1つ必須）:
@@ -82,8 +74,7 @@ Q/A生成:
 --use-celery        Celery並列処理を使用
 -c, --concurrency   並列タスク数（デフォルト: 8）
 --batch-chunks      1回のAPIで処理するチャンク数（デフォルト: 3）
---use-smart-generation    スマートQ/A生成を使用（デフォルト）
---no-smart-generation     従来方式のQ/A生成を使用
+                    ※ Q/A生成は SmartQAGenerator（構造化出力1回）に一本化
 
 出力:
 --output            Q/AペアCSVの出力ディレクトリ（デフォルト: qa_output/pipeline）
