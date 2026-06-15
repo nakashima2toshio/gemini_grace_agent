@@ -145,7 +145,7 @@ class ReActAgent:
     ):
         self.selected_collections = selected_collections
         # モデル名はconfig_serviceから取得（デフォルト）
-        self.model_name = model_name or get_config("models.default", "gemini-3-flash-preview")
+        self.model_name = model_name or get_config("models.default", "gemini-2.5-flash")
         self.session_id = session_id or str(uuid.uuid4())
         self.use_hybrid_search = use_hybrid_search  # ★追加: インスタンス変数として保持
 

@@ -160,9 +160,9 @@ class GeminiEmbedding(EmbeddingClient):
             model: 使用モデル
             dims: Embedding次元数（3072推奨: Gemini 3最大精度）
         """
-        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
+        self.api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY が設定されていません")
+            raise ValueError("GOOGLE_API_KEY (または GEMINI_API_KEY) が設定されていません")
 
         self.client = genai.Client(api_key=self.api_key)
         self.model = model

@@ -168,7 +168,7 @@ def show_qa_generation_page():
         qa_model = st.selectbox(
             "モデル",
             options=ModelConfig.AVAILABLE_MODELS,
-            index=ModelConfig.AVAILABLE_MODELS.index("gemini-2.0-flash") if "gemini-2.0-flash" in ModelConfig.AVAILABLE_MODELS else 0,
+            index=ModelConfig.AVAILABLE_MODELS.index("gemini-2.5-flash") if "gemini-2.5-flash" in ModelConfig.AVAILABLE_MODELS else 0,
             help="Q/A生成に使用するモデル（Gemini API学習用）",
         )
 

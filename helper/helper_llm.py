@@ -44,31 +44,25 @@ logger = logging.getLogger(__name__)
 
 # --- LLM モデル設定 --- #
 LLM_MODELS = [
-    "gemini-3-flash-preview",
-    "gemini-2.5-flash",
-    "gemini-3-pro-preview",
+    "gemini-2.5-flash",  # デフォルト
     "gemini-2.5-flash-preview",
-    "gemini-2.0-flash",  # ⚠️ 2026-06-01 廃止予定
+    "gemini-2.0-flash",
     "gemini-1.5-pro",
     "gemini-1.5-flash",
 ]
 
 LLM_PRICING = {
-    "gemini-3-flash-preview"  : {"input": 0.0005, "output": 0.003},
     "gemini-2.5-flash"        : {"input": 0.0001, "output": 0.0004},  # Estimated
-    "gemini-3-pro-preview"    : {"input": 0.00125, "output": 0.010},
     "gemini-2.5-flash-preview": {"input": 0.00015, "output": 0.0035},
-    "gemini-2.0-flash"        : {"input": 0.0001, "output": 0.0004},  # ⚠️ 2026-06-01 廃止
+    "gemini-2.0-flash"        : {"input": 0.0001, "output": 0.0004},
     "gemini-1.5-pro"          : {"input": 0.00125, "output": 0.005},
     "gemini-1.5-flash"        : {"input": 0.000075, "output": 0.0003},
 }
 
 LLM_LIMITS = {
-    "gemini-3-flash-preview"  : {"max_tokens": 1000000, "max_output": 8192},
     "gemini-2.5-flash"        : {"max_tokens": 1000000, "max_output": 8192},
-    "gemini-3-pro-preview"    : {"max_tokens": 1000000, "max_output": 64000},
     "gemini-2.5-flash-preview": {"max_tokens": 1000000, "max_output": 64000},
-    "gemini-2.0-flash"        : {"max_tokens": 1000000, "max_output": 8192},  # ⚠️ 2026-06-01 廃止
+    "gemini-2.0-flash"        : {"max_tokens": 1000000, "max_output": 8192},
     "gemini-1.5-pro"          : {"max_tokens": 1000000, "max_output": 8192},
     "gemini-1.5-flash"        : {"max_tokens": 1000000, "max_output": 8192},
 }
@@ -148,10 +142,10 @@ class OpenAIClient(LLMClient):
 
 
 class GeminiClient(LLMClient):
-    def __init__(self, api_key: Optional[str] = None, default_model: str = "gemini-3-flash-preview"):
-        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
+    def __init__(self, api_key: Optional[str] = None, default_model: str = "gemini-2.5-flash"):
+        self.api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY is not set")
+            raise ValueError("GOOGLE_API_KEY (or GEMINI_API_KEY) is not set")
         self.client = genai.Client(api_key=self.api_key)
         self.default_model = default_model
 

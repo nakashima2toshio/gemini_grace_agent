@@ -509,7 +509,7 @@ def get_smart_keywords(text: str, mode: str = "auto", prefer_mecab: bool = True)
 class QACountOptimizer:
     """Q/Aペア数の最適化を行うクラス"""
 
-    def __init__(self, llm_model: str = "gemini-2.0-flash"):
+    def __init__(self, llm_model: str = "gemini-2.5-flash"):
         self.llm_model_for_token_count = llm_model
         self.unified_client = create_llm_client(provider="gemini", default_model=self.llm_model_for_token_count)
 
@@ -1601,7 +1601,7 @@ class EnhancedQAPairsList(BaseModel):
 class LLMBasedQAGenerator:
     """LLMを使用したQ/A生成（Gemini API使用）"""
 
-    def __init__(self, model="gemini-2.0-flash"):
+    def __init__(self, model="gemini-2.5-flash"):
         self.client = create_llm_client(provider="gemini")
         self.model = model
 
@@ -1691,7 +1691,7 @@ class LLMBasedQAGenerator:
 class ChainOfThoughtQAGenerator:
     """思考の連鎖を使った高品質Q/A生成（Gemini API使用）"""
 
-    def __init__(self, model: str = "gemini-2.0-flash"):
+    def __init__(self, model: str = "gemini-2.5-flash"):
         """
         Args:
             model: 使用するGeminiモデル（デフォルト: gemini-2.0-flash）
@@ -2116,7 +2116,7 @@ class OptimizedHybridQAGenerator:
     ルールベース抽出 + LLM品質向上 + 埋め込みベースカバレージ計算
     """
 
-    def __init__(self, model: str = "gemini-2.0-flash", embedding_model: str = "gemini-embedding-001"):
+    def __init__(self, model: str = "gemini-2.5-flash", embedding_model: str = "gemini-embedding-001"):
         """
         Args:
             model: 使用するLLMモデル（デフォルト: gemini-2.0-flash）
@@ -2486,7 +2486,7 @@ class BatchHybridQAGenerator(OptimizedHybridQAGenerator):
     """
 
     def __init__(self,
-                 model: str = "gemini-2.0-flash",
+                 model: str = "gemini-2.5-flash",
                  embedding_model: str = "gemini-embedding-001",
                  batch_size: int = 10,
                  embedding_batch_size: int = 100,

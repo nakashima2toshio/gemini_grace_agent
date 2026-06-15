@@ -125,7 +125,7 @@ class ConfigManager:
         return {
             "models": {
                 "default": "gemini-2.5-flash",
-                "available": ["gemini-2.5-flash", "gemini-3-flash-preview", "gemini-3-pro-preview", "gemini-2.5-pro-preview"]
+                "available": ["gemini-2.5-flash", "gemini-2.5-flash-preview", "gemini-2.5-pro-preview", "gemini-2.0-flash"]
             },
             "api": {
                 "timeout": 30,

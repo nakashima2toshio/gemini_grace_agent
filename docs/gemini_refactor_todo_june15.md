@@ -213,7 +213,7 @@ openai/ollama/gemini 各 provider で混入した「出力枠の削り過ぎ」�
 ### Phase G — 不足ファイル・整合性整理
 - [ ] G1 qdrant_delete_collection.py 移植
 - [ ] G2 ui/pages/benchmark_page.py 移植
-- [ ] G3 モデル名統一（gemini-3-flash-preview/gemini-3.5-flash/gemini-2.0-flash → gemini-2.5-flash）＋GEMINI_API_KEY フォールバック ※要ユーザー確認
+- [x] G3 モデル名統一（実在しない gemini-3-flash-preview/gemini-3.5-flash 既定を撤去・旧既定 gemini-2.0-flash → gemini-2.5-flash）＋GEMINI_API_KEY フォールバック ✅ config.py/helper_llm.py/helper_embedding.py/helper_rag_qa.py/services/ui（実在する catalog 項目は保持）
 - [ ] G4 未使用 import 整理（ruff F401 208・F541 90）
 
 ### Phase H — 推論/出力枠是正（適用済・作業なし）
