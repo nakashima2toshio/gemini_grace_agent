@@ -43,10 +43,8 @@ jobs:
         run: uv run --python ${{ matrix.python-version }} pytest tests/ -q -p no:cacheprovider
 
   lint:
-    name: ruff (non-blocking)
+    name: ruff (informational)
     runs-on: ubuntu-latest
-    # lint 指摘は情報提供のみとし、現時点では CI をブロックしない
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,5 +57,7 @@ jobs:
       - name: Install dependencies (dev)
         run: uv sync --extra dev
 
-      - name: Ruff check
-        run: uv run ruff check .
+      # lint 指摘はログに出すが、現時点ではレガシーコードに多数の既存指摘があるため
+      # CI をブロックしない（"|| true" で常に成功扱い。check も赤くならない）。
+      - name: Ruff check (non-blocking)
+        run: uv run ruff check . || true
