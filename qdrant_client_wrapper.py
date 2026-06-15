@@ -12,6 +12,7 @@ Qdrantベクトルデータベースとの操作を一元管理
 """
 
 import os
+import hashlib
 import logging
 import socket
 import time
@@ -129,6 +130,18 @@ COLLECTION_CSV_MAPPING = {
 # ===================================================================
 # ユーティリティ関数
 # ===================================================================
+
+def stable_point_id(key: str) -> int:
+    """文字列キーから決定的な Qdrant ポイントIDを生成する。
+
+    Python 組み込みの hash() は str に対してプロセスごとにランダム化される
+    （PYTHONHASHSEED）ため、再実行のたびに ID が変わり upsert の冪等性が
+    壊れる（--recreate なしの再登録で全件が重複する）。
+    MD5 ベースの決定的な 63bit 整数を使用する。
+    """
+    digest = hashlib.md5(key.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF
+
 
 def batched(seq: Iterable, size: int):
     """
@@ -843,7 +856,7 @@ def build_points(
             "schema"    : "qa:v1",
         }
 
-        pid = abs(hash(f"{domain}-{source_file}-{i}")) & 0x7FFFFFFFFFFFFFFF
+        pid = stable_point_id(f"{domain}-{source_file}-{i}")
         points.append(models.PointStruct(id=pid, vector=vectors[i], payload=payload))
 
     return points
@@ -1267,6 +1280,7 @@ __all__ = [
     "get_provider_vector_size",
 
     # ポイント操作
+    "stable_point_id",
     "build_points",
     "upsert_points",
 
