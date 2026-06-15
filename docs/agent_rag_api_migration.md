@@ -151,7 +151,7 @@ class LLMProviderAdapter(ABC):
 # grace/config.py への追加
 class LLMConfig(BaseModel):
     provider: Literal["gemini", "openai", "anthropic"] = "gemini"
-    model: str = "gemini-3-flash-preview"
+    model: str = "gemini-2.5-flash"
 
 # grace/__init__.py での Adapter 生成
 def create_adapter(config: GraceConfig) -> LLMProviderAdapter:

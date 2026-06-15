@@ -222,7 +222,7 @@ def main():
     # ================================================================
     print_separator("2. SmartQAGenerator の初期化", "-", 50)
 
-    model = "gemini-3.0-flash"
+    model = "gemini-2.5-flash"
     print(f"🤖 モデル: {model}")
 
     generator = SmartQAGenerator(model=model)

@@ -4,7 +4,7 @@
 
 - **質問**: 「日本はどのような多義的な概念として解説されていますか？」
 - **実行日時**: 2026-02-20 08:46
-- **LLMモデル**: gemini-3-flash-preview
+- **LLMモデル**: gemini-2.5-flash
 - **実行時間**: 50.5秒
 - **最終信頼度**: 0.59
 
@@ -14,7 +14,7 @@
 
 ```
 Config loaded from config/grace_config.yml
-Planner initialized with model: gemini-3-flash-preview
+Planner initialized with model: gemini-2.5-flash
 ToolRegistry initialized with: ['rag_search', 'web_search', 'reasoning', 'ask_user']
 Executor (GRACE Native) initialized: tools=[...], replan=enabled
 ```
@@ -39,7 +39,7 @@ Streamlit起動時にPlanner、ToolRegistry、ConfidenceCalculator、ReplanManag
 
 ```
 estimate_complexity_with_llm: 2.0秒
-estimate_complexity_with_llm: empty response  ← gemini-3-flash-previewが空応答
+estimate_complexity_with_llm: empty response  ← gemini-2.5-flashが空応答
 ```
 
 LLMによる複雑度推定を試みるが空レスポンス。デフォルト値（0.5）にフォールバック。
@@ -207,7 +207,7 @@ Query coverage: 0.50（empty response）
 Aggregated confidence: 0.59
 ```
 
-3つの評価指標すべてがgemini-3-flash-previewの応答問題で正常計算できず、低めの集約スコアに。
+3つの評価指標すべてがgemini-2.5-flashの応答問題で正常計算できず、低めの集約スコアに。
 
 ---
 
@@ -269,7 +269,7 @@ evaluate_with_factors raw response (27 chars): Here is the JSON requested:
 evaluate_with_factors: all parse attempts failed
 ```
 
-全4回のLLM信頼度評価が全てパース失敗。`_evaluate_rag_relevance`は YES/NO の単純応答で問題なく動作したが、既存の`evaluate_with_factors`はJSON応答を期待しておりgemini-3-flash-previewが応答形式を守らない。これは別途修正が必要な既知問題。
+全4回のLLM信頼度評価が全てパース失敗。`_evaluate_rag_relevance`は YES/NO の単純応答で問題なく動作したが、既存の`evaluate_with_factors`はJSON応答を期待しておりgemini-2.5-flashが応答形式を守らない。これは別途修正が必要な既知問題。
 
 ### 3. 実行時間の増加（17.5秒 → 50.5秒）
 

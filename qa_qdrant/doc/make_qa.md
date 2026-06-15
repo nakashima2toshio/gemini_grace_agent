@@ -259,7 +259,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 | 項目 | デフォルト値 | 説明 |
 |------|-------------|------|
-| `--model` | `gemini-3.0-flash` | 使用するGeminiモデル |
+| `--model` | `gemini-2.5-flash` | 使用するGeminiモデル |
 | `--output` | `{PROJECT_ROOT}/qa_output/pipeline` | 出力ディレクトリ |
 | `--batch-chunks` | `3` | 1回のAPIで処理するチャンク数（1-5） |
 | `--concurrency` | `8` | 並列タスク数 |
@@ -413,7 +413,7 @@ flowchart TD
 
 | 引数 | 型 | デフォルト | 説明 |
 |------|------|-----------|------|
-| `--model` | str | `gemini-3.0-flash` | 使用するGeminiモデル |
+| `--model` | str | `gemini-2.5-flash` | 使用するGeminiモデル |
 | `--output` | str | `{PROJECT_ROOT}/qa_output/pipeline` | 出力ディレクトリ |
 | `--max-docs` | int | `None` | 処理する最大チャンク数 |
 

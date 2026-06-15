@@ -76,7 +76,7 @@ def step1_hierarchical_split(text: str, api_key: str, block_size: int = 2000) ->
         prompt = f"{PARAGRAPH_SEPARATION_PROMPT}\n\n【入力テキスト】\n{block}"
 
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",  # ← これが現時点での最新・正式なモデル名
+            model="gemini-2.5-flash",  # ← これが現時点での最新・正式なモデル名
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",

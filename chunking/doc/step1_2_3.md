@@ -519,7 +519,7 @@ final_chunks = run_pipeline(test_text, api_key)
 
 | 設定 | 値 | 説明 |
 |------|-----|------|
-| モデル名 | `"gemini-3-flash-preview"` | 使用するGeminiモデル |
+| モデル名 | `"gemini-2.5-flash"` | 使用するGeminiモデル |
 | デフォルトブロックサイズ | `2000` | Step1のブロック分割サイズ（文字数） |
 
 ### 5.2 使用されるプロンプト

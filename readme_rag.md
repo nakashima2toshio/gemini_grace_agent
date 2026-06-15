@@ -101,7 +101,7 @@ flowchart TB
     end
 
     subgraph EXTERNAL["外部サービス層"]
-        GEMINI_LLM["Gemini LLM API<br/>gemini-3-flash-preview"]
+        GEMINI_LLM["Gemini LLM API<br/>gemini-2.5-flash"]
         GEMINI_EMB["Gemini Embedding API<br/>gemini-embedding-001<br/>3072次元"]
         QDRANT["Qdrant Vector DB<br/>コサイン類似度"]
         REDIS["Redis<br/>Celeryブローカー"]
@@ -468,7 +468,7 @@ flowchart TB
 ```python
 async def chunks_all_async(
     text: str,
-    model: str = "gemini-3-flash-preview",
+    model: str = "gemini-2.5-flash",
     max_workers: int = 8,
     block_size: int = 1000,
     checkpoint_manager: Optional[CheckpointManager] = None,
@@ -482,7 +482,7 @@ async def chunks_all_async(
 | パラメータ           | 型                          | デフォルト               | 説明                             |
 | -------------------- | --------------------------- | ------------------------ | -------------------------------- |
 | `text`               | str                         | -                        | 分割対象テキスト                 |
-| `model`              | str                         | "gemini-3-flash-preview" | 使用するGemini LLMモデル         |
+| `model`              | str                         | "gemini-2.5-flash" | 使用するGemini LLMモデル         |
 | `max_workers`        | int                         | 8                        | 非同期並列ワーカー数             |
 | `block_size`         | int                         | 1000                     | Step1ブロックサイズ（文字数）    |
 | `checkpoint_manager` | Optional[CheckpointManager] | None                     | チェックポイント管理             |
@@ -515,7 +515,7 @@ from chunking.csv_text_to_chunks_text_csv import chunks_all_async
 text = open("data/document.txt", "r").read()
 chunks = asyncio.run(chunks_all_async(
     text=text,
-    model="gemini-3-flash-preview",
+    model="gemini-2.5-flash",
     max_workers=8,
     block_size=1000,
     output_file="chunks_output/result.csv"
@@ -899,7 +899,7 @@ streamlit run agent_rag.py
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/cc_news_1per.csv \
   --output chunks_output \
-  --model gemini-3-flash-preview \
+  --model gemini-2.5-flash \
   --workers 8 \
   --block-size 500
 
@@ -975,7 +975,7 @@ Gemini API関連の設定。
 
 ```python
 class GeminiConfig:
-    DEFAULT_MODEL = "gemini-3-flash-preview"
+    DEFAULT_MODEL = "gemini-2.5-flash"
     EMBEDDING_MODEL = "gemini-embedding-001"
     EMBEDDING_DIMS = 3072  # MRL: 768/1536/3072
     DEFAULT_THINKING_LEVEL = "low"
@@ -985,7 +985,7 @@ class GeminiConfig:
 
 | キー              | デフォルト値             | 説明                                      |
 | ----------------- | ------------------------ | ----------------------------------------- |
-| `DEFAULT_MODEL`   | "gemini-3-flash-preview" | デフォルトLLMモデル                       |
+| `DEFAULT_MODEL`   | "gemini-2.5-flash" | デフォルトLLMモデル                       |
 | `EMBEDDING_MODEL` | "gemini-embedding-001"   | Embeddingモデル                           |
 | `EMBEDDING_DIMS`  | 3072                     | Embedding次元数（MRL対応: 768/1536/3072） |
 
@@ -1037,7 +1037,7 @@ Celery並列処理設定。
 # python -m chunking.csv_text_to_chunks_text_csv \
 #   --input-file OUTPUT/wikipedia_ja_1per.csv \
 #   --output chunks_output \
-#   --model gemini-3-flash-preview \
+#   --model gemini-2.5-flash \
 #   --workers 8
 
 # Step 2: Q/A生成 + Qdrant登録
@@ -1062,7 +1062,7 @@ text = load_text_from_csv("OUTPUT/cc_news_1per.csv")
 # チャンク分割
 chunks = asyncio.run(chunks_all_async(
     text=text,
-    model="gemini-3-flash-preview",
+    model="gemini-2.5-flash",
     max_workers=8,
     output_file="chunks_output/result.csv"
 ))
@@ -1319,7 +1319,7 @@ flowchart LR
 | カテゴリ       | 技術                                               |
 | -------------- | -------------------------------------------------- |
 | **言語**       | Python 3.10+                                       |
-| **LLM**        | Gemini 3 Flash / Pro（gemini-3-flash-preview）     |
+| **LLM**        | Gemini 3 Flash / Pro（gemini-2.5-flash）     |
 | **Embedding**  | Gemini Embedding（gemini-embedding-001, 3072次元） |
 | **ベクトルDB** | Qdrant（コサイン類似度、Hybrid Search対応）        |
 | **並列処理**   | Celery + Redis / asyncio                           |

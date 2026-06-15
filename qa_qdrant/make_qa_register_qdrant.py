@@ -18,7 +18,7 @@ python qa_qdrant/make_qa_register_qdrant.py \
 --input-file output_chunked/cc_news_1per_chunks.csv \
 --collection cc_news_1per \
 --use-celery \
---model gemini-3-flash-preview \
+--model gemini-2.5-flash \
 --concurrency 8 \
 --recreate
 
@@ -27,7 +27,7 @@ python qa_qdrant/make_qa_register_qdrant.py \
 --input-file output_chunked/wikipedia_ja_1per_chunks.csv \
 --collection wikipedia_ja_1per \
 --use-celery \
---model gemini-3-flash-preview \
+--model gemini-2.5-flash \
 --concurrency 8 \
 --recreate
 
@@ -78,7 +78,7 @@ Qdrant登録:
 --batch-size        Embeddingバッチサイズ（デフォルト: 100）
 
 Q/A生成:
---model             LLMモデル（デフォルト: gemini-3-flash-preview）
+--model             LLMモデル（デフォルト: gemini-2.5-flash）
 --use-celery        Celery並列処理を使用
 -c, --concurrency   並列タスク数（デフォルト: 8）
 --batch-chunks      1回のAPIで処理するチャンク数（デフォルト: 3）
@@ -329,8 +329,8 @@ def main():
     group_gen.add_argument(
         "--model",
         type=str,
-        default="gemini-3-flash-preview",
-        help="使用するLLMモデル（デフォルト: gemini-3-flash-preview）"
+        default="gemini-2.5-flash",
+        help="使用するLLMモデル（デフォルト: gemini-2.5-flash）"
     )
     group_gen.add_argument(
         "--max-docs",

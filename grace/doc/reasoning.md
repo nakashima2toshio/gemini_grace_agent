@@ -504,7 +504,7 @@ if fallback_action == "reasoning" and step.action in self._SEARCH_FALLBACK_CHAIN
 | キー | デフォルト値 | 説明 |
 |------|------------|------|
 | `llm.provider` | `"gemini"` | LLMプロバイダ |
-| `llm.model` | `"gemini-3-flash-preview"` | 使用モデル名 → `ReasoningTool.model_name` |
+| `llm.model` | `"gemini-2.5-flash"` | 使用モデル名 → `ReasoningTool.model_name` |
 | `llm.temperature` | `0.7` | 生成温度 → `GenerateContentConfig.temperature` |
 | `llm.max_tokens` | `4096` | 最大出力トークン数 → `GenerateContentConfig.max_output_tokens` |
 | `llm.timeout` | `30` | タイムアウト秒数 |

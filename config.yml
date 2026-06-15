@@ -1,7 +1,7 @@
 # config.yml（Gemini API学習用）
 
 models:
-  default: "gemini-3-flash-preview"  # Geminiデフォルトモデル
+  default: "gemini-2.5-flash"  # Geminiデフォルトモデル
   available:
     - "gemini-3-pro-preview"       # 最新Pro（思考モード対応）
     - "gemini-2.5-flash-preview"   # 高速・思考対応
@@ -69,7 +69,7 @@ model_pricing:
 # =====================================================
 gemini:
   # LLM設定
-  default_model: "gemini-3-flash-preview"
+  default_model: "gemini-2.5-flash"
   available_models:
     - "gemini-3-pro"              # 最新Pro（思考モード対応）
     - "gemini-3.0-flash"          # 高速・思考対応

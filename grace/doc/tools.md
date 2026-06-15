@@ -238,7 +238,7 @@ flowchart TB
 |---------|------|
 | `config.qdrant.url` | Qdrant接続URL（デフォルト: http://localhost:6333） |
 | `config.qdrant.search_priority` | コレクション検索優先順位リスト |
-| `config.llm.model` | 使用するLLMモデル（デフォルト: gemini-3-flash-preview） |
+| `config.llm.model` | 使用するLLMモデル（デフォルト: gemini-2.5-flash） |
 | `config.llm.temperature` | LLM生成時の温度 |
 | `config.llm.max_tokens` | 最大出力トークン数 |
 | `config.tools.enabled` | 有効なツールリスト |

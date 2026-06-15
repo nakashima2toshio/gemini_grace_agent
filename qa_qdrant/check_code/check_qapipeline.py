@@ -84,7 +84,7 @@ def demo_initialization(input_file: str, max_docs: int, output_dir: str):
 
     pipeline = QAPipeline(
         input_file=input_file,
-        model="gemini-3.0-flash",
+        model="gemini-2.5-flash",
         output_dir=output_dir,
         max_docs=max_docs
     )

@@ -244,7 +244,7 @@ planner = Planner()
 
 # カスタム設定で初期化
 config = get_config("config/custom.yml")
-planner = Planner(config=config, model_name="gemini-3-flash-preview")
+planner = Planner(config=config, model_name="gemini-2.5-flash")
 ```
 
 ---
@@ -607,7 +607,7 @@ def create_planner(
 
 **戻り値例**:
 ```python
-<Planner instance with model=gemini-3-flash-preview>
+<Planner instance with model=gemini-2.5-flash>
 ```
 
 ```python
@@ -620,7 +620,7 @@ planner = create_planner()
 # カスタム設定で作成
 from grace.config import get_config
 config = get_config("config/production.yml")
-planner = create_planner(config=config, model_name="gemini-3-flash-preview")
+planner = create_planner(config=config, model_name="gemini-2.5-flash")
 ```
 
 ---
@@ -779,7 +779,7 @@ from grace.config import get_config
 config = get_config("config/production.yml")
 
 # 特定のモデルを指定してPlannerを作成
-planner = create_planner(config=config, model_name="gemini-3-flash-preview")
+planner = create_planner(config=config, model_name="gemini-2.5-flash")
 
 # 複雑な質問の計画を生成
 plan = planner.create_plan("量子コンピュータの原理と従来のコンピュータとの違いを説明してください")

@@ -66,7 +66,7 @@ Flower（タスクモニタリング UI）: http://localhost:5555
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/wikipedia_ja_1per.csv \
   --output chunks_output \
-  --model gemini-3-flash-preview \
+  --model gemini-2.5-flash \
   --workers 8
 ```
 
@@ -118,7 +118,7 @@ CSV ファイルからチャンク作成:
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/cc_news_1per.csv \
   --output chunks_output \
-  --model gemini-3-flash-preview \
+  --model gemini-2.5-flash \
   --workers 8 \
   --block-size 500
 ```
@@ -129,7 +129,7 @@ python -m chunking.csv_text_to_chunks_text_csv \
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file ./data/document.txt \
   --output chunks_output \
-  --model gemini-3-flash-preview \
+  --model gemini-2.5-flash \
   --workers 8
 ```
 
@@ -139,7 +139,7 @@ python -m chunking.csv_text_to_chunks_text_csv \
 |-----------|-----------|------|
 | `--input-file` | （必須） | 入力ファイル（.txt / .csv） |
 | `--output` | `chunks_output` | 出力ディレクトリ |
-| `--model` | `gemini-3-flash-preview` | 使用する LLM モデル |
+| `--model` | `gemini-2.5-flash` | 使用する LLM モデル |
 | `--workers` | `8` | 並列ワーカー数（asyncio） |
 | `--block-size` | `1000` | ブロックサイズ（文字数）。大きすぎると MAX_TOKENS エラー |
 | `--text-column` | 自動検出 | CSV のテキストカラム名 |
@@ -177,12 +177,13 @@ Gemini API のレート制限に引っかかる場合は、`--block-size` を小
 
 ```
 入力（チャンク CSV / テキスト / Q&A CSV）
-  ↓ Phase 1: Q/A ペア生成（LLM + Celery 並列）
-  ↓   ・スマート生成: LLM がチャンクごとに最適な Q/A 数を決定（0〜5 個）
-  ↓   ・従来方式: トークン数ベースで固定 Q/A 数（2〜8 個）
+  ↓ Phase 1: Q/A ペア生成（SmartQAGenerator + Celery 並列）
+  ↓   ・構造化出力 1 回でチャンク分析と Q/A 生成を同時実行（0〜5 個を動的決定）
+  ↓   ・チャンク単位で JSONL 逐次永続化（qa_progress_*.jsonl）→ 中断しても再開可
+  ↓   ・トークン使用量（入力/出力）を集計してログ出力
   ↓ Phase 2: Qdrant 登録
-  ↓   ・Embedding 生成（gemini-embedding-001, 3072 次元）
-  ↓   ・コレクション作成 + バッチアップサート
+  ↓   ・Embedding 生成（gemini-embedding-001, 3072 次元・先読み並列）
+  ↓   ・内容ハッシュ point ID でべき等アップサート（同一 Q/A は再登録しても重複しない）
 Q/A ペア CSV + Qdrant 登録完了
 ```
 
@@ -210,30 +211,18 @@ python qa_qdrant/make_qa_register_qdrant.py \
   --recreate
 ```
 
-前処理済み CSV の行結合モード:
+Embedding 先読みの並列度を上げる（I/O バウンドな Embedding を upsert と重ねる）:
 
 ```bash
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-file OUTPUT/cc_news_5per.csv \
-  --collection cc_news_5per \
-  --use-celery \
-  --concurrency 4 \
-  --text-column text \
-  --combine-rows \
-  --block-size 400 \
+python qa_qdrant/register_to_qdrant.py \
+  --input-file qa_output/cc_news_1per_qa.csv \
+  --collection cc_news_1per \
+  --embed-workers 4 \
   --recreate
 ```
 
-従来方式の Q/A 生成（スマート生成を無効化）:
-
-```bash
-python qa_qdrant/make_qa_register_qdrant.py \
-  --input-file chunks_output/cc_news_5per_chunks.csv \
-  --collection cc_news_5per \
-  --use-celery \
-  --no-smart-generation \
-  --recreate
-```
+> 注: チャンキングは専用ツール `chunking/csv_text_to_chunks_text_csv.py` に一本化済み。
+> 旧 `--combine-rows` / `--block-size` および `--no-smart-generation`（従来方式）は廃止された。
 
 ### 3.3 オプション一覧
 
@@ -248,21 +237,20 @@ python qa_qdrant/make_qa_register_qdrant.py \
 
 | オプション | デフォルト | 説明 |
 |-----------|-----------|------|
-| `--text-column` | `text` | テキストカラム名 |
-| `--combine-rows` | `false` | 複数行を結合してチャンク化 |
-| `--block-size` | `400` | 結合する行数 |
+| `--text-column` | `text` | テキストカラム名（チャンク済み CSV 前提） |
 
 **Q/A 生成:**
 
 | オプション | デフォルト | 説明 |
 |-----------|-----------|------|
-| `--model` | `gemini-3-flash-preview` | LLM モデル |
+| `--model` | `gemini-2.5-flash` | LLM モデル |
 | `--use-celery` | `false` | Celery 並列処理を使用 |
 | `-c`, `--concurrency` | `8` | 並列タスク数 |
 | `--batch-chunks` | `3` | 1 API 呼び出しで処理するチャンク数 |
-| `--use-smart-generation` | `true`（デフォルト有効） | LLM による動的 Q/A 数決定 |
-| `--no-smart-generation` | — | 従来方式（トークン数ベース）に切替 |
 | `--max-docs` | 全件 | 処理する最大文書数 |
+
+> Q/A 生成は SmartQAGenerator（構造化出力 1 回でチャンク分析＋生成）に一本化済み。
+> 旧 `--use-smart-generation` / `--no-smart-generation` フラグは廃止された（常にスマート生成）。
 
 **Qdrant 登録:**
 
@@ -271,6 +259,7 @@ python qa_qdrant/make_qa_register_qdrant.py \
 | `--collection` | （必須） | Qdrant コレクション名 |
 | `--recreate` | `false` | コレクションを再作成（既存データ削除） |
 | `--batch-size` | `100` | Embedding バッチサイズ |
+| `--embed-workers` | `2` | Embedding 先読みの並列スレッド数（先読みパイプライン） |
 | `--provider` | `gemini` | Embedding プロバイダー |
 
 **出力:**
@@ -305,6 +294,20 @@ python qa_qdrant/make_qa_register_qdrant.py \
 | 軽量モード | `4` | `4` |
 
 `--concurrency` と `start_celery.sh -c` は同じ値に揃えてください。
+
+### 3.7 動作の要点（べき等再登録・クラッシュ再開・トークン集計）
+
+- **内容ハッシュ point ID（べき等登録）**: ポイント ID は `question + answer`（無ければ本文）
+  の内容ハッシュで決まる（`stable_point_id`）。行順や行数が変わっても同一内容なら同一 ID に
+  なるため、**`--recreate` なしの再登録でも重複が蓄積しない**（upsert がべき等）。登録後に
+  「Qdrant 側件数 / 今回処理件数」の突合ログが出る。
+- **重複 Q/A 除去**: 登録前に正規化テキストで重複を除外し、二重 Embedding と件数ズレを防ぐ。
+- **JSONL 逐次永続化＋再開**: Q/A 生成はチャンク単位で `<output>/qa_progress_<type>.jsonl`
+  に追記される。途中で中断（Ctrl-C / クラッシュ）しても、**同じコマンドで再実行すると
+  処理済みチャンクをスキップして再開**する（再 LLM 呼び出しを避けコストを節約）。最終保存が
+  成功すると進捗ファイルは自動削除される。
+- **トークン使用量ログ**: 生成完了時に「トークン使用量（合計）: 入力=…, 出力=…」を出力する
+  （Gemini の `usage_metadata` 由来）。Celery 経路ではワーカー集計を `collect_results` で合算。
 
 ---
 
@@ -378,7 +381,7 @@ docker compose up -d
 python -m chunking.csv_text_to_chunks_text_csv \
   --input-file OUTPUT/wikipedia_ja_1per.csv \
   --output chunks_output \
-  --model gemini-3-flash-preview \
+  --model gemini-2.5-flash \
   --workers 8
 
 # === Step 2: Q/A 生成 + Qdrant 登録 ===
